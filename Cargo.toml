@@ -1,0 +1,23 @@
+[package]
+name = "runjucks"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-powered Nunjucks-compatible template engine (Node.js native addon)"
+license = "MIT"
+
+[lib]
+# `cdylib` for the Node native addon; `rlib` so `cargo test` and integration tests can link the crate.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+napi = { version = "3", features = ["serde-json"] }
+napi-derive = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = "symbols"

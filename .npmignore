@@ -1,0 +1,9 @@
+target/
+Cargo.lock
+src/
+build.rs
+*.rs
+.env
+.env.*
+.DS_Store
+__test__/
