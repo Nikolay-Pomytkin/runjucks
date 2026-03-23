@@ -1,5 +1,3 @@
-//! Pipeline and `Environment` integration tests (Rust API, no NAPI).
-
 use runjucks::Environment;
 use serde_json::json;
 
@@ -25,12 +23,23 @@ fn render_string_multiline_plain_text() {
 }
 
 #[test]
-fn render_string_unparsed_mustache_is_literal_text() {
+fn render_string_comment_only_produces_empty_output() {
     let env = Environment::default();
-    let out = env
-        .render_string("{{ x }}".to_string(), json!({ "x": "y" }))
-        .unwrap();
-    assert_eq!(out, "{{ x }}");
+    assert_eq!(
+        env.render_string("{# only #}".to_string(), json!({}))
+            .unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn render_string_strips_comments() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string("a {# x #} b".to_string(), json!({}))
+            .unwrap(),
+        "a  b"
+    );
 }
 
 #[test]

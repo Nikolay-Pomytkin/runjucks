@@ -36,7 +36,9 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "test": "node --test __test__/*.test.mjs"
+    "test": "node --test __test__/*.test.mjs",
+    "test:pending": "node --test __test__/interpolation-pending.mjs",
+    "test:rust:green": "cargo test --test environment --test errors --test filters --test lexer --test parser --test renderer --test value"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0"

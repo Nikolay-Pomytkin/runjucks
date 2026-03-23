@@ -1,6 +1,5 @@
 use std::fmt;
 
-/// Errors produced by lexing, parsing, or rendering.
 #[derive(Debug)]
 pub struct RunjucksError {
     message: String,

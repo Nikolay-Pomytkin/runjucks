@@ -1,6 +1,5 @@
 use serde_json::Value;
 
-/// Convert a JSON value to its default string representation for template output.
 pub fn value_to_string(v: &Value) -> String {
     match v {
         Value::Null => String::new(),

@@ -3,8 +3,8 @@ import test from 'node:test'
 import { renderString, Environment } from '../index.js'
 
 test('renderString returns plain text unchanged', () => {
-  const out = renderString('hello {{ not parsed yet }}', {})
-  assert.equal(out, 'hello {{ not parsed yet }}')
+  const out = renderString('hello world', {})
+  assert.equal(out, 'hello world')
 })
 
 test('Environment.renderString matches top-level renderString', () => {

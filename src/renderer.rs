@@ -1,11 +1,8 @@
-//! Tree-walk interpreter: renders [`crate::ast::Node`] using a JSON context.
-
 use crate::ast::{Expr, Node};
 use crate::environment::Environment;
 use crate::errors::Result;
 use serde_json::Value;
 
-/// Render a template AST to a string using `ctx` as the root context object.
 pub fn render(env: &Environment, root: &Node, ctx: &Value) -> Result<String> {
     match root {
         Node::Root(nodes) => {

@@ -1,4 +1,4 @@
-use runjucks::ast::Node;
+use runjucks::ast::{Expr, Node};
 use runjucks::lexer::Token;
 use runjucks::parser::{parse, parse_expr};
 
@@ -31,7 +31,15 @@ fn parse_concatenates_adjacent_text_tokens_into_sequential_nodes() {
 }
 
 #[test]
-fn parse_expr_is_unimplemented() {
-    let err = parse_expr("x").unwrap_err();
-    assert!(err.to_string().contains("not implemented"));
+fn parse_expr_single_identifier() {
+    match parse_expr("  name  ").unwrap() {
+        Expr::Variable(s) => assert_eq!(s, "name"),
+        _ => panic!("expected Variable"),
+    }
+}
+
+#[test]
+fn parse_expr_rejects_multiple_tokens() {
+    let err = parse_expr("not parsed yet").unwrap_err();
+    assert!(err.to_string().contains("single identifier"), "{}", err);
 }

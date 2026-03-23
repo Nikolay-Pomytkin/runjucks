@@ -1,7 +1,5 @@
 #![deny(clippy::all)]
 
-// `lexer`, `parser`, `renderer`, etc. are public so `tests/*.rs` integration tests can exercise them.
-// The stable surface for embedders is `Environment`, `RunjucksError`, and the N-API exports below.
 #[doc(hidden)]
 pub mod ast;
 pub mod environment;
@@ -24,7 +22,6 @@ use napi::bindgen_prelude::Unknown;
 use napi_derive::napi;
 use std::sync::{Arc, Mutex};
 
-/// Render a template string with a JSON context (default environment).
 #[napi]
 pub fn render_string(template: String, context: serde_json::Value) -> napi::Result<String> {
     render_with_env(&Environment::default(), template, context)
@@ -39,14 +36,13 @@ fn render_with_env(
         .map_err(|e: RunjucksError| napi::Error::from_reason(e.to_string()))
 }
 
-/// Nunjucks-compatible `Environment` exposed to JavaScript.
 #[napi(js_name = "Environment")]
 pub struct JsEnvironment {
     inner: Arc<Mutex<Environment>>,
 }
 
 #[napi]
-#[allow(clippy::new_without_default)] // N-API class uses `new()` as the JS constructor, not `Default`.
+#[allow(clippy::new_without_default)]
 impl JsEnvironment {
     #[napi(constructor)]
     pub fn new() -> Self {
@@ -88,7 +84,6 @@ impl JsEnvironment {
         Ok(())
     }
 
-    /// Reserved for custom JS filters; implementation deferred until the runtime supports callbacks.
     #[napi]
     pub fn add_filter(&mut self, _name: String, _func: Unknown) -> napi::Result<()> {
         let _ = _func;

@@ -6,7 +6,7 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 
 ## Status
 
-**Early scaffold.** The pipeline is wired end-to-end (lex → parse → render → NAPI), but the lexer currently emits the whole template as a single text token. `{{ }}`, `{% %}`, filters, inheritance, and loaders are **not** implemented yet—see the sibling [`nunjucks`](../nunjucks) tree for the reference implementation.
+Work in progress: `{{ }}` variables, `{# #}` comments, and plain text; `{% %}`, filters, inheritance, and loaders are not implemented yet. Reference: [`../nunjucks`](../nunjucks).
 
 ## Architecture
 
@@ -49,7 +49,7 @@ cd runjucks
 npm install
 npm run build        # release build; produces runjucks.<platform>.node + index.js + index.d.ts
 npm test             # Node tests (__test__/*.test.mjs; requires `npm run build` first)
-cargo test           # Rust unit tests + integration tests (`tests/`)
+cargo test           # Rust integration tests (`tests/`)
 ```
 
 Debug builds:
@@ -60,12 +60,12 @@ npm run build:debug
 
 ### Testing
 
-Rust follows the usual layout: **integration tests** live under [`tests/`](tests/) (one file per area: `lexer.rs`, `parser.rs`, `renderer.rs`, …) and call the crate API via `use runjucks::…`. Implementation files under `src/` stay free of `#[cfg(test)]` blocks.
+Integration tests live under [`tests/`](tests/). Internal modules used only by tests are `#[doc(hidden)]` in [`src/lib.rs`](src/lib.rs).
 
-Internal modules (`lexer`, `parser`, `renderer`, …) are `pub` so those tests can run, but marked **`#[doc(hidden)]`** in [`src/lib.rs`](src/lib.rs) so they don’t clutter the primary rustdoc surface (the NAPI/`Environment` story).
-
-- **`cargo test`** — all `tests/*.rs` (no Node required).
-- **`npm test`** — loads the compiled `.node` addon via [`__test__/`](__test__/) (run `npm run build` first).
+- **`cargo test`** — all Rust integration tests.
+- **`npm test`** — Node tests (run `npm run build` first).
+- **`npm run test:rust:green`** — subset of Rust tests (see [`package.json`](package.json)).
+- **`npm run test:pending`** — optional Node checks in [`__test__/interpolation-pending.mjs`](__test__/interpolation-pending.mjs).
 
 ## JavaScript API
 
