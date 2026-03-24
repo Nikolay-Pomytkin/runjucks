@@ -19,19 +19,12 @@ flowchart LR
   R -->|"string"| JS
 ```
 
-## Rust modules (`native/src/`)
+## Rust workspace (`native/crates/`)
 
-| File | Role |
-|------|------|
-| `lexer.rs` | Tokenizer |
-| `parser.rs` | Recursive-descent parser |
-| `ast.rs` | AST nodes and expressions |
-| `renderer.rs` | Tree-walk interpreter |
-| `environment.rs` | Options (autoescape, dev, …) |
-| `filters.rs` | Built-in filters |
-| `value.rs` | JSON value → output string |
-| `errors.rs` | Error types |
-| `lib.rs` | NAPI exports |
+| Crate / module | Role |
+|----------------|------|
+| **`runjucks_core`** | Pure engine: `lexer`, `parser`, `ast`, `renderer`, `environment`, `filters`, `value`, `errors` |
+| **`runjucks-napi`** | NAPI exports (`renderString`, `Environment`) built as the `.node` addon |
 
 ## Reference implementation
 

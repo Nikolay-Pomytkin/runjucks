@@ -1,7 +1,7 @@
 //! Whitespace control (`{%-`, `-%}`, `{{-`, `-}}`) and trim-blocks behavior (Nunjucks docs).
 //! Vectors inspired by nunjucks/tests/lexer.js and templating.md.
 
-use runjucks::lexer::{tokenize, Token};
+use runjucks_core::lexer::{tokenize, Token};
 
 fn tag(s: &str) -> Token {
     Token::Tag(s.into())

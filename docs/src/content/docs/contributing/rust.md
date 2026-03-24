@@ -1,20 +1,28 @@
 ---
 title: Rust API (rustdoc)
-description: How to browse the internal Rust crate documentation.
+description: How to browse the Runjucks engine crate documentation.
 ---
 
-The npm package is a thin NAPI layer over the `runjucks` crate in `native/`. Most users only need the [Node.js API](../../api/) (`renderString`, `Environment`).
+The npm package is a thin NAPI layer over the **`runjucks_core`** crate in `native/crates/runjucks-core/`. Most users only need the [Node.js API](../../api/) (`renderString`, `Environment`).
+
+## On this site
+
+Each docs build runs `cargo doc` on `runjucks_core` and copies the HTML into **`/rustdoc/`** (under your [base path](https://docs.astro.build/en/reference/configuration-reference/#base) if you use one for GitHub Pages). The crate root is:
+
+**`/rustdoc/runjucks_core/`** (e.g. `https://<owner>.github.io/<repo>/rustdoc/runjucks_core/` for a project site).
+
+Use the sidebar link **Rust crate (rustdoc)** to open it.
 
 ## Local rustdoc
 
 From the repository root (`runjucks/`):
 
 ```bash
-cargo doc --manifest-path native/Cargo.toml --no-deps --open
+cargo doc --manifest-path native/Cargo.toml --no-deps -p runjucks_core --open
 ```
 
-This opens HTML docs for the crate and its public items. Modules that are `#[doc(hidden)]` in `lib.rs` are omitted from the public API surface but you can still read them in-tree.
+This documents the **`runjucks_core`** package only (`--no-deps`). All engine modules are public in that crate.
 
 ## docs.rs
 
-If the crate is published to [crates.io](https://crates.io), documentation will appear at `https://docs.rs/runjucks` automatically. Until then, use local `cargo doc` as above.
+If **`runjucks_core`** is published to [crates.io](https://crates.io), documentation will appear at `https://docs.rs/runjucks_core` automatically. Until then, use the hosted rustdoc on this site or local `cargo doc` as above.

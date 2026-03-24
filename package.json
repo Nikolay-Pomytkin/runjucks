@@ -34,8 +34,8 @@
     "node": ">= 18"
   },
   "scripts": {
-    "build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir .",
-    "build:debug": "napi build --platform --manifest-path native/Cargo.toml --output-dir .",
+    "build": "napi build --platform --release --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
+    "build:debug": "napi build --platform --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
     "test": "node --test __test__/*.test.mjs",
     "test:conformance:node": "node --test __test__/conformance/run.mjs",
     "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",

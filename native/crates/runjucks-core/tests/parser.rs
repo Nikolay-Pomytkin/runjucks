@@ -1,6 +1,6 @@
-use runjucks::ast::{Expr, Node};
-use runjucks::lexer::Token;
-use runjucks::parser::{parse, parse_expr};
+use runjucks_core::ast::{Expr, Node};
+use runjucks_core::lexer::Token;
+use runjucks_core::parser::{parse, parse_expr};
 
 #[test]
 fn parse_empty_token_list_yields_empty_root() {

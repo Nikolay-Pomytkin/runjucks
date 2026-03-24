@@ -1,6 +1,6 @@
 # Conformance fixtures (Nunjucks parity)
 
-JSON files are arrays of cases consumed by Rust (`native/src/tests/conformance.rs`) and optionally by Node (`__test__/conformance/`).
+JSON files are arrays of cases consumed by Rust (`native/crates/runjucks-core/tests/conformance.rs`) and optionally by Node (`__test__/conformance/`).
 
 ## Schema (per object)
 

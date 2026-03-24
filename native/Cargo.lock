@@ -254,12 +254,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "runjucks"
+name = "runjucks-napi"
 version = "0.1.0"
 dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "runjucks_core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runjucks_core"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]

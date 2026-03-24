@@ -10,16 +10,16 @@ description: Tests, conformance vectors, and project layout for contributors.
 | `npm run build` | Release native addon + generated JS/TS |
 | `npm run build:debug` | Debug native build |
 | `npm test` | Node tests (`__test__/*.test.mjs`; build first) |
-| `npm run test:rust` | Rust integration tests (`native/src/tests/`) |
+| `npm run test:rust` | Rust integration tests (`native/crates/runjucks-core/tests/`) |
 | `npm run test:rust:green` | Smaller subset of Rust tests |
 | `npm run test:conformance:rust` / `test:conformance:node` | JSON goldens under `native/fixtures/conformance/` |
 
 ## Layout
 
 - **Node package** — `package.json`, `index.js`, `index.d.ts`, `__test__/`, generated `*.node`
-- **`native/`** — Rust crate (`Cargo.toml`, `src/`, integration tests in `native/src/tests/`)
+- **`native/`** — Cargo workspace (`Cargo.toml`, `crates/runjucks-core/`, `crates/runjucks-napi/`, fixtures under `native/fixtures/`)
 
-Internal engine modules used only from the crate are `#[doc(hidden)]` in `lib.rs` unless you are contributing to the Rust side.
+The **`runjucks_core`** crate documents the engine publicly; browse it on the docs site (**Rust crate (rustdoc)**) or with `cargo doc -p runjucks_core`.
 
 ## Optional harness
 

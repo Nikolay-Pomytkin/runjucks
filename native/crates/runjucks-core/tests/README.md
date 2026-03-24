@@ -1,4 +1,4 @@
-# Integration tests
+# Integration tests (`runjucks_core`)
 
 | File | Focus |
 |------|--------|
@@ -10,7 +10,7 @@
 | `parser.rs` | Basic parse |
 | `parser_expressions.rs` | Literals, operators (parity with nunjucks parser tests) |
 | `parser_tags.rs` | `{% %}` tokenization for control flow |
-| `conformance.rs` | JSON goldens in [`../../fixtures/conformance/`](../../fixtures/conformance/README.md) |
+| `conformance.rs` | JSON goldens in [`../../../fixtures/conformance/`](../../../fixtures/conformance/README.md) |
 | Other `*.rs` | Renderer, filters, value, … |
 
 ```bash

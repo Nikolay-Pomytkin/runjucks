@@ -1,6 +1,6 @@
-use runjucks::ast::{Expr, Node};
-use runjucks::environment::Environment;
-use runjucks::renderer::render;
+use runjucks_core::ast::{Expr, Node};
+use runjucks_core::environment::Environment;
+use runjucks_core::renderer::render;
 use serde_json::json;
 
 #[test]

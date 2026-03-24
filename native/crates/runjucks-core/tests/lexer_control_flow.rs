@@ -4,7 +4,7 @@
 //! `from`, `filter`, `endfilter`, `switch`, `case`, `default`, `endswitch`, `raw`, `endraw`,
 //! `verbatim`, `endverbatim`, `ifAsync`.
 
-use runjucks::lexer::{tokenize, Token};
+use runjucks_core::lexer::{tokenize, Token};
 
 fn tag(s: &str) -> Token {
     Token::Tag(s.into())

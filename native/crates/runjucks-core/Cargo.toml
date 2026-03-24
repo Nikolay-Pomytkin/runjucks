@@ -1,0 +1,17 @@
+[package]
+name = "runjucks_core"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Rust Nunjucks-compatible template engine core (Runjucks)"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

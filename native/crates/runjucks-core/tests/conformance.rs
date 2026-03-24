@@ -1,7 +1,7 @@
 //! JSON-driven render conformance vs Nunjucks golden outputs.
-//! Fixtures: [`native/fixtures/conformance/`](../../fixtures/conformance/README.md)
+//! Fixtures: [`native/fixtures/conformance/`](../../../fixtures/conformance/README.md)
 
-use runjucks::Environment;
+use runjucks_core::Environment;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -27,11 +27,11 @@ struct EnvOpt {
 
 fn all_cases() -> Vec<Case> {
     let mut out: Vec<Case> = serde_json::from_str(include_str!(
-        "../../fixtures/conformance/render_cases.json"
+        "../../../fixtures/conformance/render_cases.json"
     ))
     .expect("parse render_cases.json");
     let filter: Vec<Case> = serde_json::from_str(include_str!(
-        "../../fixtures/conformance/filter_cases.json"
+        "../../../fixtures/conformance/filter_cases.json"
     ))
     .expect("parse filter_cases.json");
     out.extend(filter);

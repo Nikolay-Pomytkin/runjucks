@@ -1,7 +1,26 @@
+//! Builds [`crate::ast::Node`] trees from [`crate::lexer::Token`] streams.
+//!
+//! Variable bodies are parsed with [`parse_expr`] (currently a single identifier only).
+
 use crate::ast::{Expr, Node};
 use crate::errors::{Result, RunjucksError};
 use crate::lexer::Token;
 
+/// Parses a token stream into a single [`Node::Root`] containing child nodes.
+///
+/// # Errors
+///
+/// Returns an error if a [`Token::Tag`] is present (`{%` … `%}` is not implemented yet).
+///
+/// # Examples
+///
+/// ```
+/// use runjucks_core::lexer::tokenize;
+/// use runjucks_core::parser::parse;
+///
+/// let tokens = tokenize("a{{x}}b").unwrap();
+/// let root = parse(&tokens).unwrap();
+/// ```
 pub fn parse(tokens: &[Token]) -> Result<Node> {
     let mut nodes = Vec::new();
     for t in tokens {
@@ -21,6 +40,27 @@ pub fn parse(tokens: &[Token]) -> Result<Node> {
     Ok(Node::Root(nodes))
 }
 
+/// Parses the inside of a `{{` … `}}` region into an [`Expr`].
+///
+/// Today only a **single identifier** is allowed (no spaces, no literals yet in this path).
+///
+/// # Errors
+///
+/// - Empty or whitespace-only body.
+/// - More than one token / whitespace inside the expression.
+/// - Invalid identifier characters.
+///
+/// # Examples
+///
+/// ```
+/// use runjucks_core::parser::parse_expr;
+/// use runjucks_core::ast::Expr;
+///
+/// match parse_expr("foo").unwrap() {
+///     Expr::Variable(name) => assert_eq!(name, "foo"),
+///     _ => panic!("expected variable"),
+/// }
+/// ```
 pub fn parse_expr(source: &str) -> Result<Expr> {
     let s = source.trim();
     if s.is_empty() {

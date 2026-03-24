@@ -1,8 +1,9 @@
 target/
 native/target/
 native/Cargo.lock
-native/src/
-native/build.rs
+native/crates/**/src/
+native/crates/**/tests/
+native/crates/**/build.rs
 *.rs
 .env
 .env.*

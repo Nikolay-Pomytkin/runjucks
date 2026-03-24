@@ -1,7 +1,7 @@
 //! Block tags (`{% %}`): once the lexer emits `Token::Tag`, the parser should build
 //! `If` / `For` / … nodes (see nunjucks/tests/parser.js).
 
-use runjucks::lexer::{tokenize, Token};
+use runjucks_core::lexer::{tokenize, Token};
 
 #[test]
 fn lexer_splits_if_else_endif_into_tags_and_text() {

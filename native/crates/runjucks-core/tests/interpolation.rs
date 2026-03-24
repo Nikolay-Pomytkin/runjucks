@@ -1,4 +1,4 @@
-use runjucks::Environment;
+use runjucks_core::Environment;
 use serde_json::json;
 
 #[test]

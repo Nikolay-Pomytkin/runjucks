@@ -1,14 +1,26 @@
+//! Tokenization: splits template source into [`Token`]s for [`crate::parser::parse`].
+//!
+//! Recognized regions: `{#` … `#}` comments (discarded), `{{` … `}}` variable openings.
+//! `{%` … `%}` tag bodies exist as [`Token::Tag`] in the enum but are not yet emitted by the lexer.
+
 use crate::errors::{Result, RunjucksError};
 
+/// Which special delimiter region appears next in the input.
+///
+/// Used internally to find the earliest of comment vs variable openers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TagRegion {
+    /// `{#` … `#}` comment (content omitted from token stream).
     Comment,
+    /// `{{` … `}}` variable / expression.
     Variable,
 }
 
 impl TagRegion {
+    /// Regions scanned when searching for the next delimiter.
     pub const ALL: &'static [TagRegion] = &[TagRegion::Comment, TagRegion::Variable];
 
+    /// Opening delimiter for this region.
     pub fn open(self) -> &'static str {
         match self {
             TagRegion::Comment => "{#",
@@ -16,6 +28,7 @@ impl TagRegion {
         }
     }
 
+    /// Closing delimiter for this region.
     pub fn close(self) -> &'static str {
         match self {
             TagRegion::Comment => "#}",
@@ -32,15 +45,31 @@ fn earliest_region(rest: &str) -> Option<(TagRegion, usize)> {
         .min_by_key(|(_, idx)| *idx)
 }
 
+/// One lexical unit from a template.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
+    /// Plain text until the next special delimiter.
     Text(String),
-    /// Body inside `{{` … `}}` (current lexer keeps inner whitespace).
+    /// Body inside `{{` … `}}` (inner whitespace is preserved today).
     Expression(String),
-    /// Body inside `{%` … `%}` (template / control tags). Lexing not implemented yet.
+    /// Body inside `{%` … `%}`; parsing of tags is not implemented yet.
     Tag(String),
 }
 
+/// Incremental lexer over a template string.
+///
+/// Prefer [`tokenize`] unless you need streaming consumption.
+///
+/// # Examples
+///
+/// ```
+/// use runjucks_core::lexer::{Lexer, Token};
+///
+/// let mut lex = Lexer::new("a{{b}}");
+/// assert_eq!(lex.next_token().unwrap(), Some(Token::Text("a".into())));
+/// assert_eq!(lex.next_token().unwrap(), Some(Token::Expression("b".into())));
+/// assert_eq!(lex.next_token().unwrap(), None);
+/// ```
 #[derive(Debug, Clone)]
 pub struct Lexer<'a> {
     input: &'a str,
@@ -48,15 +77,18 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    /// Starts at the beginning of `input`.
     pub fn new(input: &'a str) -> Self {
         Self { input, position: 0 }
     }
 
+    /// Remaining unconsumed input.
     #[inline]
     pub fn rest(&self) -> &'a str {
         self.input.get(self.position..).unwrap_or("")
     }
 
+    /// `true` when all input has been consumed.
     #[inline]
     pub fn is_eof(&self) -> bool {
         self.position >= self.input.len()
@@ -102,6 +134,11 @@ impl<'a> Lexer<'a> {
         Ok(Token::Expression(expression))
     }
 
+    /// Returns the next token, or `None` at end of input.
+    ///
+    /// # Errors
+    ///
+    /// Malformed comments, unclosed `{{`, or nested `{{` inside an expression.
     pub fn next_token(&mut self) -> Result<Option<Token>> {
         loop {
             if self.is_eof() {
@@ -133,6 +170,23 @@ impl<'a> Lexer<'a> {
     }
 }
 
+/// Tokenizes the full `input` into a [`Vec`] of [`Token`]s.
+///
+/// An empty string yields a single [`Token::Text`] with empty content.
+///
+/// # Errors
+///
+/// Same as [`Lexer::next_token`].
+///
+/// # Examples
+///
+/// ```
+/// use runjucks_core::lexer::{tokenize, Token};
+///
+/// let tokens = tokenize("Hi {{ name }}").unwrap();
+/// assert!(matches!(tokens[0], Token::Text(_)));
+/// assert!(matches!(tokens[1], Token::Expression(_)));
+/// ```
 pub fn tokenize(input: &str) -> Result<Vec<Token>> {
     if input.is_empty() {
         return Ok(vec![Token::Text(String::new())]);

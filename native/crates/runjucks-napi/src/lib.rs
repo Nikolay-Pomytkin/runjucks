@@ -1,25 +1,8 @@
 #![deny(clippy::all)]
 
-#[doc(hidden)]
-pub mod ast;
-pub mod environment;
-pub mod errors;
-#[doc(hidden)]
-pub mod filters;
-#[doc(hidden)]
-pub mod lexer;
-#[doc(hidden)]
-pub mod parser;
-#[doc(hidden)]
-pub mod renderer;
-#[doc(hidden)]
-pub mod value;
-
-pub use environment::Environment;
-pub use errors::RunjucksError;
-
 use napi::bindgen_prelude::Unknown;
 use napi_derive::napi;
+use runjucks_core::{Environment, RunjucksError};
 use std::sync::{Arc, Mutex};
 
 #[napi]

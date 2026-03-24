@@ -3,11 +3,15 @@
   "type": "module",
   "version": "0.0.1",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
     "api": "typedoc --options typedoc.json",
-    "build": "npm run api && astro build",
+    "api:rust": "cargo doc --manifest-path ../native/Cargo.toml --no-deps -p runjucks_core && rm -rf public/rustdoc && cp -R ../native/target/doc public/rustdoc",
+    "build": "npm run api && npm run api:rust && astro build",
     "preview": "astro preview",
     "astro": "astro"
   },

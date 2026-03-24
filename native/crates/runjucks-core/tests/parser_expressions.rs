@@ -1,9 +1,9 @@
 //! Parser parity with nunjucks expression / output parsing.
 //! See nunjucks/tests/parser.js (`should parse basic types`, …).
 
-use runjucks::ast::{Expr, Node};
-use runjucks::lexer::tokenize;
-use runjucks::parser::parse;
+use runjucks_core::ast::{Expr, Node};
+use runjucks_core::lexer::tokenize;
+use runjucks_core::parser::parse;
 use serde_json::{json, Value};
 
 #[test]

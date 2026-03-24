@@ -35,7 +35,8 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						{ label: 'Node.js API (TypeDoc)', link: 'api/' },
-						{ label: 'Rust crate (rustdoc)', slug: 'contributing/rust' },
+						{ label: 'Rust crate (rustdoc)', link: 'rustdoc/runjucks_core/' },
+						{ label: 'Package managers', slug: 'contributing/package-managers' },
 					],
 				},
 			],

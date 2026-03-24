@@ -1,4 +1,4 @@
-use runjucks::value::value_to_string;
+use runjucks_core::value::value_to_string;
 use serde_json::json;
 
 #[test]

@@ -1,4 +1,4 @@
-use runjucks::lexer::{tokenize, Lexer, Token};
+use runjucks_core::lexer::{tokenize, Lexer, Token};
 
 #[test]
 fn tokenize_empty_is_single_empty_text_token() {

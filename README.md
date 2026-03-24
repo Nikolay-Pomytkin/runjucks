@@ -29,25 +29,56 @@ flowchart LR
 | Area | Contents |
 |------|----------|
 | **Node package** (this directory) | `package.json`, `index.js`, `index.d.ts`, `__test__/`, generated `*.node` |
-| **[`native/`](native/)** | Rust crate: [`native/Cargo.toml`](native/Cargo.toml), [`native/src/`](native/src/) (NAPI + engine), [`native/src/tests/`](native/src/tests/) (integration tests) |
+| **[`native/`](native/)** | Cargo **workspace** ([`native/Cargo.toml`](native/Cargo.toml)): [`runjucks_core`](native/crates/runjucks-core/) (engine), [`runjucks-napi`](native/crates/runjucks-napi/) (Node addon), [`native/fixtures/`](native/fixtures/) |
 
-### Rust crate (`native/src/`)
+### Rust workspace (`native/crates/`)
 
-| Module | Role |
-|--------|------|
-| [`native/src/lexer.rs`](native/src/lexer.rs) | Tokenizer (to match `nunjucks/src/lexer.js`) |
-| [`native/src/parser.rs`](native/src/parser.rs) | Recursive-descent parser |
-| [`native/src/ast.rs`](native/src/ast.rs) | AST nodes and expressions |
-| [`native/src/renderer.rs`](native/src/renderer.rs) | Tree-walk interpreter |
-| [`native/src/environment.rs`](native/src/environment.rs) | Options (autoescape, dev, …) |
-| [`native/src/filters.rs`](native/src/filters.rs) | Built-in filters (growing over time) |
-| [`native/src/value.rs`](native/src/value.rs) | JSON value → string for output |
-| [`native/src/errors.rs`](native/src/errors.rs) | Error types |
-| [`native/src/lib.rs`](native/src/lib.rs) | NAPI exports (`renderString`, `Environment`) |
+| Crate / module | Role |
+|----------------|------|
+| [`runjucks_core`](native/crates/runjucks-core/) | Pure Rust engine (`lexer`, `parser`, `ast`, `renderer`, `environment`, …); publishable to crates.io |
+| [`runjucks-napi`](native/crates/runjucks-napi/) | `#[napi]` bindings (`renderString`, `Environment`) → `.node` binary |
+| [`runjucks_core::lexer`](native/crates/runjucks-core/src/lexer.rs) | Tokenizer (to match `nunjucks/src/lexer.js`) |
+| [`runjucks_core::parser`](native/crates/runjucks-core/src/parser.rs) | Recursive-descent parser |
+| [`runjucks_core::ast`](native/crates/runjucks-core/src/ast.rs) | AST nodes and expressions |
+| [`runjucks_core::renderer`](native/crates/runjucks-core/src/renderer.rs) | Tree-walk interpreter |
+| [`runjucks_core::environment`](native/crates/runjucks-core/src/environment.rs) | Options (autoescape, dev, …) |
+| [`runjucks_core::filters`](native/crates/runjucks-core/src/filters.rs) | Built-in filters (growing over time) |
+| [`runjucks_core::value`](native/crates/runjucks-core/src/value.rs) | JSON value → string for output |
+| [`runjucks_core::errors`](native/crates/runjucks-core/src/errors.rs) | Error types |
 
 ## Prerequisites
 
-- **Rust** (stable), **Node.js** ≥ 18, **npm**
+- **Rust** (stable), **Node.js** ≥ 18, **npm** (canonical toolchain for this package)
+- **Documentation site** ([`docs/`](docs/)): **Node.js ≥ 22.12** (required by current Astro; see [`docs/package.json`](docs/package.json) `engines`)
+
+### Package manager (Node-first, optional Bun)
+
+**Default (what CI uses):** install with **npm** and run **`npm run …`** scripts from this directory.
+
+```bash
+npm install
+npm run build
+npm test
+npm run docs:dev
+```
+
+**Optional — [Bun](https://bun.sh):** you can use the same script names; lockfiles remain npm (`package-lock.json`).
+
+```bash
+bun install
+bun run build
+bun run test
+# Docs live in docs/ — from repo root, docs scripts use npm --prefix; with Bun:
+cd docs && bun run dev
+cd docs && bun run build
+```
+
+**Caveats:**
+
+- The **native NAPI build** is validated on **Node** in GitHub Actions. If `bun run build` or tests misbehave, switch to Node/npm.
+- **`npm test`** uses **`node --test`**. That is not the same as **`bun test`**; keep using `npm test` (or `bun run test`, which runs the npm script and invokes `node --test`) for parity with CI.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for a short contributor-focused summary.
 
 ## Documentation site
 
@@ -55,7 +86,7 @@ The Starlight + TypeDoc site lives in [`docs/`](docs/). From this directory:
 
 ```bash
 npm run docs:dev      # local dev server
-npm run docs:build    # TypeDoc + static output in docs/dist/
+npm run docs:build    # TypeDoc + rustdoc + Starlight → docs/dist/
 ```
 
 Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)).
@@ -67,7 +98,7 @@ cd runjucks
 npm install
 npm run build        # release build; produces runjucks.<platform>.node + index.js + index.d.ts
 npm test             # Node tests (__test__/*.test.mjs; requires `npm run build` first)
-npm run test:rust    # Rust integration tests (`native/src/tests/`; same as `cargo test --manifest-path native/Cargo.toml`)
+npm run test:rust    # Rust integration tests (`native/crates/runjucks-core/tests/`; `cargo test --manifest-path native/Cargo.toml`)
 ```
 
 Debug builds:
@@ -78,7 +109,7 @@ npm run build:debug
 
 ### Testing
 
-Integration tests live under [`native/src/tests/`](native/src/tests/). Internal modules used only by tests are `#[doc(hidden)]` in [`native/src/lib.rs`](native/src/lib.rs).
+Integration tests live under [`native/crates/runjucks-core/tests/`](native/crates/runjucks-core/tests/). The **`runjucks_core`** crate documents the full engine API (see `cargo doc -p runjucks_core` or the docs site’s **Rust crate (rustdoc)** link).
 
 - **`npm run test:rust`** or **`cargo test --manifest-path native/Cargo.toml`** — all Rust integration tests.
 - **`npm test`** — Node tests (run `npm run build` first).

@@ -1,4 +1,4 @@
-use runjucks::filters::escape_html;
+use runjucks_core::filters::escape_html;
 
 #[test]
 fn escape_html_escapes_special_chars() {

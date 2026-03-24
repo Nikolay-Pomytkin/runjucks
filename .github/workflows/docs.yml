@@ -1,4 +1,4 @@
-# Builds Starlight + TypeDoc and deploys to GitHub Pages (project site).
+# Builds Starlight + TypeDoc + rustdoc and deploys to GitHub Pages (project site).
 # Set repository Settings → Pages → Source: GitHub Actions.
 
 name: Docs
@@ -9,6 +9,8 @@ on:
     paths:
       - 'docs/**'
       - 'index.d.ts'
+      - 'native/crates/runjucks-core/**'
+      - 'native/Cargo.toml'
       - '.github/workflows/docs.yml'
 
 permissions:
@@ -29,9 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: docs/package-lock.json
       - name: Install

@@ -1,4 +1,4 @@
-use runjucks::RunjucksError;
+use runjucks_core::RunjucksError;
 
 #[test]
 fn display_message() {
