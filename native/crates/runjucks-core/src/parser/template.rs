@@ -1,15 +1,28 @@
-//! `{% … %}` statement parsing: `if` / `elif` / `else`, `for`, `set`.
+//! `{% … %}` statement parsing: `if` / `elif` / `else`, `for`, `set`, `include`, `extends`, `block`, `macro`.
 
 #![allow(clippy::manual_contains)]
 
-use crate::ast::{Expr, IfBranch, Node};
+use crate::ast::{Expr, IfBranch, MacroDef, Node};
 use crate::errors::{Result, RunjucksError};
 use crate::lexer::Token;
 use crate::parser::parse_expr;
 
-/// Longer keywords first so `elseif` does not match as `else`.
+/// Longer keywords first so `elseif` does not match as `else`, `endblock` before `block`, etc.
 const TAG_KEYWORDS: &[&str] = &[
-    "elseif", "elif", "endif", "endfor", "for", "set", "if", "else",
+    "elseif",
+    "elif",
+    "endblock",
+    "endmacro",
+    "endif",
+    "endfor",
+    "extends",
+    "include",
+    "macro",
+    "block",
+    "for",
+    "set",
+    "if",
+    "else",
 ];
 
 fn first_tag_keyword(body: &str) -> String {
@@ -96,6 +109,68 @@ fn parse_set_rhs(after_set: &str) -> Result<(String, Expr)> {
     }
     let expr_s = s[eq + 1..].trim();
     Ok((name.to_string(), parse_expr(expr_s)?))
+}
+
+/// Parses a quoted template path (`"a.html"` or `'a.html'`).
+fn parse_quoted_path(rest: &str) -> Result<String> {
+    let s = rest.trim();
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        return Ok(s[1..s.len() - 1].to_string());
+    }
+    if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
+        return Ok(s[1..s.len() - 1].to_string());
+    }
+    Err(RunjucksError::new("expected quoted template path"))
+}
+
+fn parse_block_name(rest: &str) -> Result<String> {
+    let mut it = rest.trim().split_whitespace();
+    let name = it
+        .next()
+        .ok_or_else(|| RunjucksError::new("`block` requires a name"))?;
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(RunjucksError::new("invalid `block` name"));
+    }
+    if it.next().is_some() {
+        return Err(RunjucksError::new("unexpected tokens after `block` name"));
+    }
+    Ok(name.to_string())
+}
+
+fn parse_macro_header(rest: &str) -> Result<(String, Vec<String>)> {
+    let rest = rest.trim();
+    let open = rest
+        .find('(')
+        .ok_or_else(|| RunjucksError::new("expected `macro name(...)`"))?;
+    let name_part = rest[..open].trim();
+    if name_part.is_empty()
+        || !name_part
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(RunjucksError::new("invalid macro name"));
+    }
+    let close = rest
+        .rfind(')')
+        .ok_or_else(|| RunjucksError::new("unclosed `)` in macro"))?;
+    let inner = rest[open + 1..close].trim();
+    let params: Vec<String> = if inner.is_empty() {
+        vec![]
+    } else {
+        inner
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+    let tail = rest[close + 1..].trim();
+    if !tail.is_empty() {
+        return Err(RunjucksError::new("unexpected tokens after macro header"));
+    }
+    Ok((name_part.to_string(), params))
 }
 
 /// Parses a sequence of nodes until a tag whose first keyword is in `stop` (tag not consumed).
@@ -196,6 +271,63 @@ fn parse_set_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     Ok(Node::Set { name, value })
 }
 
+fn parse_include_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `include` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["include"])?;
+    let template = parse_quoted_path(rest)?;
+    *i += 1;
+    Ok(Node::Include { template })
+}
+
+fn parse_extends_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `extends` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["extends"])?;
+    let parent = parse_quoted_path(rest)?;
+    *i += 1;
+    Ok(Node::Extends { parent })
+}
+
+fn parse_block_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `block` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["block"])?;
+    let block_name = parse_block_name(rest)?;
+    *i += 1;
+    let body = parse_until_tags(tokens, i, &["endblock"])?;
+    let Token::Tag(eb) = &tokens[*i] else {
+        return Err(RunjucksError::new("expected `{% endblock %}`"));
+    };
+    let after = strip_keyword_prefix(eb, &["endblock"])?;
+    let end_name = after.trim();
+    if !end_name.is_empty() && end_name != block_name {
+        return Err(RunjucksError::new(format!(
+            "`endblock` name `{end_name}` does not match `block {block_name}`"
+        )));
+    }
+    *i += 1;
+    Ok(Node::Block {
+        name: block_name,
+        body,
+    })
+}
+
+fn parse_macro_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `macro` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["macro"])?;
+    let (name, params) = parse_macro_header(rest)?;
+    *i += 1;
+    let body = parse_until_tags(tokens, i, &["endmacro"])?;
+    expect_tag(tokens, i, &["endmacro"])?;
+    Ok(Node::MacroDef(MacroDef { name, params, body }))
+}
+
 fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
     match &tokens[*i] {
         Token::Text(s) => {
@@ -213,9 +345,15 @@ fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
                 "if" => parse_if_chain(tokens, i),
                 "for" => parse_for_stmt(tokens, i),
                 "set" => parse_set_stmt(tokens, i),
-                "elif" | "elseif" | "else" | "endif" | "endfor" => Err(RunjucksError::new(
-                    format!("unexpected `{{%{body}%}}` (no matching opening tag)"),
-                )),
+                "include" => parse_include_stmt(tokens, i),
+                "extends" => parse_extends_stmt(tokens, i),
+                "block" => parse_block_stmt(tokens, i),
+                "macro" => parse_macro_stmt(tokens, i),
+                "elif" | "elseif" | "else" | "endif" | "endfor" | "endblock" | "endmacro" => {
+                    Err(RunjucksError::new(format!(
+                        "unexpected `{{%{body}%}}` (no matching opening tag)"
+                    )))
+                }
                 _ => Err(RunjucksError::new(format!(
                     "unsupported tag keyword `{kw}`"
                 ))),

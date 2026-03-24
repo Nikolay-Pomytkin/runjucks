@@ -6,6 +6,10 @@ export declare class Environment {
   setAutoescape(enabled: boolean): void
   setDev(enabled: boolean): void
   addFilter(name: string, func: unknown): void
+  /** Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc. */
+  setTemplateMap(map: Record<string, string>): void
+  /** Renders a named template from the map set via [`set_template_map`]. */
+  renderTemplate(name: string, context: any): string
 }
 export type JsEnvironment = Environment
 

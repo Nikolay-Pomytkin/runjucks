@@ -9,7 +9,7 @@ fn render_nested_root_flattens_text() {
     let inner = Node::Root(vec![Node::Text("a".into()), Node::Text("b".into())]);
     let root = Node::Root(vec![inner]);
     let mut ctx = json!({});
-    let out = render(&env, &root, &mut ctx).unwrap();
+    let out = render(&env, None, &root, &mut ctx).unwrap();
     assert_eq!(out, "ab");
 }
 
@@ -18,7 +18,7 @@ fn render_output_literal() {
     let env = Environment::default();
     let root = Node::Root(vec![Node::Output(vec![Expr::Literal(json!("hi"))])]);
     let mut ctx = json!({});
-    let out = render(&env, &root, &mut ctx).unwrap();
+    let out = render(&env, None, &root, &mut ctx).unwrap();
     assert_eq!(out, "hi");
 }
 
@@ -27,7 +27,7 @@ fn render_output_variable_missing_is_empty() {
     let env = Environment::default();
     let root = Node::Root(vec![Node::Output(vec![Expr::Variable("missing".into())])]);
     let mut ctx = json!({});
-    let out = render(&env, &root, &mut ctx).unwrap();
+    let out = render(&env, None, &root, &mut ctx).unwrap();
     assert_eq!(out, "");
 }
 
@@ -36,7 +36,7 @@ fn render_output_variable_present() {
     let env = Environment::default();
     let root = Node::Root(vec![Node::Output(vec![Expr::Variable("name".into())])]);
     let mut ctx = json!({ "name": "Ada" });
-    let out = render(&env, &root, &mut ctx).unwrap();
+    let out = render(&env, None, &root, &mut ctx).unwrap();
     assert_eq!(out, "Ada");
 }
 
@@ -45,10 +45,11 @@ fn render_variable_autoescapes_html_when_enabled() {
     let env = Environment {
         autoescape: true,
         dev: false,
+        loader: None,
     };
     let root = Node::Root(vec![Node::Output(vec![Expr::Variable("x".into())])]);
     let mut ctx = json!({ "x": "<script>" });
-    let out = render(&env, &root, &mut ctx).unwrap();
+    let out = render(&env, None, &root, &mut ctx).unwrap();
     assert_eq!(out, "&lt;script&gt;");
 }
 
@@ -57,9 +58,10 @@ fn render_variable_no_escape_when_autoescape_off() {
     let env = Environment {
         autoescape: false,
         dev: false,
+        loader: None,
     };
     let root = Node::Root(vec![Node::Output(vec![Expr::Variable("x".into())])]);
     let mut ctx = json!({ "x": "<b>" });
-    let out = render(&env, &root, &mut ctx).unwrap();
+    let out = render(&env, None, &root, &mut ctx).unwrap();
     assert_eq!(out, "<b>");
 }

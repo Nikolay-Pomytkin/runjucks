@@ -2,7 +2,8 @@
 
 use napi::bindgen_prelude::Unknown;
 use napi_derive::napi;
-use runjucks_core::{Environment, RunjucksError};
+use runjucks_core::{map_loader, Environment, RunjucksError};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 #[napi]
@@ -71,5 +72,31 @@ impl JsEnvironment {
     pub fn add_filter(&mut self, _name: String, _func: Unknown) -> napi::Result<()> {
         let _ = _func;
         Ok(())
+    }
+
+    /// Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc.
+    #[napi]
+    pub fn set_template_map(&self, map: HashMap<String, String>) -> napi::Result<()> {
+        let mut env = self
+            .inner
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        env.loader = Some(map_loader(map));
+        Ok(())
+    }
+
+    /// Renders a named template from the map set via [`set_template_map`].
+    #[napi(js_name = "renderTemplate")]
+    pub fn render_template(
+        &self,
+        name: String,
+        context: serde_json::Value,
+    ) -> napi::Result<String> {
+        let env = self
+            .inner
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        env.render_template(&name, context)
+            .map_err(|e: RunjucksError| napi::Error::from_reason(e.to_string()))
     }
 }

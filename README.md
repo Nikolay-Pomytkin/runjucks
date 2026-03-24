@@ -10,13 +10,14 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 
 - **Output** — `{{ … }}` with Nunjucks-oriented expressions: literals, variables, `.` / `[…]` / `(…)`, unary/binary operators, chained comparisons, `in`, inline `cond if a else b`, list and object literals, and `is` tests (including `equalto` / `sameas` call forms).
 - **Filters** — Pipelines `| name` / `| name(args)` with a growing built-in set: `upper`, `lower`, `length`, `join`, `replace`, `round`, `escape` / `e`, `default`, `abs`, `capitalize`, plus HTML auto-escaping when `autoescape` is on.
-- **Tags** — `{% if %}` / `{% elif %}` / `{% else %}` / `{% endif %}`, `{% for … in … %}` (with optional `{% else %}`), `{% set name = expr %}`.
+- **Tags** — `{% if %}` / `{% elif %}` / `{% else %}` / `{% endif %}`, `{% for … in … %}` (with optional `{% else %}`), `{% set name = expr %}`, `{% include "path" %}`, `{% extends "path" %}` with `{% block name %}…{% endblock %}`, and same-file `{% macro name(args) %}…{% endmacro %}` with `{{ macroName(args) }}` calls.
+- **Composition** — [`TemplateLoader`](native/crates/runjucks-core/src/loader.rs) on [`Environment`](native/crates/runjucks-core/src/environment.rs): `render_template(name, ctx)` in Rust; in Node, `setTemplateMap({ ... })` then `renderTemplate(name, ctx)`.
 - **Other** — Plain text, `{# comments #}`, and JSON object context (missing keys follow Nunjucks-style empty output for many paths).
 
 **Still missing or stubbed (typical next steps vs Nunjucks):**
 
-- **Templates** — `extends`, `block`, `include`, `import`, `macro`, `call`, `from`, `raw`, etc.
-- **Loaders & async** — File/async loaders and Nunjucks’ full module story.
+- **Templates** — `{% import %}`, `{% from %}`, `{% call %}` / `caller`, `{{ super() }}` in blocks, `{% raw %}` (partial: lexer may handle), etc.
+- **Loaders & async** — Async / filesystem loaders beyond an in-memory map; Nunjucks’ full async story.
 - **JS `addFilter`** — Exposed on `Environment` but **not wired** into Rust yet (no-op); custom filters are Rust built-ins only today.
 - **Parity** — Many upstream golden tests still fail; see [`native/fixtures/conformance/`](native/fixtures/conformance/README.md).
 
@@ -138,7 +139,7 @@ Integration tests live under [`native/crates/runjucks-core/tests/`](native/crate
 Generated TypeScript definitions are in [`index.d.ts`](index.d.ts). The entry points mirror Nunjucks-style naming:
 
 - **`renderString(template, context)`** — render with default options (autoescape on).
-- **`new Environment()`** — `renderString`, `setAutoescape`, `setDev`; **`addFilter` is currently a no-op** (custom filters from JS are not implemented yet).
+- **`new Environment()`** — `renderString`, `setAutoescape`, `setDev`, **`setTemplateMap`**, **`renderTemplate`**; **`addFilter` is currently a no-op** (custom filters from JS are not implemented yet).
 
 Example:
 
@@ -155,6 +156,12 @@ console.log(
     label: '<em>x</em>',
   }),
 )
+
+env.setTemplateMap({
+  'base.html': '<html>{% block m %}{% endblock %}</html>',
+  'page.html': '{% extends "base.html" %}{% block m %}Hi{% endblock %}',
+})
+console.log(env.renderTemplate('page.html', {}))
 ```
 
 ## Reference code

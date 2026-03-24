@@ -13,6 +13,14 @@ pub struct IfBranch {
     pub body: Vec<Node>,
 }
 
+/// A template macro definition (`{% macro name(args) %}…{% endmacro %}`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacroDef {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Vec<Node>,
+}
+
 /// Template structure produced by the parser.
 ///
 /// - [`Node::Root`]: sequence of top-level fragments (text + outputs).
@@ -37,6 +45,14 @@ pub enum Node {
     },
     /// `{% set name = expr %}`.
     Set { name: String, value: Expr },
+    /// `{% include "path" %}` — resolved via [`crate::loader::TemplateLoader`].
+    Include { template: String },
+    /// `{% extends "parent" %}` — must appear before meaningful content in a child template.
+    Extends { parent: String },
+    /// `{% block name %}…{% endblock %}` — default body when used in a base layout.
+    Block { name: String, body: Vec<Node> },
+    /// `{% macro name(a, b) %}…{% endmacro %}` — emits no output; registers a macro for the current template.
+    MacroDef(MacroDef),
 }
 
 /// Comparison operators in a Nunjucks-style chain (`a == b < c`).
