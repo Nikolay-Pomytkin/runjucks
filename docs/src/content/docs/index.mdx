@@ -1,0 +1,38 @@
+---
+title: Runjucks
+description: Nunjucks-compatible templates with a Rust rendering core for Node.js.
+template: splash
+hero:
+  tagline: Fast, familiar template syntax — lexer, parser, and renderer in Rust, bound with NAPI-RS.
+  image:
+    file: ../../assets/houston.webp
+  actions:
+    - text: Install
+      link: guides/installation/
+      icon: right-arrow
+      variant: primary
+    - text: Node.js API
+      link: api/
+      icon: document
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Why Runjucks?
+
+<CardGrid stagger>
+	<Card title="Nunjucks-shaped API" icon="star">
+		`renderString` and `Environment` mirror the API you know from [Nunjucks](https://mozilla.github.io/nunjucks/).
+	</Card>
+	<Card title="Rust core" icon="rocket">
+		Lex → parse → tree-walk render in Rust instead of compiling templates to JS.
+	</Card>
+	<Card title="TypeScript" icon="document">
+		Types ship with the package (`index.d.ts`). Full reference is [generated on build](api/).
+	</Card>
+</CardGrid>
+
+### Status
+
+Work in progress: `{{ }}` variables, `{# #}` comments, and plain text. `{% %}`, filters, inheritance, and loaders are not fully implemented yet.

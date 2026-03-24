@@ -1,0 +1,10 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["../index.d.ts"],
+  "tsconfig": "tsconfig.typedoc.json",
+  "out": "public/api",
+  "readme": "none",
+  "name": "Runjucks",
+  "disableSources": true,
+  "excludePrivate": true
+}

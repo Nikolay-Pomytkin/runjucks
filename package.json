@@ -42,7 +42,10 @@
     "test:pending": "node --test __test__/interpolation-pending.mjs",
     "test:rust": "cargo test --manifest-path native/Cargo.toml",
     "rust:test": "npm run test:rust",
-    "test:rust:green": "cargo test --manifest-path native/Cargo.toml --test environment --test errors --test filters --test lexer --test parser --test renderer --test value"
+    "test:rust:green": "cargo test --manifest-path native/Cargo.toml --test environment --test errors --test filters --test lexer --test parser --test renderer --test value",
+    "docs:dev": "npm run dev --prefix docs",
+    "docs:build": "npm run build --prefix docs",
+    "docs:preview": "npm run preview --prefix docs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0"

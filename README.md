@@ -49,6 +49,17 @@ flowchart LR
 
 - **Rust** (stable), **Node.js** ≥ 18, **npm**
 
+## Documentation site
+
+The Starlight + TypeDoc site lives in [`docs/`](docs/). From this directory:
+
+```bash
+npm run docs:dev      # local dev server
+npm run docs:build    # TypeDoc + static output in docs/dist/
+```
+
+Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)).
+
 ## Development
 
 ```bash
