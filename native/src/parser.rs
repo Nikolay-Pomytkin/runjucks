@@ -11,6 +11,11 @@ pub fn parse(tokens: &[Token]) -> Result<Node> {
                 let expr = parse_expr(inner)?;
                 nodes.push(Node::Output(vec![expr]));
             }
+            Token::Tag(_) => {
+                return Err(RunjucksError::new(
+                    "template tags `{% %}` are not implemented yet",
+                ));
+            }
         }
     }
     Ok(Node::Root(nodes))

@@ -39,6 +39,7 @@
     "test": "node --test __test__/*.test.mjs",
     "test:pending": "node --test __test__/interpolation-pending.mjs",
     "test:rust": "cargo test --manifest-path native/Cargo.toml",
+    "rust:test": "npm run test:rust",
     "test:rust:green": "cargo test --manifest-path native/Cargo.toml --test environment --test errors --test filters --test lexer --test parser --test renderer --test value"
   },
   "devDependencies": {

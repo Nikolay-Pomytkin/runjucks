@@ -155,3 +155,54 @@ fn comment_can_contain_double_braces_as_text() {
     let tokens = tokenize("{# {{ not a var }} #}ok").unwrap();
     assert_eq!(tokens, vec![Token::Text("ok".into())]);
 }
+
+#[test]
+fn tokenize_empty_tag_body() {
+    let tokens = tokenize("{% %}").unwrap();
+    assert_eq!(tokens, vec![Token::Tag(String::new())]);
+}
+
+#[test]
+fn tokenize_if_tag_trimmed_body() {
+    let tokens = tokenize("{% if foo %}").unwrap();
+    assert_eq!(tokens, vec![Token::Tag("if foo".into())]);
+}
+
+#[test]
+fn tokenize_text_tag_text() {
+    let tokens = tokenize("Hello{% if x %}world").unwrap();
+    assert_eq!(
+        tokens,
+        vec![
+            Token::Text("Hello".into()),
+            Token::Tag("if x".into()),
+            Token::Text("world".into()),
+        ]
+    );
+}
+
+#[test]
+fn unclosed_tag_errors() {
+    let err = tokenize("hello {% no close").unwrap_err();
+    assert!(
+        err.to_string().contains("unclosed") || err.to_string().contains("tag"),
+        "unexpected message: {}",
+        err
+    );
+}
+
+#[test]
+fn tag_before_comment_starts_tag_first() {
+    let tokens = tokenize("{% if %}{# c #}y").unwrap();
+    assert_eq!(
+        tokens,
+        vec![Token::Tag("if".into()), Token::Text("y".into())]
+    );
+}
+
+/// `{#` starts before `{{`; `{%` inside a comment is not a tag opener.
+#[test]
+fn comment_before_variable_even_when_comment_contains_tag_like_text() {
+    let tokens = tokenize("{# {% #}{{ x }}").unwrap();
+    assert_eq!(tokens, vec![Token::Expression(" x ".into())]);
+}

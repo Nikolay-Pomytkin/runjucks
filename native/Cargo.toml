@@ -44,6 +44,10 @@ name = "lexer"
 path = "src/tests/lexer.rs"
 
 [[test]]
+name = "lexer_control_flow"
+path = "src/tests/lexer_control_flow.rs"
+
+[[test]]
 name = "parser"
 path = "src/tests/parser.rs"
 

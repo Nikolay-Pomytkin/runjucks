@@ -35,7 +35,10 @@ fn earliest_region(rest: &str) -> Option<(TagRegion, usize)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     Text(String),
+    /// Body inside `{{` … `}}` (current lexer keeps inner whitespace).
     Expression(String),
+    /// Body inside `{%` … `%}` (template / control tags). Lexing not implemented yet.
+    Tag(String),
 }
 
 #[derive(Debug, Clone)]
