@@ -1,6 +1,8 @@
 //! Builds [`crate::ast::Node`] trees from [`crate::lexer::Token`] streams.
 //!
 //! Variable bodies are parsed with [`parse_expr`] (currently a single identifier only).
+//! For `{%` … `%}` tags, use [`crate::tag_lex::tokenize_tag_body`] on [`crate::lexer::Token::Tag`] inner strings;
+//! control-flow AST and statement parsing are not implemented yet (tags still error in [`parse`]).
 
 use crate::ast::{Expr, Node};
 use crate::errors::{Result, RunjucksError};

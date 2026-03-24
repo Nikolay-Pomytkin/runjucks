@@ -7,8 +7,9 @@
 //!
 //! Pipeline:
 //! 1. [`lexer::tokenize`] splits template source into [`lexer::Token`]s.
-//! 2. [`parser::parse`] builds an [`ast::Node`] tree (and [`parser::parse_expr`] for `{{ }}` bodies).
-//! 3. [`renderer::render`] walks the AST with an [`Environment`] and JSON [`serde_json::Value`] context.
+//! 2. For each [`lexer::Token::Tag`], [`tag_lex::tokenize_tag_body`] can split the inner string into keywords and identifiers.
+//! 3. [`parser::parse`] builds an [`ast::Node`] tree (and [`parser::parse_expr`] for `{{ }}` bodies).
+//! 4. [`renderer::render`] walks the AST with an [`Environment`] and JSON [`serde_json::Value`] context.
 //!
 //! # Example
 //!
@@ -30,6 +31,7 @@ pub mod filters;
 pub mod lexer;
 pub mod parser;
 pub mod renderer;
+pub mod tag_lex;
 pub mod value;
 
 pub use environment::Environment;
