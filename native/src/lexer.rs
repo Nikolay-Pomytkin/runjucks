@@ -1,31 +1,31 @@
 use crate::errors::{Result, RunjucksError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Region {
+pub enum TagRegion {
     Comment,
     Variable,
 }
 
-impl Region {
-    pub const ALL: &'static [Region] = &[Region::Comment, Region::Variable];
+impl TagRegion {
+    pub const ALL: &'static [TagRegion] = &[TagRegion::Comment, TagRegion::Variable];
 
     pub fn open(self) -> &'static str {
         match self {
-            Region::Comment => "{#",
-            Region::Variable => "{{",
+            TagRegion::Comment => "{#",
+            TagRegion::Variable => "{{",
         }
     }
 
     pub fn close(self) -> &'static str {
         match self {
-            Region::Comment => "#}",
-            Region::Variable => "}}",
+            TagRegion::Comment => "#}",
+            TagRegion::Variable => "}}",
         }
     }
 }
 
-fn earliest_region(rest: &str) -> Option<(Region, usize)> {
-    Region::ALL
+fn earliest_region(rest: &str) -> Option<(TagRegion, usize)> {
+    TagRegion::ALL
         .iter()
         .copied()
         .filter_map(|r| rest.find(r.open()).map(|idx| (r, idx)))
@@ -61,11 +61,11 @@ impl<'a> Lexer<'a> {
 
     fn skip_comment(&mut self) -> Result<()> {
         let rest = self.rest();
-        let open = Region::Comment.open();
+        let open = TagRegion::Comment.open();
         if !rest.starts_with(open) {
             return Err(RunjucksError::new("internal lexer error: expected `{#`"));
         }
-        let close = Region::Comment.close();
+        let close = TagRegion::Comment.close();
         let Some(end_rel) = rest.find(close) else {
             return Err(RunjucksError::new(
                 "unclosed comment: expected `#}` after `{#`",
@@ -76,7 +76,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn consume_variable(&mut self) -> Result<Token> {
-        let var = Region::Variable;
+        let var = TagRegion::Variable;
         self.position += var.open().len();
         let after_open = self.rest();
 
@@ -113,11 +113,11 @@ impl<'a> Lexer<'a> {
                     self.position = self.input.len();
                     return Ok(Some(Token::Text(text)));
                 }
-                Some((Region::Comment, 0)) => {
+                Some((TagRegion::Comment, 0)) => {
                     self.skip_comment()?;
                     continue;
                 }
-                Some((Region::Variable, 0)) => {
+                Some((TagRegion::Variable, 0)) => {
                     return self.consume_variable().map(Some);
                 }
                 Some((_, idx)) => {

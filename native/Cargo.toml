@@ -1,0 +1,56 @@
+[package]
+name = "runjucks"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-powered Nunjucks-compatible template engine (Node.js native addon)"
+license = "MIT"
+
+[lib]
+# `cdylib` for the Node native addon; `rlib` so `cargo test` and integration tests can link the crate.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+napi = { version = "3", features = ["serde-json"] }
+napi-derive = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = "symbols"
+
+# Integration tests live under `src/tests/` (Cargo only auto-discovers `tests/` at crate root).
+[[test]]
+name = "environment"
+path = "src/tests/environment.rs"
+
+[[test]]
+name = "errors"
+path = "src/tests/errors.rs"
+
+[[test]]
+name = "filters"
+path = "src/tests/filters.rs"
+
+[[test]]
+name = "interpolation"
+path = "src/tests/interpolation.rs"
+
+[[test]]
+name = "lexer"
+path = "src/tests/lexer.rs"
+
+[[test]]
+name = "parser"
+path = "src/tests/parser.rs"
+
+[[test]]
+name = "renderer"
+path = "src/tests/renderer.rs"
+
+[[test]]
+name = "value"
+path = "src/tests/value.rs"

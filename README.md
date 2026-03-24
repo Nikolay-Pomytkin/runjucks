@@ -24,19 +24,26 @@ flowchart LR
   R -->|"string"| JS
 ```
 
-### Crate layout
+### Repository layout
+
+| Area | Contents |
+|------|----------|
+| **Node package** (this directory) | `package.json`, `index.js`, `index.d.ts`, `__test__/`, generated `*.node` |
+| **[`native/`](native/)** | Rust crate: [`native/Cargo.toml`](native/Cargo.toml), [`native/src/`](native/src/) (NAPI + engine), [`native/src/tests/`](native/src/tests/) (integration tests) |
+
+### Rust crate (`native/src/`)
 
 | Module | Role |
 |--------|------|
-| [`src/lexer.rs`](src/lexer.rs) | Tokenizer (to match `nunjucks/src/lexer.js`) |
-| [`src/parser.rs`](src/parser.rs) | Recursive-descent parser |
-| [`src/ast.rs`](src/ast.rs) | AST nodes and expressions |
-| [`src/renderer.rs`](src/renderer.rs) | Tree-walk interpreter |
-| [`src/environment.rs`](src/environment.rs) | Options (autoescape, dev, …) |
-| [`src/filters.rs`](src/filters.rs) | Built-in filters (growing over time) |
-| [`src/value.rs`](src/value.rs) | JSON value → string for output |
-| [`src/errors.rs`](src/errors.rs) | Error types |
-| [`src/lib.rs`](src/lib.rs) | NAPI exports (`renderString`, `Environment`) |
+| [`native/src/lexer.rs`](native/src/lexer.rs) | Tokenizer (to match `nunjucks/src/lexer.js`) |
+| [`native/src/parser.rs`](native/src/parser.rs) | Recursive-descent parser |
+| [`native/src/ast.rs`](native/src/ast.rs) | AST nodes and expressions |
+| [`native/src/renderer.rs`](native/src/renderer.rs) | Tree-walk interpreter |
+| [`native/src/environment.rs`](native/src/environment.rs) | Options (autoescape, dev, …) |
+| [`native/src/filters.rs`](native/src/filters.rs) | Built-in filters (growing over time) |
+| [`native/src/value.rs`](native/src/value.rs) | JSON value → string for output |
+| [`native/src/errors.rs`](native/src/errors.rs) | Error types |
+| [`native/src/lib.rs`](native/src/lib.rs) | NAPI exports (`renderString`, `Environment`) |
 
 ## Prerequisites
 
@@ -49,7 +56,7 @@ cd runjucks
 npm install
 npm run build        # release build; produces runjucks.<platform>.node + index.js + index.d.ts
 npm test             # Node tests (__test__/*.test.mjs; requires `npm run build` first)
-cargo test           # Rust integration tests (`tests/`)
+npm run test:rust    # Rust integration tests (`native/src/tests/`; same as `cargo test --manifest-path native/Cargo.toml`)
 ```
 
 Debug builds:
@@ -60,9 +67,9 @@ npm run build:debug
 
 ### Testing
 
-Integration tests live under [`tests/`](tests/). Internal modules used only by tests are `#[doc(hidden)]` in [`src/lib.rs`](src/lib.rs).
+Integration tests live under [`native/src/tests/`](native/src/tests/). Internal modules used only by tests are `#[doc(hidden)]` in [`native/src/lib.rs`](native/src/lib.rs).
 
-- **`cargo test`** — all Rust integration tests.
+- **`npm run test:rust`** or **`cargo test --manifest-path native/Cargo.toml`** — all Rust integration tests.
 - **`npm test`** — Node tests (run `npm run build` first).
 - **`npm run test:rust:green`** — subset of Rust tests (see [`package.json`](package.json)).
 - **`npm run test:pending`** — optional Node checks in [`__test__/interpolation-pending.mjs`](__test__/interpolation-pending.mjs).

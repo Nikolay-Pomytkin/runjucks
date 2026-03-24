@@ -34,11 +34,12 @@
     "node": ">= 18"
   },
   "scripts": {
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir .",
+    "build:debug": "napi build --platform --manifest-path native/Cargo.toml --output-dir .",
     "test": "node --test __test__/*.test.mjs",
     "test:pending": "node --test __test__/interpolation-pending.mjs",
-    "test:rust:green": "cargo test --test environment --test errors --test filters --test lexer --test parser --test renderer --test value"
+    "test:rust": "cargo test --manifest-path native/Cargo.toml",
+    "test:rust:green": "cargo test --manifest-path native/Cargo.toml --test environment --test errors --test filters --test lexer --test parser --test renderer --test value"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0"
