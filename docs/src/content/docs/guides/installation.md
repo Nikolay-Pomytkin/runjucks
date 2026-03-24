@@ -5,7 +5,7 @@ description: Add Runjucks to a Node.js project and build the native addon.
 
 ## Prerequisites
 
-- **Node.js** 18+
+- **Node.js** — **≥ 18** for the **published npm package** and native addon builds (see root `package.json` `engines`). The **documentation site** in `docs/` is built with **Astro** and requires **Node ≥ 22.12** (see `docs/package.json` `engines`); use that version when running `npm run dev` or `npm run build` in `docs/`.
 - **Rust** (stable) and a C toolchain (for `napi-rs` native builds)
 
 ## From the repository

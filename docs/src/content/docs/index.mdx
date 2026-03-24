@@ -3,7 +3,7 @@ title: Runjucks
 description: Nunjucks-compatible templates with a Rust rendering core for Node.js.
 template: splash
 hero:
-  tagline: Fast, familiar template syntax — lexer, parser, and renderer in Rust, bound with NAPI-RS.
+  tagline: Fast, familiar template syntax — lex tags and expressions in Rust, parse rich {{ }} with a Nunjucks-style engine, tree-walk render; Node bindings via NAPI-RS.
   image:
     file: ../../assets/houston.webp
   actions:
@@ -11,6 +11,10 @@ hero:
       link: guides/installation/
       icon: right-arrow
       variant: primary
+    - text: Syntax and parity
+      link: guides/syntax/
+      icon: open-book
+      variant: minimal
     - text: Node.js API
       link: api/
       icon: document
@@ -26,13 +30,18 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 		`renderString` and `Environment` mirror the API you know from [Nunjucks](https://mozilla.github.io/nunjucks/).
 	</Card>
 	<Card title="Rust core" icon="rocket">
-		Lex → parse → tree-walk render in Rust instead of compiling templates to JS.
+		Lex → parse → render in Rust: string-aware delimiters, whitespace control, and expression parsing (nom) — no compile-to-JS `eval` in the hot path.
 	</Card>
 	<Card title="TypeScript" icon="document">
 		Types ship with the package (`index.d.ts`). Full reference is [generated on build](api/).
+	</Card>
+	<Card title="Conformance" icon="approve-check">
+		Golden JSON fixtures under `native/fixtures/conformance/`; see [Development](guides/development/) and [Syntax and parity](guides/syntax/) for what is tested and what is skipped.
 	</Card>
 </CardGrid>
 
 ### Status
 
-Work in progress: `{{ }}` variables, `{# #}` comments, and plain text. `{% %}`, filters, inheritance, and loaders are not fully implemented yet.
+**Working today:** plain text, `{# #}` comments, `{{ … }}` with literals, operators, `is` / `in`, and Nunjucks-style trim markers; the **lexer** emits `{% … %}` tags (and `raw` / `verbatim` blocks).
+
+**Not wired through render yet:** template-level [`parse()`](rustdoc/runjucks_core/parser/fn.parse.html) still **errors on `Token::Tag`** — so full `{% if %}`, `{% for %}`, filters (`|`), and loaders are **not** end-to-end like upstream Nunjucks. See [Syntax and parity](guides/syntax/).
