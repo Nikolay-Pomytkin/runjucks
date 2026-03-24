@@ -1,0 +1,28 @@
+/* Runjucks docs — light touches on Starlight defaults; bump accent slightly. */
+
+:root {
+	--sl-color-accent-low: #c7d2fe;
+	--sl-color-accent: #4f46e5;
+	--sl-color-accent-high: #312e81;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent: #4338ca;
+	--sl-color-accent-high: #1e1b4b;
+}
+
+body {
+	font-family:
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		Roboto,
+		'Helvetica Neue',
+		Arial,
+		sans-serif;
+}
+
+/* Slightly clearer prose width feel on wide screens */
+.sl-markdown-content {
+	max-width: 50rem;
+}

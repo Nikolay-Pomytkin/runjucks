@@ -1,7 +1,7 @@
 //! Parser edge cases and Nunjucks `tests/parser.js`-inspired cases (expression subset).
 //! Regex literal `{{ r/.../ }}` is intentionally unsupported — see `regex_literal_not_supported`.
 
-use runjucks_core::ast::{BinOp, CompareOp, Expr, Node};
+use runjucks_core::ast::{BinOp, CompareOp, Expr, Node, UnaryOp};
 use runjucks_core::lexer::tokenize;
 use runjucks_core::parser::parse;
 use serde_json::{json, Value};
@@ -86,12 +86,26 @@ fn or_and_not_precedence() {
 #[test]
 fn not_in_membership() {
     let tokens = tokenize("{{ 1 not in [1, 2] }}").unwrap();
-    let err = parse(&tokens).unwrap_err();
-    assert!(
-        err.to_string().contains("parse") || err.to_string().contains("expression"),
-        "{}",
-        err
-    );
+    let ast = parse(&tokens).unwrap();
+    let Node::Root(ch) = ast else {
+        panic!("expected root");
+    };
+    let Node::Output(exprs) = &ch[0] else {
+        panic!("expected output");
+    };
+    assert!(matches!(
+        &exprs[0],
+        Expr::Unary {
+            op: UnaryOp::Not,
+            expr
+        } if matches!(
+            expr.as_ref(),
+            Expr::Binary {
+                op: BinOp::In,
+                ..
+            }
+        )
+    ));
 }
 
 #[test]

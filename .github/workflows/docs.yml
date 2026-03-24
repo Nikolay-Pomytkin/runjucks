@@ -42,9 +42,9 @@ jobs:
       - name: Build site and API reference
         run: npm run build
         env:
-          # Project site: https://<owner>.github.io/<repo>/
-          ASTRO_SITE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
-          ASTRO_BASE_PATH: /${{ github.event.repository.name }}/
+          # Production: https://nikolay.pomytkin.com/runjucks/ (custom domain + subpath on GitHub Pages)
+          ASTRO_SITE: https://nikolay.pomytkin.com
+          ASTRO_BASE_PATH: /runjucks/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/dist

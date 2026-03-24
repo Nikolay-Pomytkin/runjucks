@@ -1,20 +1,21 @@
 //! Builds [`crate::ast::Node`] trees from [`crate::lexer::Token`] streams.
 //!
 //! `{{ … }}` bodies are parsed with [`parse_expr`] (nom-driven, Nunjucks-style precedence; see [`expr`]).
-//! For `{%` … `%}` tags, use [`crate::tag_lex::tokenize_tag_body`] on [`crate::lexer::Token::Tag`] inner strings;
-//! control-flow AST and statement parsing are not implemented yet (tags still error in [`parse`]).
+//! `{% … %}` supports `if` / `elif` / `else` / `endif`, `for` / `else` / `endfor`, and `set` (see [`template`]).
+//! For other tags, use [`crate::tag_lex::tokenize_tag_body`] for tokenization only.
 
 pub mod expr;
+mod template;
 
 use crate::ast::{Expr, Node};
-use crate::errors::{Result, RunjucksError};
+use crate::errors::Result;
 use crate::lexer::Token;
 
 /// Parses a token stream into a single [`Node::Root`] containing child nodes.
 ///
 /// # Errors
 ///
-/// Returns an error if a [`Token::Tag`] is present (`{%` … `%}` is not implemented yet).
+/// Returns an error on malformed `{% %}` blocks, unknown tag keywords, or invalid expressions.
 ///
 /// # Examples
 ///
@@ -26,22 +27,7 @@ use crate::lexer::Token;
 /// let root = parse(&tokens).unwrap();
 /// ```
 pub fn parse(tokens: &[Token]) -> Result<Node> {
-    let mut nodes = Vec::new();
-    for t in tokens {
-        match t {
-            Token::Text(s) => nodes.push(Node::Text(s.clone())),
-            Token::Expression(inner) => {
-                let e = parse_expr(inner)?;
-                nodes.push(Node::Output(vec![e]));
-            }
-            Token::Tag(_) => {
-                return Err(RunjucksError::new(
-                    "template tags `{% %}` are not implemented yet",
-                ));
-            }
-        }
-    }
-    Ok(Node::Root(nodes))
+    template::parse_template_tokens(tokens)
 }
 
 /// Parses the inside of a `{{` … `}}` region into an [`Expr`].

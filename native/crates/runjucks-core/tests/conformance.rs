@@ -50,12 +50,13 @@ fn conformance_render_matches_nunjucks_golden_outputs() {
                 env.dev = d;
             }
         }
-        // Skip fixtures that need statement tags, filters, or `is` tests with call syntax.
-        if case.template.contains("{%")
-            || case.template.contains('|')
-            || case.template.contains("equalto")
-            || case.template.contains("sameas")
-        {
+        // Skip cases that need filters or language bits we do not model yet.
+        if matches!(
+            case.id.as_str(),
+            "tests_js_filter_default_undefined"
+                | "tests_js_for_batch"
+                | "tests_js_set_and_output"
+        ) {
             continue;
         }
         let result = env.render_string(case.template.clone(), case.context.clone());

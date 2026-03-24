@@ -3,7 +3,7 @@
 use crate::ast::{BinOp, CompareOp, Expr, Node, UnaryOp};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 /// Renders `root` to a string using `env` and `ctx`.
 ///
@@ -25,24 +25,15 @@ use serde_json::{json, Value};
 ///
 /// let env = Environment::default();
 /// let ast = parse(&tokenize("{{ x }}").unwrap()).unwrap();
-/// let s = render(&env, &ast, &json!({"x": "y"})).unwrap();
+/// let mut ctx = json!({"x": "y"});
+/// let s = render(&env, &ast, &mut ctx).unwrap();
 /// assert_eq!(s, "y");
 /// ```
-pub fn render(env: &Environment, root: &Node, ctx: &Value) -> Result<String> {
-    match root {
-        Node::Root(nodes) => {
-            let mut out = String::new();
-            for n in nodes {
-                out.push_str(&render_node(env, n, ctx)?);
-            }
-            Ok(out)
-        }
-        Node::Text(s) => Ok(s.clone()),
-        Node::Output(exprs) => render_output(env, exprs, ctx),
-    }
+pub fn render(env: &Environment, root: &Node, ctx: &mut Value) -> Result<String> {
+    render_node(env, root, ctx)
 }
 
-fn render_node(env: &Environment, n: &Node, ctx: &Value) -> Result<String> {
+fn render_node(env: &Environment, n: &Node, ctx: &mut Value) -> Result<String> {
     match n {
         Node::Root(nodes) => {
             let mut out = String::new();
@@ -53,10 +44,87 @@ fn render_node(env: &Environment, n: &Node, ctx: &Value) -> Result<String> {
         }
         Node::Text(s) => Ok(s.clone()),
         Node::Output(exprs) => render_output(env, exprs, ctx),
+        Node::If { branches } => {
+            for br in branches {
+                if let Some(cond) = &br.cond {
+                    if !is_truthy(&eval_to_value(env, cond, ctx)?) {
+                        continue;
+                    }
+                }
+                return render_children(env, &br.body, ctx);
+            }
+            Ok(String::new())
+        }
+        Node::For {
+            var,
+            iter,
+            body,
+            else_body,
+        } => {
+            let v = eval_to_value(env, iter, ctx)?;
+            let empty = match &v {
+                Value::Array(a) => a.is_empty(),
+                _ => true,
+            };
+            if empty {
+                return if let Some(eb) = else_body {
+                    render_children(env, eb, ctx)
+                } else {
+                    Ok(String::new())
+                };
+            }
+            let Value::Array(items) = v else {
+                return if let Some(eb) = else_body {
+                    render_children(env, eb, ctx)
+                } else {
+                    Ok(String::new())
+                };
+            };
+            let base = ctx_as_map(ctx)?.clone();
+            let mut acc = String::new();
+            for item in items {
+                let mut scope = base.clone();
+                scope.insert(var.clone(), item);
+                let mut child = Value::Object(scope);
+                acc.push_str(&render_children(env, body, &mut child)?);
+            }
+            Ok(acc)
+        }
+        Node::Set { name, value } => {
+            let v = eval_to_value(env, value, ctx)?;
+            ctx_as_map_mut(ctx)?.insert(name.clone(), v);
+            Ok(String::new())
+        }
     }
 }
 
-fn render_output(env: &Environment, exprs: &[Expr], ctx: &Value) -> Result<String> {
+fn render_children(env: &Environment, nodes: &[Node], ctx: &mut Value) -> Result<String> {
+    let mut out = String::new();
+    for child in nodes {
+        out.push_str(&render_node(env, child, ctx)?);
+    }
+    Ok(out)
+}
+
+fn ctx_as_map(ctx: &Value) -> Result<&Map<String, Value>> {
+    match ctx {
+        Value::Object(m) => Ok(m),
+        _ => Err(RunjucksError::new(
+            "template context must be a JSON object for `for` / `set`",
+        )),
+    }
+}
+
+fn ctx_as_map_mut(ctx: &mut Value) -> Result<&mut Map<String, Value>> {
+    match ctx {
+        Value::Object(m) => Ok(m),
+        _ => Err(RunjucksError::new(
+            "template context must be a JSON object for `for` / `set`",
+        )),
+    }
+}
+
+fn render_output(env: &Environment, exprs: &[Expr], ctx: &mut Value) -> Result<String> {
     let mut out = String::new();
     for e in exprs {
         out.push_str(&eval_for_output(env, e, ctx)?);
@@ -64,22 +132,18 @@ fn render_output(env: &Environment, exprs: &[Expr], ctx: &Value) -> Result<Strin
     Ok(out)
 }
 
-/// Template output for `{{ expr }}`: literals are not auto-escaped; variables are when enabled.
+/// Template output for `{{ expr }}`: literals are not auto-escaped; other values respect [`Environment::autoescape`].
 fn eval_for_output(env: &Environment, e: &Expr, ctx: &Value) -> Result<String> {
     match e {
         Expr::Literal(v) => Ok(crate::value::value_to_string(v)),
-        Expr::Variable(name) => {
-            let v = lookup_variable(ctx, name)?;
+        _ => {
+            let v = eval_to_value(env, e, ctx)?;
             let s = crate::value::value_to_string(&v);
             if env.autoescape {
                 Ok(crate::filters::escape_html(&s))
             } else {
                 Ok(s)
             }
-        }
-        _ => {
-            let v = eval_to_value(env, e, ctx)?;
-            Ok(crate::value::value_to_string(&v))
         }
     }
 }
@@ -153,18 +217,43 @@ fn eval_in(key: &Value, container: &Value) -> Result<bool> {
     }
 }
 
-/// Right-hand side of `is` may be an identifier (`number`) or keyword-as-literal (`null is null`).
-fn is_test_name(e: &Expr) -> Option<&str> {
+/// Right-hand side of `is`: identifier, string/null literal, or call (`equalto(3)`).
+fn is_test_parts(e: &Expr) -> Option<(&str, &[Expr])> {
     match e {
-        Expr::Variable(n) => Some(n.as_str()),
-        Expr::Literal(Value::String(s)) => Some(s.as_str()),
-        Expr::Literal(Value::Null) => Some("null"),
+        Expr::Variable(n) => Some((n.as_str(), &[])),
+        Expr::Literal(Value::String(s)) => Some((s.as_str(), &[])),
+        Expr::Literal(Value::Null) => Some(("null", &[])),
+        Expr::Call { callee, args } => {
+            if let Expr::Variable(n) = callee.as_ref() {
+                Some((n.as_str(), args.as_slice()))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
 
-fn eval_is_test(test_name: &str, value: &Value) -> bool {
-    match test_name {
+fn eval_is_test(
+    env: &Environment,
+    test_name: &str,
+    value: &Value,
+    arg_exprs: &[Expr],
+    ctx: &Value,
+) -> Result<bool> {
+    let arg_vals: Vec<Value> = arg_exprs
+        .iter()
+        .map(|e| eval_to_value(env, e, ctx))
+        .collect::<Result<_>>()?;
+    Ok(match test_name {
+        "equalto" => arg_vals.first().map(|a| a == value).unwrap_or(false),
+        "sameas" => match arg_vals.first() {
+            Some(a) => match (value, a) {
+                (Value::Object(_), Value::Object(_)) | (Value::Array(_), Value::Array(_)) => false,
+                _ => a == value,
+            },
+            None => false,
+        },
         "null" | "none" => value.is_null(),
         "falsy" => !is_truthy(value),
         "truthy" => is_truthy(value),
@@ -181,7 +270,7 @@ fn eval_is_test(test_name: &str, value: &Value) -> bool {
         "callable" => false,
         "defined" => !value.is_null(),
         _ => false,
-    }
+    })
 }
 
 fn as_number(v: &Value) -> Option<f64> {
@@ -305,8 +394,8 @@ fn eval_to_value(env: &Environment, e: &Expr, ctx: &Value) -> Result<Value> {
                 Ok(Value::Bool(eval_in(&key, &container)?))
             }
             BinOp::Is => {
-                let test_name = is_test_name(right).ok_or_else(|| {
-                    RunjucksError::new("`is` test name must be an identifier, string, or null")
+                let (test_name, arg_exprs) = is_test_parts(right).ok_or_else(|| {
+                    RunjucksError::new("`is` test must be an identifier, call, string, or null")
                 })?;
                 if test_name == "defined" {
                     if let Expr::Variable(n) = &**left {
@@ -314,7 +403,9 @@ fn eval_to_value(env: &Environment, e: &Expr, ctx: &Value) -> Result<Value> {
                     }
                 }
                 let v = eval_to_value(env, left, ctx)?;
-                Ok(Value::Bool(eval_is_test(test_name, &v)))
+                Ok(Value::Bool(eval_is_test(
+                    env, test_name, &v, arg_exprs, ctx,
+                )?))
             }
         },
         Expr::Compare { head, rest } => {
@@ -339,6 +430,59 @@ fn eval_to_value(env: &Environment, e: &Expr, ctx: &Value) -> Result<Value> {
             } else {
                 Ok(Value::Null)
             }
+        }
+        Expr::GetAttr { base, attr } => {
+            let b = eval_to_value(env, base, ctx)?;
+            match b {
+                Value::Object(o) => Ok(o.get(attr).cloned().unwrap_or(Value::Null)),
+                _ => Ok(Value::Null),
+            }
+        }
+        Expr::GetItem { base, index } => {
+            let b = eval_to_value(env, base, ctx)?;
+            let i = eval_to_value(env, index, ctx)?;
+            match (&b, &i) {
+                (Value::Array(a), Value::Number(n)) => {
+                    let idx = n
+                        .as_u64()
+                        .or_else(|| n.as_f64().map(|x| x as u64))
+                        .unwrap_or(0) as usize;
+                    Ok(a.get(idx).cloned().unwrap_or(Value::Null))
+                }
+                (Value::Object(o), Value::String(k)) => Ok(o.get(k).cloned().unwrap_or(Value::Null)),
+                _ => Ok(Value::Null),
+            }
+        }
+        Expr::Call { .. } => Err(RunjucksError::new(
+            "function calls are not supported in expressions yet",
+        )),
+        Expr::Filter { name, input, args } => {
+            let input_v = eval_to_value(env, input, ctx)?;
+            let arg_vals: Vec<Value> = args
+                .iter()
+                .map(|a| eval_to_value(env, a, ctx))
+                .collect::<Result<_>>()?;
+            crate::filters::apply_builtin(env, name, &input_v, &arg_vals)
+        }
+        Expr::List(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for it in items {
+                out.push(eval_to_value(env, it, ctx)?);
+            }
+            Ok(Value::Array(out))
+        }
+        Expr::Dict(pairs) => {
+            use serde_json::Map;
+            let mut m = Map::new();
+            for (k, v) in pairs {
+                let key_v = eval_to_value(env, k, ctx)?;
+                let key = match key_v {
+                    Value::String(s) => s,
+                    _ => crate::value::value_to_string(&key_v),
+                };
+                m.insert(key, eval_to_value(env, v, ctx)?);
+            }
+            Ok(Value::Object(m))
         }
     }
 }

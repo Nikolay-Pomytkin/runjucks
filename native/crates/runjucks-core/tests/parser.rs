@@ -49,11 +49,11 @@ fn parse_expr_errors_on_incomplete_binary() {
 }
 
 #[test]
-fn parse_errors_when_stream_contains_tag() {
+fn parse_errors_on_unclosed_if_tag() {
     let tokens = tokenize("{% if x %}").unwrap();
     let err = parse(&tokens).unwrap_err();
     assert!(
-        err.to_string().contains("not implemented"),
+        err.to_string().contains("endif") || err.to_string().contains("unclosed"),
         "unexpected: {}",
         err
     );

@@ -2,10 +2,10 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
-// GitHub Pages project site: set ASTRO_BASE_PATH=/<repo>/ in CI (e.g. /runjucks/).
+// Production (CI): ASTRO_SITE=https://nikolay.pomytkin.com ASTRO_BASE_PATH=/runjucks/
 const base = process.env.ASTRO_BASE_PATH ?? '/';
 
-const repoUrl = 'https://github.com/runjucks/runjucks';
+const repoUrl = 'https://github.com/Nikolay-Pomytkin/runjucks';
 
 const faviconHref =
 	(base === '/' ? '' : base.replace(/\/$/, '')) + '/favicon.svg';

@@ -160,5 +160,40 @@
     "template": "{{ \"FOOBAR\" is upper }}",
     "context": {},
     "expected": "true"
+  },
+  {
+    "id": "lookup_nested_key",
+    "source": "postfix access",
+    "template": "{{ user.name }}",
+    "context": { "user": { "name": "Ada" } },
+    "expected": "Ada"
+  },
+  {
+    "id": "array_index_zero",
+    "source": "subscript",
+    "template": "{{ items[0] }}",
+    "context": { "items": ["first", "second"] },
+    "expected": "first"
+  },
+  {
+    "id": "filter_length_array",
+    "source": "length filter",
+    "template": "{{ [1, 2, 3] | length }}",
+    "context": {},
+    "expected": "3"
+  },
+  {
+    "id": "if_truthy_branch",
+    "source": "if/endif",
+    "template": "{% if show %}on{% endif %}",
+    "context": { "show": true },
+    "expected": "on"
+  },
+  {
+    "id": "for_simple_sum_style",
+    "source": "for loop",
+    "template": "{% for n in nums %}{{ n }}{% endfor %}",
+    "context": { "nums": [7, 8] },
+    "expected": "78"
   }
 ]

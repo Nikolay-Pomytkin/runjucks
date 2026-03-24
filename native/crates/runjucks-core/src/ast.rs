@@ -5,6 +5,14 @@
 
 use serde_json::Value;
 
+/// One branch of an `{% if %}` / `{% elif %}` / `{% else %}` chain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfBranch {
+    /// Condition; [`None`] for `{% else %}`.
+    pub cond: Option<Expr>,
+    pub body: Vec<Node>,
+}
+
 /// Template structure produced by the parser.
 ///
 /// - [`Node::Root`]: sequence of top-level fragments (text + outputs).
@@ -18,6 +26,17 @@ pub enum Node {
     Text(String),
     /// Content inside `{{` … `}}` after expression parsing.
     Output(Vec<Expr>),
+    /// `{% if %}`, optional `{% elif %}`, optional `{% else %}`, `{% endif %}`.
+    If { branches: Vec<IfBranch> },
+    /// `{% for var in iter %} … {% endfor %}` (optional `{% else %}` before `endfor`).
+    For {
+        var: String,
+        iter: Expr,
+        body: Vec<Node>,
+        else_body: Option<Vec<Node>>,
+    },
+    /// `{% set name = expr %}`.
+    Set { name: String, value: Expr },
 }
 
 /// Comparison operators in a Nunjucks-style chain (`a == b < c`).
@@ -67,6 +86,31 @@ pub enum Expr {
     Literal(Value),
     /// Context key; non-existent keys render as empty (Nunjucks-style).
     Variable(String),
+    /// Attribute access: `base.attr` (Nunjucks `LookupVal`).
+    GetAttr {
+        base: Box<Expr>,
+        attr: String,
+    },
+    /// Subscript: `base[index]`.
+    GetItem {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
+    /// Function-style call `callee(args…)` (runtime may be limited until globals exist).
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    /// Filter pipeline step: `input | name` or `input | name(arg, …)`.
+    Filter {
+        name: String,
+        input: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    /// Array literal `[a, b, …]` with arbitrary expressions.
+    List(Vec<Expr>),
+    /// Object literal `{ key: val, …}` (keys are expressions, usually strings or identifiers).
+    Dict(Vec<(Expr, Expr)>),
     /// Python-style conditional: `body if cond else else_`.
     InlineIf {
         cond: Box<Expr>,

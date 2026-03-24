@@ -19,7 +19,7 @@ fn trim_start(s: &str) -> &str {
 fn keyword_boundary(s: &str, kw_len: usize) -> bool {
     s.as_bytes()
         .get(kw_len)
-        .map_or(true, |&b| !b.is_ascii_alphanumeric() && b != b'_')
+        .is_none_or(|&b| !b.is_ascii_alphanumeric() && b != b'_')
 }
 
 fn parse_keyword<'a>(input: &'a str, kw: &str) -> Option<&'a str> {
@@ -146,19 +146,175 @@ fn parse_identifier(input: &str) -> IResult<&str, String> {
     Ok((&input[end..], input[..end].to_string()))
 }
 
-fn parse_primary(input: &str) -> IResult<&str, Expr> {
-    let input = trim_start(input);
-    if input.starts_with('(') {
-        let after = &input[1..];
-        let (rest, e) = parse_inline_if(after)?;
-        let rest = trim_start(rest);
-        if let Some(r) = rest.strip_prefix(')') {
-            return Ok((r, e));
+/// `ident` or `foo.bar` filter names (Nunjucks [`parseFilterName`](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/parser.js)).
+fn parse_filter_name(input: &str) -> IResult<&str, String> {
+    let (mut rest, mut name) = parse_identifier(input)?;
+    loop {
+        let r = trim_start(rest);
+        if let Some(r2) = r.strip_prefix('.') {
+            let (r3, part) = parse_identifier(trim_start(r2))?;
+            name.push('.');
+            name.push_str(&part);
+            rest = r3;
+        } else {
+            break;
         }
-        return Err(nom::Err::Failure(nom::error::Error::new(
+    }
+    Ok((rest, name))
+}
+
+fn parse_call_argument_list(input: &str) -> IResult<&str, Vec<Expr>> {
+    let mut rest = trim_start(input);
+    if let Some(r) = rest.strip_prefix(')') {
+        return Ok((r, vec![]));
+    }
+    let mut args = Vec::new();
+    loop {
+        let (r, e) = parse_inline_if(rest)?;
+        args.push(e);
+        let r = trim_start(r);
+        if let Some(r2) = r.strip_prefix(')') {
+            return Ok((r2, args));
+        }
+        let r = r.strip_prefix(',').ok_or_else(|| {
+            nom::Err::Failure(nom::error::Error::new(
+                r,
+                nom::error::ErrorKind::Tag,
+            ))
+        })?;
+        rest = trim_start(r);
+    }
+}
+
+fn parse_postfix(input: &str, mut node: Expr) -> IResult<&str, Expr> {
+    let mut rest = input;
+    loop {
+        let r = trim_start(rest);
+        if let Some(r2) = r.strip_prefix('.') {
+            let (r3, attr) = parse_identifier(trim_start(r2))?;
+            node = Expr::GetAttr {
+                base: Box::new(node),
+                attr,
+            };
+            rest = r3;
+            continue;
+        }
+        if let Some(r2) = r.strip_prefix('[') {
+            let (r3, idx) = parse_inline_if(trim_start(r2))?;
+            let r3 = trim_start(r3);
+            let r4 = r3.strip_prefix(']').ok_or_else(|| {
+                nom::Err::Failure(nom::error::Error::new(
+                    r3,
+                    nom::error::ErrorKind::Tag,
+                ))
+            })?;
+            node = Expr::GetItem {
+                base: Box::new(node),
+                index: Box::new(idx),
+            };
+            rest = r4;
+            continue;
+        }
+        if let Some(r2) = r.strip_prefix('(') {
+            let (r3, args) = parse_call_argument_list(r2)?;
+            node = Expr::Call {
+                callee: Box::new(node),
+                args,
+            };
+            rest = r3;
+            continue;
+        }
+        break;
+    }
+    Ok((rest, node))
+}
+
+fn parse_list_literal(input: &str) -> IResult<&str, Expr> {
+    let input = trim_start(input);
+    let after = input.strip_prefix('[').ok_or_else(|| {
+        nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Tag,
-        )));
+        ))
+    })?;
+    let mut rest = trim_start(after);
+    if let Some(r) = rest.strip_prefix(']') {
+        return Ok((r, Expr::List(vec![])));
+    }
+    let mut items = Vec::new();
+    loop {
+        let (r, e) = parse_inline_if(rest)?;
+        items.push(e);
+        let r = trim_start(r);
+        if let Some(r2) = r.strip_prefix(']') {
+            return Ok((r2, Expr::List(items)));
+        }
+        let r = r.strip_prefix(',').ok_or_else(|| {
+            nom::Err::Failure(nom::error::Error::new(
+                r,
+                nom::error::ErrorKind::Tag,
+            ))
+        })?;
+        rest = trim_start(r);
+    }
+}
+
+fn parse_dict_literal(input: &str) -> IResult<&str, Expr> {
+    let input = trim_start(input);
+    let after = input.strip_prefix('{').ok_or_else(|| {
+        nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))
+    })?;
+    let mut rest = trim_start(after);
+    if let Some(r) = rest.strip_prefix('}') {
+        return Ok((r, Expr::Dict(vec![])));
+    }
+    let mut pairs = Vec::new();
+    loop {
+        let (r, k) = parse_inline_if(rest)?;
+        let r = trim_start(r);
+        let r = r.strip_prefix(':').ok_or_else(|| {
+            nom::Err::Failure(nom::error::Error::new(
+                r,
+                nom::error::ErrorKind::Tag,
+            ))
+        })?;
+        let (r, v) = parse_inline_if(trim_start(r))?;
+        pairs.push((k, v));
+        let r = trim_start(r);
+        if let Some(r2) = r.strip_prefix('}') {
+            return Ok((r2, Expr::Dict(pairs)));
+        }
+        let r = r.strip_prefix(',').ok_or_else(|| {
+            nom::Err::Failure(nom::error::Error::new(
+                r,
+                nom::error::ErrorKind::Tag,
+            ))
+        })?;
+        rest = trim_start(r);
+    }
+}
+
+fn parse_atom(input: &str) -> IResult<&str, Expr> {
+    let input = trim_start(input);
+    if let Some(after) = input.strip_prefix('(') {
+        let (rest, e) = parse_inline_if(after)?;
+        let rest = trim_start(rest);
+        let r = rest.strip_prefix(')').ok_or_else(|| {
+            nom::Err::Failure(nom::error::Error::new(
+                rest,
+                nom::error::ErrorKind::Tag,
+            ))
+        })?;
+        return Ok((r, e));
+    }
+    if input.starts_with('[') {
+        return parse_list_literal(input);
+    }
+    if input.starts_with('{') {
+        return parse_dict_literal(input);
     }
     if let Ok((rest, v)) = parse_string(input) {
         return Ok((rest, Expr::Literal(json!(v))));
@@ -173,10 +329,41 @@ fn parse_primary(input: &str) -> IResult<&str, Expr> {
     Ok((rest, Expr::Variable(name)))
 }
 
-fn parse_unary(input: &str) -> IResult<&str, Expr> {
+fn parse_atom_with_postfix(input: &str) -> IResult<&str, Expr> {
+    let (rest, atom) = parse_atom(input)?;
+    parse_postfix(rest, atom)
+}
+
+fn parse_filter_chain(input: &str, mut node: Expr) -> IResult<&str, Expr> {
+    let mut rest = input;
+    loop {
+        let r = trim_start(rest);
+        if !r.starts_with('|') {
+            break;
+        }
+        let after = &r[1..];
+        let after = trim_start(after);
+        let (r2, name) = parse_filter_name(after)?;
+        let after_name = trim_start(r2);
+        let (r3, extra_args) = if let Some(inner) = after_name.strip_prefix('(') {
+            parse_call_argument_list(inner)?
+        } else {
+            (after_name, vec![])
+        };
+        node = Expr::Filter {
+            name,
+            input: Box::new(node),
+            args: extra_args,
+        };
+        rest = r3;
+    }
+    Ok((rest, node))
+}
+
+fn parse_unary_no_filters(input: &str) -> IResult<&str, Expr> {
     let t = trim_start(input);
     if let Some(rest) = parse_keyword(t, "not") {
-        let (rest, e) = parse_unary(rest)?;
+        let (rest, e) = parse_unary_no_filters(rest)?;
         return Ok((
             rest,
             Expr::Unary {
@@ -189,14 +376,13 @@ fn parse_unary(input: &str) -> IResult<&str, Expr> {
         && t
             .as_bytes()
             .get(1)
-            .map_or(false, |b| b.is_ascii_digit() || *b == b'.')
+            .is_some_and(|b| b.is_ascii_digit() || *b == b'.')
     {
-        // negative number
         let (rest, v) = parse_number(t)?;
         return Ok((rest, Expr::Literal(v)));
     }
     if let Some(rest) = t.strip_prefix('-') {
-        let (rest, e) = parse_unary(rest)?;
+        let (rest, e) = parse_unary_no_filters(rest)?;
         return Ok((
             rest,
             Expr::Unary {
@@ -206,7 +392,7 @@ fn parse_unary(input: &str) -> IResult<&str, Expr> {
         ));
     }
     if let Some(rest) = t.strip_prefix('+') {
-        let (rest, e) = parse_unary(rest)?;
+        let (rest, e) = parse_unary_no_filters(rest)?;
         return Ok((
             rest,
             Expr::Unary {
@@ -215,15 +401,20 @@ fn parse_unary(input: &str) -> IResult<&str, Expr> {
             },
         ));
     }
-    parse_primary(input)
+    parse_atom_with_postfix(input)
+}
+
+fn parse_unary(input: &str) -> IResult<&str, Expr> {
+    let (rest, e) = parse_unary_no_filters(input)?;
+    parse_filter_chain(rest, e)
 }
 
 fn parse_pow(input: &str) -> IResult<&str, Expr> {
     let (mut rest, mut acc) = parse_unary(input)?;
     loop {
         let r = trim_start(rest);
-        if r.starts_with("**") {
-            rest = &r[2..];
+        if let Some(r2) = r.strip_prefix("**") {
+            rest = r2;
             let (r2, rhs) = parse_unary(rest)?;
             rest = r2;
             acc = Expr::Binary {

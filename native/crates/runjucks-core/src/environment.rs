@@ -73,6 +73,10 @@ impl Environment {
     pub fn render_string(&self, template: String, context: Value) -> Result<String> {
         let tokens = lexer::tokenize(&template)?;
         let ast = parser::parse(&tokens)?;
-        renderer::render(self, &ast, &context)
+        let mut ctx = match context {
+            Value::Object(m) => Value::Object(m),
+            _ => Value::Object(serde_json::Map::new()),
+        };
+        renderer::render(self, &ast, &mut ctx)
     }
 }

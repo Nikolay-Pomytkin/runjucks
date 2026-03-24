@@ -23,16 +23,19 @@ From this directory you can run **`bun install`**, **`bun run dev`**, **`bun run
 
 ## GitHub Pages
 
-The workflow [`.github/workflows/docs.yml`](../.github/workflows/docs.yml) sets:
+The workflow [`.github/workflows/docs.yml`](../.github/workflows/docs.yml) builds for the live URL:
 
-- `ASTRO_SITE` — `https://<owner>.github.io/<repo>`
-- `ASTRO_BASE_PATH` — `/<repo>/`
+**https://nikolay.pomytkin.com/runjucks/**
 
-For a **user** site (`username.github.io` with no project path), set `ASTRO_BASE_PATH=/` in the workflow or override when building locally.
+It sets `ASTRO_SITE=https://nikolay.pomytkin.com` and `ASTRO_BASE_PATH=/runjucks/` so Astro emits correct canonical URLs, sitemap, and asset paths. Configure your **GitHub Pages** custom domain and DNS to serve that host (or a reverse proxy) as usual.
 
 ## Local preview with a base path
 
+Match production:
+
 ```bash
-ASTRO_BASE_PATH=/runjucks/ ASTRO_SITE=https://you.github.io/runjucks npm run build
+ASTRO_BASE_PATH=/runjucks/ ASTRO_SITE=https://nikolay.pomytkin.com npm run build
 npm run preview
 ```
+
+For a quick local build at the site root (no subpath), omit the env vars or use `ASTRO_BASE_PATH=/`.
