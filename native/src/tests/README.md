@@ -4,8 +4,14 @@
 |------|--------|
 | `environment.rs` | `Environment::render_string` |
 | `interpolation.rs` | `{{ }}` variables |
-| `lexer.rs` | Tokenizer, `{# #}` |
-| Other `*.rs` | Parser, renderer, filters, … |
+| `lexer.rs` | Tokenizer, `{# #}`, `{% %}` (pending) |
+| `lexer_control_flow.rs` | Nunjucks block tags as `Token::Tag` bodies |
+| `lexer_whitespace.rs` | `{%-`, `-%}`, `{{-`, `-}}` |
+| `parser.rs` | Basic parse |
+| `parser_expressions.rs` | Literals, operators (parity with nunjucks parser tests) |
+| `parser_tags.rs` | `{% %}` tokenization for control flow |
+| `conformance.rs` | JSON goldens in [`../../fixtures/conformance/`](../../fixtures/conformance/README.md) |
+| Other `*.rs` | Renderer, filters, value, … |
 
 ```bash
 # from the npm package root (parent of `native/`)
@@ -14,4 +20,5 @@ cargo test --manifest-path native/Cargo.toml
 npm run test:rust
 ```
 
-To run a subset without `interpolation.rs`, use `npm run test:rust:green` from the package root.
+- **`npm run test:rust:green`** — subset that excludes long-running / parity crates (see `package.json`).
+- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — shared JSON fixtures (Rust vs `renderString`).

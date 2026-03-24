@@ -72,7 +72,9 @@ Integration tests live under [`native/src/tests/`](native/src/tests/). Internal 
 - **`npm run test:rust`** or **`cargo test --manifest-path native/Cargo.toml`** — all Rust integration tests.
 - **`npm test`** — Node tests (run `npm run build` first).
 - **`npm run test:rust:green`** — subset of Rust tests (see [`package.json`](package.json)).
+- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — Nunjucks golden vectors from [`native/fixtures/conformance/`](native/fixtures/conformance/README.md) (many cases fail until parity).
 - **`npm run test:pending`** — optional Node checks in [`__test__/interpolation-pending.mjs`](__test__/interpolation-pending.mjs).
+- Optional Mocha-style harness notes: [`test-shim/README.md`](test-shim/README.md).
 
 ## JavaScript API
 

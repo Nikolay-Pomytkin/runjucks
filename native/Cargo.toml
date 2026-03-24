@@ -48,6 +48,22 @@ name = "lexer_control_flow"
 path = "src/tests/lexer_control_flow.rs"
 
 [[test]]
+name = "conformance"
+path = "src/tests/conformance.rs"
+
+[[test]]
+name = "lexer_whitespace"
+path = "src/tests/lexer_whitespace.rs"
+
+[[test]]
+name = "parser_expressions"
+path = "src/tests/parser_expressions.rs"
+
+[[test]]
+name = "parser_tags"
+path = "src/tests/parser_tags.rs"
+
+[[test]]
 name = "parser"
 path = "src/tests/parser.rs"
 

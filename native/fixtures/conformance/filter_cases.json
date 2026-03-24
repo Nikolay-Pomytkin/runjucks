@@ -1,0 +1,45 @@
+[
+  {
+    "id": "filters_join_simple",
+    "source": "nunjucks built-in join (typical)",
+    "template": "{{ [\"a\", \"b\"] | join(\",\") }}",
+    "context": {},
+    "expected": "a,b"
+  },
+  {
+    "id": "filters_length_string",
+    "source": "nunjucks length filter",
+    "template": "{{ \"hello\" | length }}",
+    "context": {},
+    "expected": "5"
+  },
+  {
+    "id": "filters_upper",
+    "source": "nunjucks upper filter",
+    "template": "{{ \"ab\" | upper }}",
+    "context": {},
+    "expected": "AB"
+  },
+  {
+    "id": "filters_replace",
+    "source": "nunjucks replace filter",
+    "template": "{{ \"foofoo\" | replace(\"foo\", \"bar\") }}",
+    "context": {},
+    "expected": "barbar"
+  },
+  {
+    "id": "filters_round",
+    "source": "nunjucks round filter",
+    "template": "{{ 4.5667 | round }}",
+    "context": {},
+    "expected": "5"
+  },
+  {
+    "id": "filters_escape_autoescape_off",
+    "source": "nunjucks/tests/filters.js ~109-113",
+    "template": "{{ \"<html>\\\\\" | escape }}",
+    "context": {},
+    "env": { "autoescape": false },
+    "expected": "&lt;html&gt;&#92;"
+  }
+]

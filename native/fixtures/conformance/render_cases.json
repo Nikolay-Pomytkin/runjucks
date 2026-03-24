@@ -1,0 +1,164 @@
+[
+  {
+    "id": "smoke_plain_text",
+    "source": "runjucks __test__/smoke — baseline",
+    "template": "hello",
+    "context": {},
+    "expected": "hello"
+  },
+  {
+    "id": "smoke_variable",
+    "source": "runjucks interpolation tests",
+    "template": "{{ x }}",
+    "context": { "x": "y" },
+    "expected": "y"
+  },
+  {
+    "id": "tests_js_defined_false",
+    "source": "nunjucks/tests/tests.js ~32-33 (defined)",
+    "template": "{{ foo is defined }}",
+    "context": {},
+    "expected": "false"
+  },
+  {
+    "id": "tests_js_defined_true_null",
+    "source": "nunjucks/tests/tests.js ~34-36",
+    "template": "{{ foo is defined }}",
+    "context": { "foo": null },
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_not_defined",
+    "source": "nunjucks/tests/tests.js ~37-39",
+    "template": "{{ foo is not defined }}",
+    "context": { "foo": null },
+    "expected": "false"
+  },
+  {
+    "id": "tests_js_if_defined_branch",
+    "source": "nunjucks/tests/tests.js ~42-50",
+    "template": "{% if foo is defined %}defined{% else %}undefined{% endif %}",
+    "context": {},
+    "expected": "undefined"
+  },
+  {
+    "id": "tests_js_if_defined_with_null",
+    "source": "nunjucks/tests/tests.js ~47-50",
+    "template": "{% if foo is defined %}defined{% else %}undefined{% endif %}",
+    "context": { "foo": null },
+    "expected": "defined"
+  },
+  {
+    "id": "tests_js_null_is_null",
+    "source": "nunjucks/tests/tests.js ~75-78",
+    "template": "{{ null is null }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_none_is_none",
+    "source": "nunjucks/tests/tests.js ~78",
+    "template": "{{ none is none }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_falsy_zero",
+    "source": "nunjucks/tests/tests.js ~137-140",
+    "template": "{{ 0 is falsy }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_truthy_pancakes",
+    "source": "nunjucks/tests/tests.js ~144-148",
+    "template": "{{ \"pancakes\" is not truthy }}",
+    "context": {},
+    "expected": "false"
+  },
+  {
+    "id": "tests_js_addition_literal",
+    "source": "nunjucks docs / expression math",
+    "template": "{{ 2 + 3 }}",
+    "context": {},
+    "expected": "5"
+  },
+  {
+    "id": "tests_js_filter_abs",
+    "source": "nunjucks/tests/filters.js ~30-31",
+    "template": "{{ -3|abs }}",
+    "context": {},
+    "expected": "3"
+  },
+  {
+    "id": "tests_js_filter_capitalize",
+    "source": "nunjucks/tests/filters.js ~48-49",
+    "template": "{{ \"foo\" | capitalize }}",
+    "context": {},
+    "expected": "Foo"
+  },
+  {
+    "id": "tests_js_filter_default_undefined",
+    "source": "nunjucks/tests/filters.js ~86-87",
+    "template": "{{ undefined | default(\"foo\") }}",
+    "context": {},
+    "expected": "foo"
+  },
+  {
+    "id": "tests_js_for_batch",
+    "source": "nunjucks/tests/filters.js ~35-43 (for + batch)",
+    "template": "{% for a in [1,2,3,4,5,6]|batch(2) %}-{% for b in a %}{{ b }}{% endfor %}-{% endfor %}",
+    "context": {},
+    "expected": "-12--34--56-"
+  },
+  {
+    "id": "tests_js_set_and_output",
+    "source": "nunjucks/tests/filters.js ~128-131",
+    "template": "{% set val = \"<html>\" | escape %}{{ val }}",
+    "context": {},
+    "env": { "autoescape": true },
+    "expected": "&lt;html&gt;"
+  },
+  {
+    "id": "tests_js_number_is_number",
+    "source": "nunjucks/tests/tests.js ~219-223",
+    "template": "{{ 5 is number }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_string_is_string",
+    "source": "nunjucks/tests/tests.js ~226-230",
+    "template": "{{ \"42\" is string }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_equalto",
+    "source": "nunjucks/tests/tests.js ~233-237",
+    "template": "{{ 1 is equalto(2) }}",
+    "context": {},
+    "expected": "false"
+  },
+  {
+    "id": "tests_js_sameas",
+    "source": "nunjucks/tests/tests.js ~240-246",
+    "template": "{{ obj1 is sameas(obj2) }}",
+    "context": { "obj1": {}, "obj2": {} },
+    "expected": "false"
+  },
+  {
+    "id": "tests_js_lower_is_lower",
+    "source": "nunjucks/tests/tests.js ~249-251",
+    "template": "{{ \"foobar\" is lower }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_upper_is_upper",
+    "source": "nunjucks/tests/tests.js ~254-256",
+    "template": "{{ \"FOOBAR\" is upper }}",
+    "context": {},
+    "expected": "true"
+  }
+]

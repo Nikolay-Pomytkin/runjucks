@@ -37,6 +37,8 @@
     "build": "napi build --platform --release --manifest-path native/Cargo.toml --output-dir .",
     "build:debug": "napi build --platform --manifest-path native/Cargo.toml --output-dir .",
     "test": "node --test __test__/*.test.mjs",
+    "test:conformance:node": "node --test __test__/conformance/run.mjs",
+    "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",
     "test:pending": "node --test __test__/interpolation-pending.mjs",
     "test:rust": "cargo test --manifest-path native/Cargo.toml",
     "rust:test": "npm run test:rust",
