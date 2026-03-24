@@ -68,7 +68,7 @@ npx napi create-npm-dirs
 mkdir -p artifacts && cp runjucks.*.node artifacts/
 npm run napi:artifacts
 npm publish --dry-run
-# Platform packages live under npm/* — napi pre-publish normally publishes them; use CI for real publishes.
+# Platform packages live under npm/* — `napi:prepublish` uses `--tag-style npm` (not Lerna-style commit lines) and `--no-gh-release` so CI does not depend on GitHub Release commit format or upload assets to a release.
 ```
 
 ## crates.io notes

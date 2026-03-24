@@ -46,7 +46,7 @@
     "build:binding": "napi build --platform --release --no-js --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
     "build:debug": "napi build --platform --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
     "napi:artifacts": "napi artifacts --output-dir artifacts --npm-dir npm",
-    "napi:prepublish": "napi pre-publish -p npm",
+    "napi:prepublish": "napi pre-publish -p npm --tag-style npm --no-gh-release",
     "test": "node --test __test__/*.test.mjs",
     "test:conformance:node": "node --test __test__/conformance/run.mjs",
     "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",
