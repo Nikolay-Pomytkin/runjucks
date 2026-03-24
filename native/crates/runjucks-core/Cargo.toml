@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Pure Rust Nunjucks-compatible template engine core (Runjucks)"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Nikolay-Pomytkin/runjucks"
+documentation = "https://docs.rs/runjucks_core"
+keywords = ["nunjucks", "template", "jinja", "templating"]
+categories = ["template-engine"]
 
 [lib]
 crate-type = ["rlib"]

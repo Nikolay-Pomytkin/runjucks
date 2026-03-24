@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Node.js NAPI bindings for runjucks (Runjucks)"
 license = "MIT"
+repository = "https://github.com/Nikolay-Pomytkin/runjucks"
+publish = false
 
 [lib]
 crate-type = ["cdylib"]

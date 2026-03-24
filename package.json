@@ -20,8 +20,12 @@
     "index.js",
     "index.d.ts",
     "browser.js",
-    "*.node"
+    "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "napi": {
     "binaryName": "runjucks",
     "targets": [
@@ -39,7 +43,10 @@
   },
   "scripts": {
     "build": "napi build --platform --release --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
+    "build:binding": "napi build --platform --release --no-js --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
     "build:debug": "napi build --platform --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
+    "napi:artifacts": "napi artifacts --output-dir artifacts --npm-dir npm",
+    "napi:prepublish": "napi pre-publish -p npm",
     "test": "node --test __test__/*.test.mjs",
     "test:conformance:node": "node --test __test__/conformance/run.mjs",
     "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",
@@ -53,5 +60,14 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0"
+  },
+  "optionalDependencies": {
+    "runjucks-win32-x64-msvc": "0.1.0",
+    "runjucks-darwin-x64": "0.1.0",
+    "runjucks-darwin-arm64": "0.1.0",
+    "runjucks-linux-x64-gnu": "0.1.0",
+    "runjucks-linux-x64-musl": "0.1.0",
+    "runjucks-linux-arm64-gnu": "0.1.0",
+    "runjucks-linux-arm64-musl": "0.1.0"
   }
 }

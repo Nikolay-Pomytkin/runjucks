@@ -1,25 +1,133 @@
-# Publishes to npm when a GitHub Release is created. CI (Rust + Node) must pass first.
+# Publishes the main `runjucks` package plus per-platform optionalDependencies
+# when a GitHub Release is published. Requires NPM_TOKEN secret.
+#
+# See RELEASING.md for version bumps and crates.io.
 
-name: Publish npm package
+name: Publish npm
 
 on:
   release:
-    types: [created]
+    types: [published]
+
+concurrency:
+  group: npm-publish-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: '10.13'
 
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
+  build-native:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            args: ''
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            args: '-x'
+            zig: true
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            args: '--use-napi-cross'
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            args: '--use-napi-cross -x'
+            zig: true
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ''
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            args: ''
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            args: ''
+    runs-on: ${{ matrix.host }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig (musl cross)
+        if: ${{ matrix.zig }}
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.zig }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - run: npm ci
+
+      - name: Build .node
+        shell: bash
+        run: |
+          set -e
+          EXTRA="${{ matrix.args }}"
+          npm run build:binding -- --target ${{ matrix.target }} ${EXTRA}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: runjucks.*.node
+          if-no-files-found: error
 
   publish-npm:
-    needs: ci
+    name: Publish to npm
+    needs: build-native
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org/
+          cache: npm
+          cache-dependency-path: package-lock.json
+
       - run: npm ci
-      - run: npm publish
+
+      - name: Create per-platform package dirs
+        run: npx napi create-npm-dirs
+
+      - name: Download all bindings
+        uses: actions/download-artifact@v4
+        with:
+          path: artifact-download
+          pattern: bindings-*
+          merge-multiple: true
+
+      - name: Collect .node files for napi artifacts
+        run: |
+          mkdir -p artifacts
+          find artifact-download -name '*.node' -exec cp -t artifacts {} +
+
+      - name: Copy bindings into npm/*
+        run: npm run napi:artifacts
+
+      - name: Publish optional packages + root (napi pre-publish)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm config set provenance true
+          npm run napi:prepublish

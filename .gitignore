@@ -1,5 +1,7 @@
 target/
 node_modules/
+npm/
+artifacts/
 *.node
 .DS_Store
 .env

@@ -1,0 +1,24 @@
+# Publishes `runjucks_core` to crates.io when a GitHub Release is published.
+# Requires CARGO_REGISTRY_TOKEN secret (crates.io API token).
+
+name: Publish crates.io
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-runjucks-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish runjucks_core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --manifest-path native/crates/runjucks-core/Cargo.toml --locked

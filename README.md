@@ -141,6 +141,10 @@ console.log(env.renderString('Plain text only for now', { name: 'Ada' }))
 
 The upstream Nunjucks source lives in [`../nunjucks`](../nunjucks) (e.g. `nunjucks/nunjucks/src/`). When porting, follow the same pipeline concepts but **replace codegen + `eval`** with direct AST interpretation in Rust.
 
+## Publishing
+
+npm (NAPI platform packages + root) and crates.io (`runjucks_core`) release from **published** GitHub Releases. Secrets, version alignment, and dry-run notes are in [`RELEASING.md`](RELEASING.md).
+
 ## License
 
-MIT (match Nunjucks / your choice when publishing).
+MIT — see [`LICENSE`](LICENSE).
