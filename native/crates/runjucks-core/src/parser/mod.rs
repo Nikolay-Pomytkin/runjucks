@@ -1,8 +1,10 @@
 //! Builds [`crate::ast::Node`] trees from [`crate::lexer::Token`] streams.
 //!
-//! Variable bodies are parsed with [`parse_expr`] (currently a single identifier only).
+//! `{{ … }}` bodies are parsed with [`parse_expr`] (nom-driven, Nunjucks-style precedence; see [`expr`]).
 //! For `{%` … `%}` tags, use [`crate::tag_lex::tokenize_tag_body`] on [`crate::lexer::Token::Tag`] inner strings;
 //! control-flow AST and statement parsing are not implemented yet (tags still error in [`parse`]).
+
+pub mod expr;
 
 use crate::ast::{Expr, Node};
 use crate::errors::{Result, RunjucksError};
@@ -29,8 +31,8 @@ pub fn parse(tokens: &[Token]) -> Result<Node> {
         match t {
             Token::Text(s) => nodes.push(Node::Text(s.clone())),
             Token::Expression(inner) => {
-                let expr = parse_expr(inner)?;
-                nodes.push(Node::Output(vec![expr]));
+                let e = parse_expr(inner)?;
+                nodes.push(Node::Output(vec![e]));
             }
             Token::Tag(_) => {
                 return Err(RunjucksError::new(
@@ -44,13 +46,9 @@ pub fn parse(tokens: &[Token]) -> Result<Node> {
 
 /// Parses the inside of a `{{` … `}}` region into an [`Expr`].
 ///
-/// Today only a **single identifier** is allowed (no spaces, no literals yet in this path).
-///
 /// # Errors
 ///
-/// - Empty or whitespace-only body.
-/// - More than one token / whitespace inside the expression.
-/// - Invalid identifier characters.
+/// Invalid syntax or trailing garbage (after trim) yields [`RunjucksError`].
 ///
 /// # Examples
 ///
@@ -64,26 +62,5 @@ pub fn parse(tokens: &[Token]) -> Result<Node> {
 /// }
 /// ```
 pub fn parse_expr(source: &str) -> Result<Expr> {
-    let s = source.trim();
-    if s.is_empty() {
-        return Err(RunjucksError::new(
-            "empty expression inside `{{ }}` is not allowed",
-        ));
-    }
-    if s.chars().any(char::is_whitespace) {
-        return Err(RunjucksError::new(
-            "expected a single identifier inside `{{ }}` (v1)",
-        ));
-    }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    if !(first.is_ascii_alphabetic() || first == '_') {
-        return Err(RunjucksError::new(
-            "identifier must start with a letter or underscore",
-        ));
-    }
-    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(RunjucksError::new("invalid character in identifier"));
-    }
-    Ok(Expr::Variable(s.to_owned()))
+    expr::parse_expression(source)
 }

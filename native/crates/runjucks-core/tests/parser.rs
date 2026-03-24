@@ -1,5 +1,5 @@
 use runjucks_core::ast::{Expr, Node};
-use runjucks_core::lexer::Token;
+use runjucks_core::lexer::{tokenize, Token};
 use runjucks_core::parser::{parse, parse_expr};
 
 #[test]
@@ -39,7 +39,22 @@ fn parse_expr_single_identifier() {
 }
 
 #[test]
-fn parse_expr_rejects_multiple_tokens() {
-    let err = parse_expr("not parsed yet").unwrap_err();
-    assert!(err.to_string().contains("single identifier"), "{}", err);
+fn parse_expr_errors_on_incomplete_binary() {
+    let err = parse_expr("x +").unwrap_err();
+    assert!(
+        err.to_string().contains("expression parse"),
+        "unexpected: {}",
+        err
+    );
+}
+
+#[test]
+fn parse_errors_when_stream_contains_tag() {
+    let tokens = tokenize("{% if x %}").unwrap();
+    let err = parse(&tokens).unwrap_err();
+    assert!(
+        err.to_string().contains("not implemented"),
+        "unexpected: {}",
+        err
+    );
 }

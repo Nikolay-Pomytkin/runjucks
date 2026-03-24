@@ -1,7 +1,7 @@
 //! Parser parity with nunjucks expression / output parsing.
 //! See nunjucks/tests/parser.js (`should parse basic types`, …).
 
-use runjucks_core::ast::{Expr, Node};
+use runjucks_core::ast::{BinOp, Expr, Node};
 use runjucks_core::lexer::tokenize;
 use runjucks_core::parser::parse;
 use serde_json::{json, Value};
@@ -59,5 +59,22 @@ fn parse_output_none_as_null() {
 #[test]
 fn parse_output_binary_addition() {
     let tokens = tokenize("{{ 2 + 3 }}").unwrap();
-    let _ast = parse(&tokens).unwrap();
+    let ast = parse(&tokens).unwrap();
+    match ast {
+        Node::Root(ref ch) if ch.len() == 1 => match &ch[0] {
+            Node::Output(exprs) if exprs.len() == 1 => match &exprs[0] {
+                Expr::Binary {
+                    op: BinOp::Add,
+                    left,
+                    right,
+                } => {
+                    assert_eq!(**left, Expr::Literal(json!(2)));
+                    assert_eq!(**right, Expr::Literal(json!(3)));
+                }
+                _ => panic!("unexpected {:?}", exprs[0]),
+            },
+            _ => panic!("unexpected {:?}", ch[0]),
+        },
+        _ => panic!("unexpected {:?}", ast),
+    }
 }

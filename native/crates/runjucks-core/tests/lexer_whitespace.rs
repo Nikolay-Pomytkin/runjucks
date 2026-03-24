@@ -33,10 +33,33 @@ fn trim_mixed_with_plain_text() {
     assert_eq!(
         tokens,
         vec![
-            Token::Text("a ".into()),
+            Token::Text("a".into()),
             Token::Expression("b".into()),
-            Token::Text(" c".into()),
+            Token::Text("c".into()),
         ]
+    );
+}
+
+/// `{%-` trims whitespace on the template source before this tag (including newlines).
+#[test]
+fn trim_tag_open_strips_preceding_whitespace_only() {
+    let tokens = tokenize("  \n{%- if true -%}x").unwrap();
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("x".into())]);
+}
+
+/// `-%}` / `-}}` trim whitespace after the block before the next output.
+#[test]
+fn trim_close_strips_leading_whitespace_on_following_text() {
+    let tokens = tokenize("{%- if true -%}   \n  y").unwrap();
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("y".into())]);
+}
+
+#[test]
+fn trim_var_close_strips_leading_spaces_on_following_text() {
+    let tokens = tokenize("{{- x -}}   z").unwrap();
+    assert_eq!(
+        tokens,
+        vec![Token::Expression("x".into()), Token::Text("z".into())]
     );
 }
 
