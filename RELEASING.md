@@ -11,7 +11,7 @@ Optional: add `environment: npm` to the `publish-npm` job in [`.github/workflows
 
 ### npm token
 
-1. [npmjs.com](https://www.npmjs.com/) → Access Tokens → **Granular Access Token** (or Classic **Automation**).
+1. [npmjs.com](https://www.npmjs.com/) → Access Tokens → **Granular Access Token** ([npm docs](https://docs.npmjs.com/creating-and-viewing-access-tokens)).
 2. Scopes: packages **Read and write** for `runjucks` and `runjucks-*` (optional platform packages).
 3. Add the token as repository secret **`NPM_TOKEN`**.
 
@@ -20,9 +20,9 @@ Optional: add `environment: npm` to the `publish-npm` job in [`.github/workflows
 1. [crates.io/settings/tokens](https://crates.io/settings/tokens) → New Token.
 2. Add as **`CARGO_REGISTRY_TOKEN`**.
 
-## Version bump (before tagging)
+## Version bump
 
-Keep these aligned on the same semver:
+Keep these aligned on the same semver in **one commit** on `main` (so both registries release the same release):
 
 1. **Root** [`package.json`](package.json) `version`.
 2. **`optionalDependencies`** in `package.json` (must match the root version — same string for each `runjucks-*` entry).
@@ -32,10 +32,10 @@ Keep these aligned on the same semver:
 You can bump the npm side with:
 
 ```bash
-npm version patch   # or minor / major — updates package.json and git-tags locally
+npm version patch   # or minor / major — updates package.json (and optional git tag)
 ```
 
-Then sync `Cargo.toml` versions manually (or script), commit, and tag if `npm version` did not create the tag you want.
+Then sync `Cargo.toml` versions manually (or script) and commit. **Tags are optional** for publishing; workflows trigger from `main`.
 
 Regenerate per-platform `npm/*/package.json` versions if needed:
 
@@ -45,11 +45,19 @@ npx napi version
 
 (Review changes; it updates generated packages under `npm/`, which are not committed — CI recreates them.)
 
-## Publish flow
+## Publish flow (automatic)
 
-1. Push a commit with bumped versions.
-2. Create a **GitHub Release** from the tag and **publish** it (not draft).
-3. **Publish npm** and **Publish crates.io** workflows run in parallel.
+1. Merge or push to **`main`** with the version fields above updated.
+2. **[Publish npm](.github/workflows/npm-publish.yml)** runs when `package.json` / `package-lock.json` change. It only publishes if the **`version`** in `package.json` is **higher** than on the parent commit **and** that version is **not** already on npm (so dependency-only edits to `package.json` do not publish).
+3. **[Publish crates.io](.github/workflows/crates-publish.yml)** runs when `native/crates/runjucks-core/Cargo.toml` changes. It only publishes if the crate **`version`** increased versus the parent commit **and** that version is not already on crates.io.
+
+If you bump **only** `package.json` or **only** `runjucks-core/Cargo.toml`, only the matching workflow will try to publish — keep versions aligned and touch both files in the same commit for a coordinated release.
+
+### Manual retry
+
+In **Actions**, open **Publish npm** or **Publish crates.io** → **Run workflow**. The job still skips if that version already exists on the registry (to avoid duplicate publishes).
+
+Workflows listen to the **`main`** branch. If your default branch is different, rename it in [`.github/workflows/npm-publish.yml`](.github/workflows/npm-publish.yml) and [`.github/workflows/crates-publish.yml`](.github/workflows/crates-publish.yml).
 
 ### Dry run npm locally (optional)
 

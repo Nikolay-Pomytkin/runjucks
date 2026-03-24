@@ -1,6 +1,6 @@
 [package]
 name = "runjucks-napi"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Node.js NAPI bindings for runjucks (Runjucks)"
 license = "MIT"

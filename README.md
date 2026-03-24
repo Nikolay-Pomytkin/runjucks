@@ -143,7 +143,7 @@ The upstream Nunjucks source lives in [`../nunjucks`](../nunjucks) (e.g. `nunjuc
 
 ## Publishing
 
-npm (NAPI platform packages + root) and crates.io (`runjucks_core`) release from **published** GitHub Releases. Secrets, version alignment, and dry-run notes are in [`RELEASING.md`](RELEASING.md).
+npm and crates.io releases run on **pushes to `main`** when the respective version fields change (see [`RELEASING.md`](RELEASING.md)). You can also **Run workflow** manually in the Actions tab.
 
 ## License
 

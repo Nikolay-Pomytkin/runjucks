@@ -1,13 +1,18 @@
 # Publishes the main `runjucks` package plus per-platform optionalDependencies
-# when a GitHub Release is published. Requires NPM_TOKEN secret.
+# when `package.json` version increases on `main` (or manual workflow_dispatch).
+# Skips if the version is already on npm. Requires NPM_TOKEN secret.
 #
-# See RELEASING.md for version bumps and crates.io.
+# See RELEASING.md for version alignment and crates.io.
 
 name: Publish npm
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
 
 concurrency:
   group: npm-publish-${{ github.repository }}
@@ -21,8 +26,68 @@ env:
   MACOSX_DEPLOYMENT_TARGET: '10.13'
 
 jobs:
+  check:
+    name: Version bump?
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Decide whether to publish
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish=false
+          reason=skipped
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            NEW=$(jq -r .version package.json)
+            if npm view "runjucks@${NEW}" version >/dev/null 2>&1; then
+              reason='already-on-npm'
+            else
+              publish=true
+              reason='workflow_dispatch'
+            fi
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              NEW=$(jq -r .version package.json)
+              if npm view "runjucks@${NEW}" version >/dev/null 2>&1; then
+                reason='no-parent-commit'
+              else
+                publish=true
+                reason='first-push'
+              fi
+            else
+              OLD=$(git show "${BEFORE}:package.json" | jq -r .version)
+              NEW=$(jq -r .version package.json)
+              if [ "$OLD" = "$NEW" ]; then
+                reason='version-unchanged'
+              elif npm view "runjucks@${NEW}" version >/dev/null 2>&1; then
+                reason='already-on-npm'
+              else
+                publish=true
+                reason='version-bump'
+              fi
+            fi
+          fi
+
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+          echo "Decision: publish=${publish} (${reason})"
+
   build-native:
     name: build ${{ matrix.target }}
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +158,8 @@ jobs:
 
   publish-npm:
     name: Publish to npm
-    needs: build-native
+    needs: [check, build-native]
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

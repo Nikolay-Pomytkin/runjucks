@@ -1,17 +1,95 @@
-# Publishes `runjucks_core` to crates.io when a GitHub Release is published.
-# Requires CARGO_REGISTRY_TOKEN secret (crates.io API token).
+# Publishes `runjucks_core` to crates.io when its `Cargo.toml` version increases
+# on `main` (or manual workflow_dispatch). Skips if that version already exists
+# on crates.io. Requires CARGO_REGISTRY_TOKEN secret.
 
 name: Publish crates.io
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - 'native/crates/runjucks-core/Cargo.toml'
+  workflow_dispatch:
+
+concurrency:
+  group: crates-publish-${{ github.repository }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  check:
+    name: Version bump?
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether to publish
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish=false
+          reason=skipped
+          MANIFEST=native/crates/runjucks-core/Cargo.toml
+
+          crate_version() {
+            grep -E '^version[[:space:]]*=' "$1" | head -1 | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/'
+          }
+
+          on_crates_io() {
+            local v="$1"
+            local code
+            code=$(curl -sS -o /dev/null -w "%{http_code}" \
+              "https://crates.io/api/v1/crates/runjucks_core/${v}")
+            [ "$code" = "200" ]
+          }
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            NEW=$(crate_version "$MANIFEST")
+            if on_crates_io "$NEW"; then
+              reason='already-on-crates-io'
+            else
+              publish=true
+              reason='workflow_dispatch'
+            fi
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              NEW=$(crate_version "$MANIFEST")
+              if on_crates_io "$NEW"; then
+                reason='no-parent-commit'
+              else
+                publish=true
+                reason='first-push'
+              fi
+            else
+              git show "${BEFORE}:${MANIFEST}" > /tmp/Cargo.toml.old
+              OLD=$(crate_version /tmp/Cargo.toml.old)
+              NEW=$(crate_version "$MANIFEST")
+              if [ "$OLD" = "$NEW" ]; then
+                reason='version-unchanged'
+              elif on_crates_io "$NEW"; then
+                reason='already-on-crates-io'
+              else
+                publish=true
+                reason='version-bump'
+              fi
+            fi
+          fi
+
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+          echo "Decision: publish=${publish} (${reason})"
+
   publish-runjucks-core:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
