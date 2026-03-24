@@ -5,7 +5,7 @@
 use crate::errors::{Result, RunjucksError};
 use crate::loader::TemplateLoader;
 use crate::{lexer, parser, renderer};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::sync::Arc;
 
 /// Configuration and entry point for rendering templates.
@@ -89,12 +89,13 @@ impl Environment {
     pub fn render_string(&self, template: String, context: Value) -> Result<String> {
         let tokens = lexer::tokenize(&template)?;
         let ast = parser::parse(&tokens)?;
-        let mut ctx = match context {
-            Value::Object(m) => Value::Object(m),
-            _ => Value::Object(serde_json::Map::new()),
+        let root = match context {
+            Value::Object(m) => m,
+            _ => Map::new(),
         };
+        let mut stack = renderer::CtxStack::from_root(root);
         let loader = self.loader.as_ref().map(|arc| arc.as_ref());
-        renderer::render(self, loader, &ast, &mut ctx)
+        renderer::render(self, loader, &ast, &mut stack)
     }
 
     /// Renders a named template using the configured [`TemplateLoader`].
@@ -108,13 +109,14 @@ impl Environment {
         let src = loader.load(name)?;
         let tokens = lexer::tokenize(&src)?;
         let ast = parser::parse(&tokens)?;
-        let mut ctx = match context {
-            Value::Object(m) => Value::Object(m),
-            _ => Value::Object(serde_json::Map::new()),
+        let root = match context {
+            Value::Object(m) => m,
+            _ => Map::new(),
         };
+        let mut stack = renderer::CtxStack::from_root(root);
         let mut state = renderer::RenderState::new(Some(loader.as_ref()));
         state.push_template(name)?;
-        let out = renderer::render_entry(self, &mut state, &ast, &mut ctx)?;
+        let out = renderer::render_entry(self, &mut state, &ast, &mut stack)?;
         state.pop_template();
         Ok(out)
     }

@@ -10,9 +10,9 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 
 - **Output** — `{{ … }}` with Nunjucks-oriented expressions: literals, variables, `.` / `[…]` / `(…)`, unary/binary operators, chained comparisons, `in`, inline `cond if a else b`, list and object literals, and `is` tests (including `equalto` / `sameas` call forms).
 - **Filters** — Pipelines `| name` / `| name(args)` with a growing built-in set: `upper`, `lower`, `length`, `join`, `replace`, `round`, `escape` / `e`, `default`, `abs`, `capitalize`, plus HTML auto-escaping when `autoescape` is on.
-- **Tags** — `{% if %}` / `{% elif %}` / `{% else %}` / `{% endif %}`, `{% for … in … %}` (with optional `{% else %}`), `{% set name = expr %}`, `{% include "path" %}`, `{% extends "path" %}` with `{% block name %}…{% endblock %}`, and same-file `{% macro name(args) %}…{% endmacro %}` with `{{ macroName(args) }}` calls.
+- **Tags** — `{% if %}` / `{% elif %}` / `{% else %}` / `{% endif %}`, `{% switch %}…{% case %}…{% default %}…{% endswitch %}` (JS-style fall-through on empty `case` bodies), `{% for … in … %}` with **tuple unpack** (`a, b` / `a, b, c`) and **`k, v` over objects** (keys sorted for stable output), **`loop.*`** (`index`, `index0`, `first`, `last`, `length`, `revindex`, `revindex0`), optional `{% else %}{% endfor %}`, `{% set %}` (**multi-target** `a, b = expr`, **block** `{% set x %}…{% endset %}`, Nunjucks-like **frame scoping** with `for`), `{% include expr %}` with optional **`ignore missing`**, `{% extends "path" %}` with `{% block name %}…{% endblock %}`, and same-file `{% macro name(args) %}…{% endmacro %}` with `{{ macroName(args) }}` calls.
 - **Composition** — [`TemplateLoader`](native/crates/runjucks-core/src/loader.rs) on [`Environment`](native/crates/runjucks-core/src/environment.rs): `render_template(name, ctx)` in Rust; in Node, `setTemplateMap({ ... })` then `renderTemplate(name, ctx)`.
-- **Other** — Plain text, `{# comments #}`, and JSON object context (missing keys follow Nunjucks-style empty output for many paths).
+- **Other** — Plain text, `{# comments #}`, JSON object context, and variable lookup through a **frame stack** (inner `for` bodies shadow outer names; `{% set %}` resolves assignments up the stack like Nunjucks).
 
 **Still missing or stubbed (typical next steps vs Nunjucks):**
 
@@ -131,6 +131,7 @@ Integration tests live under [`native/crates/runjucks-core/tests/`](native/crate
 - **`npm test`** — Node tests (run `npm run build` first).
 - **`npm run test:rust:green`** — subset of Rust tests (see [`package.json`](package.json)).
 - **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — Nunjucks golden vectors from [`native/fixtures/conformance/`](native/fixtures/conformance/README.md) (many cases fail until parity).
+- **`npm run perf`** — local-only speed comparison vs the `nunjucks` devDependency (see [`perf/README.md`](perf/README.md); run `npm run build` first).
 - **`npm run test:pending`** — optional Node checks in [`__test__/interpolation-pending.mjs`](__test__/interpolation-pending.mjs).
 - Optional Mocha-style harness notes: [`test-shim/README.md`](test-shim/README.md).
 

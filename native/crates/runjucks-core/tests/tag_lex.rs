@@ -71,6 +71,12 @@ fn extends_quoted() {
 }
 
 #[test]
+fn endset_keyword() {
+    let t = tokenize_tag_body("endset").unwrap();
+    assert_eq!(t, vec![TagToken::Keyword(TagKeyword::EndSet)]);
+}
+
+#[test]
 fn macro_with_punct() {
     let t = tokenize_tag_body("macro field(name, type)").unwrap();
     assert_eq!(t[0], TagToken::Keyword(TagKeyword::Macro));

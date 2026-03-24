@@ -1,14 +1,16 @@
-//! `{% … %}` statement parsing: `if` / `elif` / `else`, `for`, `set`, `include`, `extends`, `block`, `macro`.
+//! `{% … %}` statement parsing: `if` / `elif` / `else`, `for`, `set`, `include`, `switch`, `extends`, `block`, `macro`.
 
 #![allow(clippy::manual_contains)]
 
-use crate::ast::{Expr, IfBranch, MacroDef, Node};
+use crate::ast::{Expr, ForVars, IfBranch, MacroDef, Node, SwitchCase};
 use crate::errors::{Result, RunjucksError};
 use crate::lexer::Token;
 use crate::parser::parse_expr;
 
 /// Longer keywords first so `elseif` does not match as `else`, `endblock` before `block`, etc.
 const TAG_KEYWORDS: &[&str] = &[
+    "endswitch",
+    "endset",
     "elseif",
     "elif",
     "endblock",
@@ -19,6 +21,9 @@ const TAG_KEYWORDS: &[&str] = &[
     "include",
     "macro",
     "block",
+    "switch",
+    "case",
+    "default",
     "for",
     "set",
     "if",
@@ -75,40 +80,105 @@ fn expect_tag(tokens: &[Token], i: &mut usize, kws: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn parse_for_header(rest: &str) -> Result<(String, Expr)> {
+fn parse_for_header(rest: &str) -> Result<(ForVars, Expr)> {
     let s = rest.trim();
     let pos = s
         .find(" in ")
-        .ok_or_else(|| RunjucksError::new("expected `for <name> in <expr>`"))?;
+        .ok_or_else(|| RunjucksError::new("expected `for <names> in <expr>`"))?;
     let left = s[..pos].trim();
     let right = s[pos + 4..].trim();
-    if left.is_empty()
-        || !left
+    let names: Vec<String> = left
+        .split(',')
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if names.is_empty() {
+        return Err(RunjucksError::new("`for` requires at least one variable"));
+    }
+    for n in &names {
+        if !n
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        return Err(RunjucksError::new(
-            "`for` loop variable must be a single identifier",
-        ));
+        {
+            return Err(RunjucksError::new("invalid `for` variable name"));
+        }
     }
-    Ok((left.to_string(), parse_expr(right)?))
+    let vars = if names.len() == 1 {
+        ForVars::Single(names[0].clone())
+    } else {
+        ForVars::Multi(names)
+    };
+    Ok((vars, parse_expr(right)?))
 }
 
-fn parse_set_rhs(after_set: &str) -> Result<(String, Expr)> {
-    let s = after_set.trim();
-    let eq = s
-        .find('=')
-        .ok_or_else(|| RunjucksError::new("expected `set <name> = <expr>`"))?;
-    let name = s[..eq].trim();
-    if name.is_empty()
-        || !name
+fn find_set_equals(after_set: &str) -> Option<usize> {
+    let bytes = after_set.as_bytes();
+    let mut i = 0usize;
+    let mut in_dq = false;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_dq {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if c == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if c == b'"' {
+                in_dq = false;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'"' {
+            in_dq = true;
+            i += 1;
+            continue;
+        }
+        if c == b'=' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_set_targets(lhs: &str) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for part in lhs.split(',') {
+        let name = part.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if !name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        return Err(RunjucksError::new("`set` target must be an identifier"));
+        {
+            return Err(RunjucksError::new("`set` target must be an identifier"));
+        }
+        out.push(name.to_string());
     }
-    let expr_s = s[eq + 1..].trim();
-    Ok((name.to_string(), parse_expr(expr_s)?))
+    if out.is_empty() {
+        return Err(RunjucksError::new("expected at least one `set` target"));
+    }
+    Ok(out)
+}
+
+fn strip_ignore_missing(rest: &str) -> (&str, bool) {
+    let t = rest.trim_end();
+    const SUF: &[u8] = b"ignore missing";
+    let b = t.as_bytes();
+    if b.len() >= SUF.len() && b[b.len() - SUF.len()..].eq_ignore_ascii_case(SUF) {
+        let main = t[..t.len() - SUF.len()].trim_end();
+        (main, true)
+    } else {
+        (t, false)
+    }
 }
 
 /// Parses a quoted template path (`"a.html"` or `'a.html'`).
@@ -243,7 +313,7 @@ fn parse_for_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
         return Err(RunjucksError::new("internal: expected `for` tag"));
     };
     let rest = strip_keyword_prefix(body, &["for"])?;
-    let (var, iter) = parse_for_header(rest)?;
+    let (vars, iter) = parse_for_header(rest)?;
     *i += 1;
     let body = parse_until_tags(tokens, i, &["else", "endfor"])?;
     let else_body = if peek_tag_keyword(tokens, *i).as_deref() == Some("else") {
@@ -254,7 +324,7 @@ fn parse_for_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     };
     expect_tag(tokens, i, &["endfor"])?;
     Ok(Node::For {
-        var,
+        vars,
         iter,
         body,
         else_body,
@@ -266,19 +336,102 @@ fn parse_set_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
         return Err(RunjucksError::new("internal: expected `set` tag"));
     };
     let after = strip_keyword_prefix(body, &["set"])?;
-    let (name, value) = parse_set_rhs(after)?;
+    if let Some(eq_pos) = find_set_equals(after) {
+        let lhs = after[..eq_pos].trim();
+        let rhs = after[eq_pos + 1..].trim();
+        let targets = parse_set_targets(lhs)?;
+        let value = parse_expr(rhs)?;
+        *i += 1;
+        return Ok(Node::Set {
+            targets,
+            value: Some(value),
+            body: None,
+        });
+    }
+    let targets = parse_set_targets(after.trim())?;
+    if targets.len() != 1 {
+        return Err(RunjucksError::new(
+            "block `{% set %}` form allows only one target",
+        ));
+    }
     *i += 1;
-    Ok(Node::Set { name, value })
+    let body = parse_until_tags(tokens, i, &["endset"])?;
+    expect_tag(tokens, i, &["endset"])?;
+    Ok(Node::Set {
+        targets,
+        value: None,
+        body: Some(body),
+    })
 }
 
 fn parse_include_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `include` tag"));
     };
-    let rest = strip_keyword_prefix(body, &["include"])?;
-    let template = parse_quoted_path(rest)?;
+    let rest0 = strip_keyword_prefix(body, &["include"])?;
+    let (rest, ignore_missing) = strip_ignore_missing(rest0);
+    let template = parse_expr(rest.trim())?;
     *i += 1;
-    Ok(Node::Include { template })
+    Ok(Node::Include {
+        template,
+        ignore_missing,
+    })
+}
+
+fn parse_switch_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `switch` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["switch"])?;
+    let expr = parse_expr(rest)?;
+    *i += 1;
+    let mut cases: Vec<SwitchCase> = Vec::new();
+    let mut default_body: Option<Vec<Node>> = None;
+    loop {
+        if *i >= tokens.len() {
+            return Err(RunjucksError::new(
+                "unclosed `{% switch %}`: missing `{% endswitch %}`",
+            ));
+        }
+        let kw = peek_tag_keyword(tokens, *i)
+            .ok_or_else(|| RunjucksError::new("expected tag inside `switch`"))?;
+        match kw.as_str() {
+            "case" => {
+                let Token::Tag(b) = &tokens[*i] else {
+                    return Err(RunjucksError::new("internal parse state"));
+                };
+                let r = strip_keyword_prefix(b, &["case"])?;
+                let cond = parse_expr(r)?;
+                *i += 1;
+                let body = parse_until_tags(tokens, i, &["case", "default", "endswitch"])?;
+                cases.push(SwitchCase { cond, body });
+            }
+            "default" => {
+                *i += 1;
+                let body = parse_until_tags(tokens, i, &["endswitch"])?;
+                default_body = Some(body);
+                expect_tag(tokens, i, &["endswitch"])?;
+                return Ok(Node::Switch {
+                    expr,
+                    cases,
+                    default_body,
+                });
+            }
+            "endswitch" => {
+                *i += 1;
+                return Ok(Node::Switch {
+                    expr,
+                    cases,
+                    default_body,
+                });
+            }
+            _ => {
+                return Err(RunjucksError::new(format!(
+                    "unexpected tag `{kw}` inside `switch`"
+                )));
+            }
+        }
+    }
 }
 
 fn parse_extends_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
@@ -344,12 +497,14 @@ fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
             match kw.as_str() {
                 "if" => parse_if_chain(tokens, i),
                 "for" => parse_for_stmt(tokens, i),
+                "switch" => parse_switch_stmt(tokens, i),
                 "set" => parse_set_stmt(tokens, i),
                 "include" => parse_include_stmt(tokens, i),
                 "extends" => parse_extends_stmt(tokens, i),
                 "block" => parse_block_stmt(tokens, i),
                 "macro" => parse_macro_stmt(tokens, i),
-                "elif" | "elseif" | "else" | "endif" | "endfor" | "endblock" | "endmacro" => {
+                "elif" | "elseif" | "else" | "endif" | "endfor" | "endblock" | "endmacro"
+                | "case" | "default" | "endswitch" | "endset" => {
                     Err(RunjucksError::new(format!(
                         "unexpected `{{%{body}%}}` (no matching opening tag)"
                     )))

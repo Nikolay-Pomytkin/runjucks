@@ -56,10 +56,13 @@
     "test:rust:green": "cargo test --manifest-path native/Cargo.toml --test environment --test errors --test filters --test lexer --test parser --test renderer --test value",
     "docs:dev": "npm run dev --prefix docs",
     "docs:build": "npm run build --prefix docs",
-    "docs:preview": "npm run preview --prefix docs"
+    "docs:preview": "npm run preview --prefix docs",
+    "perf": "node perf/run.mjs"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.2.0"
+    "@napi-rs/cli": "^3.2.0",
+    "nunjucks": "3.2.4",
+    "tinybench": "6.0.0"
   },
   "optionalDependencies": {
     "runjucks-win32-x64-msvc": "0.1.1",

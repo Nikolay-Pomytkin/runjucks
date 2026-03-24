@@ -1,0 +1,37 @@
+{
+  "render_cases": [
+    "smoke_plain_text",
+    "smoke_variable",
+    "tests_js_defined_false",
+    "tests_js_defined_true_null",
+    "tests_js_not_defined",
+    "tests_js_if_defined_branch",
+    "tests_js_if_defined_with_null",
+    "tests_js_null_is_null",
+    "tests_js_none_is_none",
+    "tests_js_falsy_zero",
+    "tests_js_truthy_pancakes",
+    "tests_js_addition_literal",
+    "tests_js_filter_abs",
+    "tests_js_filter_capitalize",
+    "tests_js_number_is_number",
+    "tests_js_string_is_string",
+    "tests_js_equalto",
+    "tests_js_sameas",
+    "tests_js_lower_is_lower",
+    "tests_js_upper_is_upper",
+    "lookup_nested_key",
+    "array_index_zero",
+    "filter_length_array",
+    "if_truthy_branch",
+    "for_simple_sum_style"
+  ],
+  "filter_cases": [
+    "filters_join_simple",
+    "filters_length_string",
+    "filters_upper",
+    "filters_replace",
+    "filters_round",
+    "filters_escape_autoescape_off"
+  ]
+}

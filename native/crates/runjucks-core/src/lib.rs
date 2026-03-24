@@ -9,7 +9,7 @@
 //! 1. [`lexer::tokenize`] splits template source into [`lexer::Token`]s.
 //! 2. For each [`lexer::Token::Tag`], [`tag_lex::tokenize_tag_body`] can split the inner string into keywords and identifiers.
 //! 3. [`parser::parse`] builds an [`ast::Node`] tree; [`parser::parse_expr`] parses `{{ }}` bodies with Nunjucks-style precedence (see [`parser::expr`]).
-//! 4. [`renderer::render`] walks the AST with an [`Environment`], optional [`loader::TemplateLoader`], and JSON [`serde_json::Value`] context (`{% include %}`, `{% extends %}` / `{% block %}`, macros).
+//! 4. [`renderer::render`] walks the AST with an [`Environment`], optional [`loader::TemplateLoader`], and a [`renderer::CtxStack`] built from the JSON context (`{% include %}`, `{% extends %}` / `{% block %}`, `for`/`set` frames, macros).
 //!
 //! # Example
 //!

@@ -21,6 +21,20 @@ pub struct MacroDef {
     pub body: Vec<Node>,
 }
 
+/// Loop binding list after `for` (`x` or `k, v` or `a, b, c`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForVars {
+    Single(String),
+    Multi(Vec<String>),
+}
+
+/// One `{% case expr %}…` branch inside `{% switch %}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchCase {
+    pub cond: Expr,
+    pub body: Vec<Node>,
+}
+
 /// Template structure produced by the parser.
 ///
 /// - [`Node::Root`]: sequence of top-level fragments (text + outputs).
@@ -38,15 +52,28 @@ pub enum Node {
     If { branches: Vec<IfBranch> },
     /// `{% for var in iter %} … {% endfor %}` (optional `{% else %}` before `endfor`).
     For {
-        var: String,
+        vars: ForVars,
         iter: Expr,
         body: Vec<Node>,
         else_body: Option<Vec<Node>>,
     },
-    /// `{% set name = expr %}`.
-    Set { name: String, value: Expr },
-    /// `{% include "path" %}` — resolved via [`crate::loader::TemplateLoader`].
-    Include { template: String },
+    /// `{% set a = expr %}`, `{% set a, b = expr %}`, or `{% set a %}…{% endset %}`.
+    Set {
+        targets: Vec<String>,
+        value: Option<Expr>,
+        body: Option<Vec<Node>>,
+    },
+    /// `{% include expr %}` with optional `ignore missing` — template name from expression.
+    Include {
+        template: Expr,
+        ignore_missing: bool,
+    },
+    /// `{% switch expr %}{% case c %}…{% default %}…{% endswitch %}`.
+    Switch {
+        expr: Expr,
+        cases: Vec<SwitchCase>,
+        default_body: Option<Vec<Node>>,
+    },
     /// `{% extends "parent" %}` — must appear before meaningful content in a child template.
     Extends { parent: String },
     /// `{% block name %}…{% endblock %}` — default body when used in a base layout.

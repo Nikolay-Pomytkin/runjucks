@@ -1,6 +1,6 @@
 # Conformance fixtures (Nunjucks parity)
 
-JSON files are arrays of cases consumed by Rust (`native/crates/runjucks-core/tests/conformance.rs`) and optionally by Node (`__test__/conformance/`).
+JSON files are arrays of cases consumed by Rust (`native/crates/runjucks-core/tests/conformance.rs`) and optionally by Node (`__test__/conformance/`). Additional tag-focused vectors live in [`tag_parity_cases.json`](tag_parity_cases.json) and are run by `tests/tag_parity.rs`.
 
 ## Schema (per object)
 

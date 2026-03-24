@@ -1,0 +1,30 @@
+[
+  {
+    "id": "tag_switch_basic",
+    "source": "renderer_tags_extended",
+    "template": "{% switch 2 %}{% case 1 %}A{% case 2 %}B{% default %}Z{% endswitch %}",
+    "context": {},
+    "expected": "B"
+  },
+  {
+    "id": "tag_for_kv_sorted",
+    "source": "renderer_tags_extended",
+    "template": "{% for k, v in o %}{{ k }}={{ v }};{% endfor %}",
+    "context": { "o": { "b": 2, "a": 1 } },
+    "expected": "a=1;b=2;"
+  },
+  {
+    "id": "tag_multi_set",
+    "source": "renderer_tags_extended",
+    "template": "{% set x, y = \"foo\" %}{{ x }}{{ y }}",
+    "context": {},
+    "expected": "foofoo"
+  },
+  {
+    "id": "tag_set_block",
+    "source": "renderer_tags_extended",
+    "template": "{% set cap %}x{% endset %}{{ cap }}",
+    "context": {},
+    "expected": "x"
+  }
+]

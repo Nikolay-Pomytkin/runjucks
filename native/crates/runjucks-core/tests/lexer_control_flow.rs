@@ -133,6 +133,19 @@ fn filter_block_endfilter() {
 }
 
 #[test]
+fn set_block_endset_tokens() {
+    let tokens = tokenize("{% set x %}c{% endset %}").unwrap();
+    assert_eq!(
+        tokens,
+        vec![
+            tag("set x"),
+            Token::Text("c".into()),
+            tag("endset"),
+        ]
+    );
+}
+
+#[test]
 fn switch_case_default_endswitch() {
     let tokens = tokenize(
         "{% switch x %}{% case \"a\" %}a{% default %}d{% endswitch %}",

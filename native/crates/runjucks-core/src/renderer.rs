@@ -1,12 +1,79 @@
 //! Walks [`crate::ast::Node`] trees and produces output strings using an [`crate::Environment`] and JSON context.
 
-use crate::ast::{BinOp, CompareOp, Expr, MacroDef, Node, UnaryOp};
+use crate::ast::{BinOp, CompareOp, Expr, ForVars, MacroDef, Node, SwitchCase, UnaryOp};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
 use crate::loader::TemplateLoader;
 use crate::{lexer, parser};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+
+/// Nunjucks-style frame stack: inner frames shadow outer; `set` updates the innermost existing binding.
+#[derive(Debug, Clone)]
+pub struct CtxStack {
+    frames: Vec<Map<String, Value>>,
+}
+
+impl CtxStack {
+    pub fn from_root(root: Map<String, Value>) -> Self {
+        Self {
+            frames: vec![root],
+        }
+    }
+
+    pub fn push_frame(&mut self) {
+        self.frames.push(Map::new());
+    }
+
+    pub fn pop_frame(&mut self) {
+        if self.frames.len() > 1 {
+            self.frames.pop();
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Value {
+        for f in self.frames.iter().rev() {
+            if let Some(v) = f.get(name) {
+                return v.clone();
+            }
+        }
+        Value::Null
+    }
+
+    pub fn defined(&self, name: &str) -> bool {
+        self.frames.iter().rev().any(|f| f.contains_key(name))
+    }
+
+    pub fn set(&mut self, name: &str, value: Value) {
+        for f in self.frames.iter_mut().rev() {
+            if f.contains_key(name) {
+                f.insert(name.to_string(), value);
+                return;
+            }
+        }
+        if let Some(inner) = self.frames.last_mut() {
+            inner.insert(name.to_string(), value);
+        }
+    }
+
+    /// Assign in the innermost frame only (for `for` / `loop.*` bindings so inner loops can shadow).
+    pub fn set_local(&mut self, name: &str, value: Value) {
+        if let Some(inner) = self.frames.last_mut() {
+            inner.insert(name.to_string(), value);
+        }
+    }
+
+    /// Outer frames first, then inner overwrites — snapshot for macro bodies.
+    pub fn flatten(&self) -> Map<String, Value> {
+        let mut m = Map::new();
+        for f in &self.frames {
+            for (k, v) in f {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+        m
+    }
+}
 
 /// Per-render state: optional loader, include cycle stack, macro scopes, and block overrides for `extends`.
 pub struct RenderState<'a> {
@@ -58,17 +125,15 @@ impl<'a> RenderState<'a> {
     }
 }
 
-/// Renders `root` to a string using `env` and `ctx`.
-///
-/// If `loader` is [`None`], [`Node::Include`] and [`Node::Extends`] fail at render time (unless unused).
+/// Renders `root` to a string using `env` and `ctx_stack`.
 pub fn render(
     env: &Environment,
     loader: Option<&(dyn TemplateLoader + Send + Sync)>,
     root: &Node,
-    ctx: &mut Value,
+    ctx_stack: &mut CtxStack,
 ) -> Result<String> {
     let mut state = RenderState::new(loader);
-    render_entry(env, &mut state, root, ctx)
+    render_entry(env, &mut state, root, ctx_stack)
 }
 
 /// Entry: handle `{% extends %}` child templates, otherwise normal render.
@@ -76,12 +141,12 @@ pub fn render_entry(
     env: &Environment,
     state: &mut RenderState<'_>,
     root: &Node,
-    ctx: &mut Value,
+    ctx_stack: &mut CtxStack,
 ) -> Result<String> {
     if let Some((parent, blocks)) = extract_layout_if_any(root)? {
-        render_extends(env, state, &parent, blocks, ctx)
+        render_extends(env, state, &parent, blocks, ctx_stack)
     } else {
-        render_with_state(env, state, root, ctx)
+        render_with_state(env, state, root, ctx_stack)
     }
 }
 
@@ -123,7 +188,7 @@ fn render_extends(
     state: &mut RenderState<'_>,
     parent_name: &str,
     blocks: HashMap<String, Vec<Node>>,
-    ctx: &mut Value,
+    ctx_stack: &mut CtxStack,
 ) -> Result<String> {
     let loader = state
         .loader
@@ -133,7 +198,7 @@ fn render_extends(
     let parent_ast = parser::parse(&tokens)?;
     state.push_template(parent_name)?;
     let prev = state.block_overrides.replace(blocks);
-    let out = render_with_state(env, state, &parent_ast, ctx)?;
+    let out = render_with_state(env, state, &parent_ast, ctx_stack)?;
     state.block_overrides = prev;
     state.pop_template();
     Ok(out)
@@ -143,12 +208,17 @@ fn render_with_state(
     env: &Environment,
     state: &mut RenderState<'_>,
     root: &Node,
-    ctx: &mut Value,
+    ctx_stack: &mut CtxStack,
 ) -> Result<String> {
-    render_node(env, state, root, ctx)
+    render_node(env, state, root, ctx_stack)
 }
 
-fn render_node(env: &Environment, state: &mut RenderState<'_>, n: &Node, ctx: &mut Value) -> Result<String> {
+fn render_node(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    n: &Node,
+    stack: &mut CtxStack,
+) -> Result<String> {
     match n {
         Node::Root(nodes) => {
             let mut defs = HashMap::new();
@@ -166,7 +236,7 @@ fn render_node(env: &Environment, state: &mut RenderState<'_>, n: &Node, ctx: &m
                 if matches!(child, Node::MacroDef(_)) {
                     continue;
                 }
-                out.push_str(&render_node(env, state, child, ctx)?);
+                out.push_str(&render_node(env, state, child, stack)?);
             }
             if had_macros {
                 state.pop_macros();
@@ -174,67 +244,64 @@ fn render_node(env: &Environment, state: &mut RenderState<'_>, n: &Node, ctx: &m
             Ok(out)
         }
         Node::Text(s) => Ok(s.clone()),
-        Node::Output(exprs) => render_output(env, state, exprs, ctx),
+        Node::Output(exprs) => render_output(env, state, exprs, stack),
         Node::If { branches } => {
             for br in branches {
                 if let Some(cond) = &br.cond {
-                    if !is_truthy(&eval_to_value(env, state, cond, ctx)?) {
+                    if !is_truthy(&eval_to_value(env, state, cond, stack)?) {
                         continue;
                     }
                 }
-                return render_children(env, state, &br.body, ctx);
+                return render_children(env, state, &br.body, stack);
             }
             Ok(String::new())
         }
+        Node::Switch {
+            expr,
+            cases,
+            default_body,
+        } => render_switch(env, state, expr, cases, default_body.as_deref(), stack),
         Node::For {
-            var,
+            vars,
             iter,
             body,
             else_body,
+        } => render_for(env, state, vars, iter, body, else_body.as_deref(), stack),
+        Node::Set {
+            targets,
+            value,
+            body,
         } => {
-            let v = eval_to_value(env, state, iter, ctx)?;
-            let empty = match &v {
-                Value::Array(a) => a.is_empty(),
-                _ => true,
-            };
-            if empty {
-                return if let Some(eb) = else_body {
-                    render_children(env, state, eb, ctx)
-                } else {
-                    Ok(String::new())
-                };
+            if let Some(expr) = value {
+                let v = eval_to_value(env, state, expr, stack)?;
+                for t in targets {
+                    stack.set(t, v.clone());
+                }
+            } else if let Some(nodes) = body {
+                let s = render_children(env, state, nodes, stack)?;
+                if let Some(t) = targets.first() {
+                    stack.set(t, Value::String(s));
+                }
             }
-            let Value::Array(items) = v else {
-                return if let Some(eb) = else_body {
-                    render_children(env, state, eb, ctx)
-                } else {
-                    Ok(String::new())
-                };
-            };
-            let base = ctx_as_map(ctx)?.clone();
-            let mut acc = String::new();
-            for item in items {
-                let mut scope = base.clone();
-                scope.insert(var.clone(), item);
-                let mut child = Value::Object(scope);
-                acc.push_str(&render_children(env, state, body, &mut child)?);
-            }
-            Ok(acc)
-        }
-        Node::Set { name, value } => {
-            let v = eval_to_value(env, state, value, ctx)?;
-            ctx_as_map_mut(ctx)?.insert(name.clone(), v);
             Ok(String::new())
         }
-        Node::Include { template } => {
-            let loader = state
-                .loader
-                .ok_or_else(|| RunjucksError::new("`include` requires a template loader"))?;
-            let src = loader.load(template)?;
+        Node::Include {
+            template,
+            ignore_missing,
+        } => {
+            let loader = state.loader.ok_or_else(|| {
+                RunjucksError::new("`include` requires a template loader")
+            })?;
+            let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
+            let src = match loader.load(&name) {
+                Ok(s) => s,
+                Err(_) if *ignore_missing => return Ok(String::new()),
+                Err(e) => return Err(e),
+            };
             let tokens = lexer::tokenize(&src)?;
             let included = parser::parse(&tokens)?;
-            state.push_template(template)?;
-            let out = render_entry(env, state, &included, ctx)?;
+            state.push_template(&name)?;
+            let out = render_entry(env, state, &included, stack)?;
             state.pop_template();
             Ok(out)
         }
@@ -247,52 +314,201 @@ fn render_node(env: &Environment, state: &mut RenderState<'_>, n: &Node, ctx: &m
             } else {
                 body.clone()
             };
-            render_children(env, state, &to_render, ctx)
+            render_children(env, state, &to_render, stack)
         }
         Node::MacroDef(_) => Ok(String::new()),
     }
 }
 
-fn render_children(env: &Environment, state: &mut RenderState<'_>, nodes: &[Node], ctx: &mut Value) -> Result<String> {
+fn render_switch(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    disc_expr: &Expr,
+    cases: &[SwitchCase],
+    default_body: Option<&[Node]>,
+    stack: &mut CtxStack,
+) -> Result<String> {
+    let disc = eval_to_value(env, state, disc_expr, stack)?;
+    let mut start = None;
+    for (i, c) in cases.iter().enumerate() {
+        if eval_to_value(env, state, &c.cond, stack)? == disc {
+            start = Some(i);
+            break;
+        }
+    }
+    let mut acc = String::new();
+    if let Some(mut idx) = start {
+        loop {
+            let body = &cases[idx].body;
+            acc.push_str(&render_children(env, state, body, stack)?);
+            if !body.is_empty() {
+                return Ok(acc);
+            }
+            idx += 1;
+            if idx >= cases.len() {
+                break;
+            }
+        }
+    }
+    if let Some(db) = default_body {
+        acc.push_str(&render_children(env, state, db, stack)?);
+    }
+    Ok(acc)
+}
+
+enum Iterable {
+    Rows(Vec<Value>),
+    Pairs(Vec<(String, Value)>),
+}
+
+fn iterable_from_value(v: Value) -> Iterable {
+    match v {
+        Value::Null => Iterable::Rows(vec![]),
+        Value::Array(a) => Iterable::Rows(a),
+        Value::Object(o) => {
+            let mut keys: Vec<String> = o.keys().cloned().collect();
+            keys.sort();
+            let pairs: Vec<(String, Value)> = keys
+                .into_iter()
+                .map(|k| {
+                    let val = o.get(&k).cloned().unwrap_or(Value::Null);
+                    (k, val)
+                })
+                .collect();
+            Iterable::Pairs(pairs)
+        }
+        _ => Iterable::Rows(vec![]),
+    }
+}
+
+fn iterable_empty(it: &Iterable) -> bool {
+    match it {
+        Iterable::Rows(a) => a.is_empty(),
+        Iterable::Pairs(p) => p.is_empty(),
+    }
+}
+
+fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
+    let m = json!({
+        "index": i + 1,
+        "index0": i,
+        "first": i == 0,
+        "last": len > 0 && i + 1 == len,
+        "length": len,
+        "revindex": len.saturating_sub(i),
+        "revindex0": len.saturating_sub(1).saturating_sub(i),
+    });
+    stack.set_local("loop", m);
+}
+
+fn render_for(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    vars: &ForVars,
+    iter_expr: &Expr,
+    body: &[Node],
+    else_body: Option<&[Node]>,
+    stack: &mut CtxStack,
+) -> Result<String> {
+    let v = eval_to_value(env, state, iter_expr, stack)?;
+    let it = iterable_from_value(v);
+    if iterable_empty(&it) {
+        return if let Some(eb) = else_body {
+            render_children(env, state, eb, stack)
+        } else {
+            Ok(String::new())
+        };
+    }
+
+    stack.push_frame();
+    let mut acc = String::new();
+
+    match (vars, it) {
+        (ForVars::Single(x), Iterable::Rows(items)) => {
+            let len = items.len();
+            for (i, item) in items.into_iter().enumerate() {
+                inject_loop(stack, i, len);
+                stack.set_local(x, item);
+                acc.push_str(&render_children(env, state, body, stack)?);
+            }
+        }
+        (ForVars::Multi(names), Iterable::Rows(rows)) if names.len() >= 2 => {
+            let len = rows.len();
+            for (i, row) in rows.into_iter().enumerate() {
+                inject_loop(stack, i, len);
+                if let Value::Array(cols) = row {
+                    for (u, name) in names.iter().enumerate() {
+                        let cell = cols.get(u).cloned().unwrap_or(Value::Null);
+                        stack.set_local(name, cell);
+                    }
+                } else {
+                    for name in names {
+                        stack.set_local(name, Value::Null);
+                    }
+                }
+                acc.push_str(&render_children(env, state, body, stack)?);
+            }
+        }
+        (ForVars::Multi(names), Iterable::Pairs(pairs)) if names.len() == 2 => {
+            let len = pairs.len();
+            for (i, (k, v)) in pairs.into_iter().enumerate() {
+                inject_loop(stack, i, len);
+                stack.set_local(&names[0], Value::String(k));
+                stack.set_local(&names[1], v);
+                acc.push_str(&render_children(env, state, body, stack)?);
+            }
+        }
+        (ForVars::Single(_), _) | (ForVars::Multi(_), _) => {
+            stack.pop_frame();
+            return if let Some(eb) = else_body {
+                render_children(env, state, eb, stack)
+            } else {
+                Ok(String::new())
+            };
+        }
+    }
+
+    stack.pop_frame();
+    Ok(acc)
+}
+
+fn render_children(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    nodes: &[Node],
+    stack: &mut CtxStack,
+) -> Result<String> {
     let mut out = String::new();
     for child in nodes {
-        out.push_str(&render_node(env, state, child, ctx)?);
+        out.push_str(&render_node(env, state, child, stack)?);
     }
     Ok(out)
 }
 
-fn ctx_as_map(ctx: &Value) -> Result<&Map<String, Value>> {
-    match ctx {
-        Value::Object(m) => Ok(m),
-        _ => Err(RunjucksError::new(
-            "template context must be a JSON object for `for` / `set`",
-        )),
-    }
-}
-
-fn ctx_as_map_mut(ctx: &mut Value) -> Result<&mut Map<String, Value>> {
-    match ctx {
-        Value::Object(m) => Ok(m),
-        _ => Err(RunjucksError::new(
-            "template context must be a JSON object for `for` / `set`",
-        )),
-    }
-}
-
-fn render_output(env: &Environment, state: &mut RenderState<'_>, exprs: &[Expr], ctx: &mut Value) -> Result<String> {
+fn render_output(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    exprs: &[Expr],
+    stack: &CtxStack,
+) -> Result<String> {
     let mut out = String::new();
     for e in exprs {
-        out.push_str(&eval_for_output(env, state, e, ctx)?);
+        out.push_str(&eval_for_output(env, state, e, stack)?);
     }
     Ok(out)
 }
 
 /// Template output for `{{ expr }}`: literals are not auto-escaped; other values respect [`Environment::autoescape`].
-fn eval_for_output(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: &Value) -> Result<String> {
+fn eval_for_output(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    e: &Expr,
+    stack: &CtxStack,
+) -> Result<String> {
     match e {
         Expr::Literal(v) => Ok(crate::value::value_to_string(v)),
         _ => {
-            let v = eval_to_value(env, state, e, ctx)?;
+            let v = eval_to_value(env, state, e, stack)?;
             let s = crate::value::value_to_string(&v);
             if env.autoescape {
                 Ok(crate::filters::escape_html(&s))
@@ -313,13 +529,6 @@ fn is_truthy(v: &Value) -> bool {
             .unwrap_or(true),
         Value::String(s) => !s.is_empty(),
         Value::Array(_) | Value::Object(_) => true,
-    }
-}
-
-fn lookup_variable(ctx: &Value, name: &str) -> Result<Value> {
-    match ctx.get(name) {
-        Some(v) => Ok(v.clone()),
-        None => Ok(Value::Null),
     }
 }
 
@@ -395,11 +604,11 @@ fn eval_is_test(
     test_name: &str,
     value: &Value,
     arg_exprs: &[Expr],
-    ctx: &Value,
+    stack: &CtxStack,
 ) -> Result<bool> {
     let arg_vals: Vec<Value> = arg_exprs
         .iter()
-        .map(|e| eval_to_value(env, state, e, ctx))
+        .map(|e| eval_to_value(env, state, e, stack))
         .collect::<Result<_>>()?;
     Ok(match test_name {
         "equalto" => arg_vals.first().map(|a| a == value).unwrap_or(false),
@@ -463,23 +672,28 @@ fn render_macro_body(
     state: &mut RenderState<'_>,
     m: &MacroDef,
     arg_vals: &[Value],
-    outer_ctx: &Value,
+    outer: &CtxStack,
 ) -> Result<String> {
-    let mut inner = ctx_as_map(outer_ctx)?.clone();
+    let mut inner = outer.flatten();
     for (i, p) in m.params.iter().enumerate() {
         let v = arg_vals.get(i).cloned().unwrap_or(Value::Null);
         inner.insert(p.clone(), v);
     }
-    let mut ctx = Value::Object(inner);
-    render_children(env, state, &m.body, &mut ctx)
+    let mut stack = CtxStack::from_root(inner);
+    render_children(env, state, &m.body, &mut stack)
 }
 
-fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: &Value) -> Result<Value> {
+fn eval_to_value(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    e: &Expr,
+    stack: &CtxStack,
+) -> Result<Value> {
     match e {
         Expr::Literal(v) => Ok(v.clone()),
-        Expr::Variable(name) => lookup_variable(ctx, name),
+        Expr::Variable(name) => Ok(stack.get(name)),
         Expr::Unary { op, expr } => {
-            let v = eval_to_value(env, state, expr, ctx)?;
+            let v = eval_to_value(env, state, expr, stack)?;
             Ok(match op {
                 UnaryOp::Not => Value::Bool(!is_truthy(&v)),
                 UnaryOp::Neg => {
@@ -493,38 +707,38 @@ fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: 
         }
         Expr::Binary { op, left, right } => match op {
             BinOp::Add => Ok(add_like_js(
-                &eval_to_value(env, state, left, ctx)?,
-                &eval_to_value(env, state, right, ctx)?,
+                &eval_to_value(env, state, left, stack)?,
+                &eval_to_value(env, state, right, stack)?,
             )),
             BinOp::Concat => Ok(Value::String(format!(
                 "{}{}",
-                eval_for_output(env, state, left, ctx)?,
-                eval_for_output(env, state, right, ctx)?
+                eval_for_output(env, state, left, stack)?,
+                eval_for_output(env, state, right, stack)?
             ))),
             BinOp::Sub => {
-                let a = eval_to_value(env, state, left, ctx)?;
-                let b = eval_to_value(env, state, right, ctx)?;
+                let a = eval_to_value(env, state, left, stack)?;
+                let b = eval_to_value(env, state, right, stack)?;
                 let x = as_number(&a).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
                 let y = as_number(&b).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
                 Ok(json_num(x - y))
             }
             BinOp::Mul => {
-                let a = eval_to_value(env, state, left, ctx)?;
-                let b = eval_to_value(env, state, right, ctx)?;
+                let a = eval_to_value(env, state, left, stack)?;
+                let b = eval_to_value(env, state, right, stack)?;
                 let x = as_number(&a).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
                 let y = as_number(&b).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
                 Ok(json_num(x * y))
             }
             BinOp::Div => {
-                let a = eval_to_value(env, state, left, ctx)?;
-                let b = eval_to_value(env, state, right, ctx)?;
+                let a = eval_to_value(env, state, left, stack)?;
+                let b = eval_to_value(env, state, right, stack)?;
                 let x = as_number(&a).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
                 let y = as_number(&b).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
                 Ok(json!(x / y))
             }
             BinOp::FloorDiv => {
-                let a = eval_to_value(env, state, left, ctx)?;
-                let b = eval_to_value(env, state, right, ctx)?;
+                let a = eval_to_value(env, state, left, stack)?;
+                let b = eval_to_value(env, state, right, stack)?;
                 let x = as_number(&a).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
                 let y = as_number(&b).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
                 if y == 0.0 {
@@ -533,36 +747,36 @@ fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: 
                 Ok(json_num((x / y).floor()))
             }
             BinOp::Mod => {
-                let a = eval_to_value(env, state, left, ctx)?;
-                let b = eval_to_value(env, state, right, ctx)?;
+                let a = eval_to_value(env, state, left, stack)?;
+                let b = eval_to_value(env, state, right, stack)?;
                 let x = as_number(&a).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
                 let y = as_number(&b).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
                 Ok(json_num(x % y))
             }
             BinOp::Pow => {
-                let a = eval_to_value(env, state, left, ctx)?;
-                let b = eval_to_value(env, state, right, ctx)?;
+                let a = eval_to_value(env, state, left, stack)?;
+                let b = eval_to_value(env, state, right, stack)?;
                 let x = as_number(&a).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
                 let y = as_number(&b).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
                 Ok(json!(x.powf(y)))
             }
             BinOp::And => {
-                let l = eval_to_value(env, state, left, ctx)?;
+                let l = eval_to_value(env, state, left, stack)?;
                 if !is_truthy(&l) {
                     return Ok(l);
                 }
-                eval_to_value(env, state, right, ctx)
+                eval_to_value(env, state, right, stack)
             }
             BinOp::Or => {
-                let l = eval_to_value(env, state, left, ctx)?;
+                let l = eval_to_value(env, state, left, stack)?;
                 if is_truthy(&l) {
                     return Ok(l);
                 }
-                eval_to_value(env, state, right, ctx)
+                eval_to_value(env, state, right, stack)
             }
             BinOp::In => {
-                let key = eval_to_value(env, state, left, ctx)?;
-                let container = eval_to_value(env, state, right, ctx)?;
+                let key = eval_to_value(env, state, left, stack)?;
+                let container = eval_to_value(env, state, right, stack)?;
                 Ok(Value::Bool(eval_in(&key, &container)?))
             }
             BinOp::Is => {
@@ -571,19 +785,19 @@ fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: 
                 })?;
                 if test_name == "defined" {
                     if let Expr::Variable(n) = &**left {
-                        return Ok(Value::Bool(ctx.get(n).is_some()));
+                        return Ok(Value::Bool(stack.defined(n)));
                     }
                 }
-                let v = eval_to_value(env, state, left, ctx)?;
+                let v = eval_to_value(env, state, left, stack)?;
                 Ok(Value::Bool(eval_is_test(
-                    env, state, test_name, &v, arg_exprs, ctx,
+                    env, state, test_name, &v, arg_exprs, stack,
                 )?))
             }
         },
         Expr::Compare { head, rest } => {
-            let mut acc = eval_to_value(env, state, head, ctx)?;
+            let mut acc = eval_to_value(env, state, head, stack)?;
             for (op, rhs_e) in rest.iter() {
-                let r = eval_to_value(env, state, rhs_e, ctx)?;
+                let r = eval_to_value(env, state, rhs_e, stack)?;
                 let ok = compare_values(&acc, *op, &r);
                 acc = Value::Bool(ok);
             }
@@ -594,25 +808,25 @@ fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: 
             then_expr,
             else_expr,
         } => {
-            let c = eval_to_value(env, state, cond, ctx)?;
+            let c = eval_to_value(env, state, cond, stack)?;
             if is_truthy(&c) {
-                eval_to_value(env, state, then_expr, ctx)
+                eval_to_value(env, state, then_expr, stack)
             } else if let Some(els) = else_expr {
-                eval_to_value(env, state, els, ctx)
+                eval_to_value(env, state, els, stack)
             } else {
                 Ok(Value::Null)
             }
         }
         Expr::GetAttr { base, attr } => {
-            let b = eval_to_value(env, state, base, ctx)?;
+            let b = eval_to_value(env, state, base, stack)?;
             match b {
                 Value::Object(o) => Ok(o.get(attr).cloned().unwrap_or(Value::Null)),
                 _ => Ok(Value::Null),
             }
         }
         Expr::GetItem { base, index } => {
-            let b = eval_to_value(env, state, base, ctx)?;
-            let i = eval_to_value(env, state, index, ctx)?;
+            let b = eval_to_value(env, state, base, stack)?;
+            let i = eval_to_value(env, state, index, stack)?;
             match (&b, &i) {
                 (Value::Array(a), Value::Number(n)) => {
                     let idx = n
@@ -628,11 +842,11 @@ fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: 
         Expr::Call { callee, args } => {
             let arg_vals: Vec<Value> = args
                 .iter()
-                .map(|a| eval_to_value(env, state, a, ctx))
+                .map(|a| eval_to_value(env, state, a, stack))
                 .collect::<Result<_>>()?;
             if let Expr::Variable(name) = callee.as_ref() {
                 if let Some(mdef) = state.lookup_macro(name).cloned() {
-                    let s = render_macro_body(env, state, &mdef, &arg_vals, ctx)?;
+                    let s = render_macro_body(env, state, &mdef, &arg_vals, stack)?;
                     return Ok(Value::String(s));
                 }
             }
@@ -641,17 +855,17 @@ fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: 
             ))
         }
         Expr::Filter { name, input, args } => {
-            let input_v = eval_to_value(env, state, input, ctx)?;
+            let input_v = eval_to_value(env, state, input, stack)?;
             let arg_vals: Vec<Value> = args
                 .iter()
-                .map(|a| eval_to_value(env, state, a, ctx))
+                .map(|a| eval_to_value(env, state, a, stack))
                 .collect::<Result<_>>()?;
             crate::filters::apply_builtin(env, name, &input_v, &arg_vals)
         }
         Expr::List(items) => {
             let mut out = Vec::with_capacity(items.len());
             for it in items {
-                out.push(eval_to_value(env, state, it, ctx)?);
+                out.push(eval_to_value(env, state, it, stack)?);
             }
             Ok(Value::Array(out))
         }
@@ -659,12 +873,12 @@ fn eval_to_value(env: &Environment, state: &mut RenderState<'_>, e: &Expr, ctx: 
             use serde_json::Map;
             let mut m = Map::new();
             for (k, v) in pairs {
-                let key_v = eval_to_value(env, state, k, ctx)?;
+                let key_v = eval_to_value(env, state, k, stack)?;
                 let key = match key_v {
                     Value::String(s) => s,
                     _ => crate::value::value_to_string(&key_v),
                 };
-                m.insert(key, eval_to_value(env, state, v, ctx)?);
+                m.insert(key, eval_to_value(env, state, v, stack)?);
             }
             Ok(Value::Object(m))
         }
