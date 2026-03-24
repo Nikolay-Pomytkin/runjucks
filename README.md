@@ -6,7 +6,21 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 
 ## Status
 
-Work in progress: `{{ }}` variables, `{# #}` comments, and plain text; `{% %}`, filters, inheritance, and loaders are not implemented yet. Reference: [`../nunjucks`](../nunjucks).
+**Implemented (Rust core + Node bindings):**
+
+- **Output** — `{{ … }}` with Nunjucks-oriented expressions: literals, variables, `.` / `[…]` / `(…)`, unary/binary operators, chained comparisons, `in`, inline `cond if a else b`, list and object literals, and `is` tests (including `equalto` / `sameas` call forms).
+- **Filters** — Pipelines `| name` / `| name(args)` with a growing built-in set: `upper`, `lower`, `length`, `join`, `replace`, `round`, `escape` / `e`, `default`, `abs`, `capitalize`, plus HTML auto-escaping when `autoescape` is on.
+- **Tags** — `{% if %}` / `{% elif %}` / `{% else %}` / `{% endif %}`, `{% for … in … %}` (with optional `{% else %}`), `{% set name = expr %}`.
+- **Other** — Plain text, `{# comments #}`, and JSON object context (missing keys follow Nunjucks-style empty output for many paths).
+
+**Still missing or stubbed (typical next steps vs Nunjucks):**
+
+- **Templates** — `extends`, `block`, `include`, `import`, `macro`, `call`, `from`, `raw`, etc.
+- **Loaders & async** — File/async loaders and Nunjucks’ full module story.
+- **JS `addFilter`** — Exposed on `Environment` but **not wired** into Rust yet (no-op); custom filters are Rust built-ins only today.
+- **Parity** — Many upstream golden tests still fail; see [`native/fixtures/conformance/`](native/fixtures/conformance/README.md).
+
+Development continues against [Nunjucks](https://github.com/mozilla/nunjucks) behavior; if you keep a checkout next to this repo, the vendored tree is still useful as [`../nunjucks`](../nunjucks).
 
 ## Architecture
 
@@ -38,10 +52,11 @@ flowchart LR
 | [`runjucks_core`](native/crates/runjucks-core/) | Pure Rust engine (`lexer`, `parser`, `ast`, `renderer`, `environment`, …); publishable to crates.io |
 | [`runjucks-napi`](native/crates/runjucks-napi/) | `#[napi]` bindings (`renderString`, `Environment`) → `.node` binary |
 | [`runjucks_core::lexer`](native/crates/runjucks-core/src/lexer.rs) | Tokenizer (to match `nunjucks/src/lexer.js`) |
-| [`runjucks_core::parser`](native/crates/runjucks-core/src/parser.rs) | Recursive-descent parser |
+| [`runjucks_core::parser`](native/crates/runjucks-core/src/parser/mod.rs) | Template structure + [`parser::expr`](native/crates/runjucks-core/src/parser/expr.rs) (`nom`, Nunjucks-style precedence) |
 | [`runjucks_core::ast`](native/crates/runjucks-core/src/ast.rs) | AST nodes and expressions |
 | [`runjucks_core::renderer`](native/crates/runjucks-core/src/renderer.rs) | Tree-walk interpreter |
-| [`runjucks_core::environment`](native/crates/runjucks-core/src/environment.rs) | Options (autoescape, dev, …) |
+| [`runjucks_core::environment`](native/crates/runjucks-core/src/environment.rs) | `Environment::render_string`: lex → parse → render; `autoescape` / `dev` |
+| [`runjucks_core::tag_lex`](native/crates/runjucks-core/src/tag_lex.rs) | Tokenize `{% … %}` tag bodies (keywords / identifiers) |
 | [`runjucks_core::filters`](native/crates/runjucks-core/src/filters.rs) | Built-in filters (growing over time) |
 | [`runjucks_core::value`](native/crates/runjucks-core/src/value.rs) | JSON value → string for output |
 | [`runjucks_core::errors`](native/crates/runjucks-core/src/errors.rs) | Error types |
@@ -122,24 +137,29 @@ Integration tests live under [`native/crates/runjucks-core/tests/`](native/crate
 
 Generated TypeScript definitions are in [`index.d.ts`](index.d.ts). The entry points mirror Nunjucks-style naming:
 
-- **`renderString(template, context)`** — render with default options.
-- **`new Environment()`** — configurable environment with `renderString`, `setAutoescape`, `setDev`, and `addFilter` (stub until custom filters are implemented).
+- **`renderString(template, context)`** — render with default options (autoescape on).
+- **`new Environment()`** — `renderString`, `setAutoescape`, `setDev`; **`addFilter` is currently a no-op** (custom filters from JS are not implemented yet).
 
 Example:
 
 ```js
 import { renderString, Environment } from 'runjucks'
 
-console.log(renderString('Hello', {}))
+console.log(renderString('{{ greeting | upper }}', { greeting: 'hello' }))
 
 const env = new Environment()
 env.setAutoescape(true)
-console.log(env.renderString('Plain text only for now', { name: 'Ada' }))
+console.log(
+  env.renderString('{% if ok %}{{ label }}{% else %}no{% endif %}', {
+    ok: true,
+    label: '<em>x</em>',
+  }),
+)
 ```
 
 ## Reference code
 
-The upstream Nunjucks source lives in [`../nunjucks`](../nunjucks) (e.g. `nunjucks/nunjucks/src/`). When porting, follow the same pipeline concepts but **replace codegen + `eval`** with direct AST interpretation in Rust.
+Compare behavior with [mozilla/nunjucks](https://github.com/mozilla/nunjucks) (`nunjucks/src/`). When porting, keep the same lexer/parser/render concepts but **replace compile-to-JS + `eval`** with this crate’s AST and tree-walk renderer.
 
 ## Publishing
 
