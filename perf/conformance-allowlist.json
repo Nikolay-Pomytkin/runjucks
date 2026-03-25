@@ -82,6 +82,23 @@
     "tag_custom_delimiters_var",
     "tag_custom_delimiters_block",
     "tag_custom_delimiters_for",
-    "tag_custom_delimiters_comment"
+    "tag_custom_delimiters_comment",
+    "tag_for_else_empty",
+    "tag_for_tuple_unpack",
+    "tag_for_loop_length",
+    "tag_for_loop_revindex",
+    "tag_for_loop_last",
+    "tag_set_frame_scoping",
+    "tag_nested_if",
+    "tag_include_ignore_missing",
+    "tag_extends_super",
+    "tag_macro_default_args",
+    "tag_import_macro_ns",
+    "tag_from_import_macro",
+    "tag_filter_block_lower",
+    "tag_inline_if_expr",
+    "tag_inline_if_false",
+    "tag_whitespace_trim_open_close",
+    "tag_comment_removed"
   ]
 }
