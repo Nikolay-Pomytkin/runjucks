@@ -5,7 +5,9 @@ use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
 use runjucks_core::value::value_to_string;
-use runjucks_core::{map_loader, CustomFilter, CustomTest, Environment, RunjucksError, Tags};
+use runjucks_core::{
+    map_loader, CustomFilter, CustomGlobalFn, CustomTest, Environment, RunjucksError, Tags,
+};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ptr;
@@ -161,6 +163,26 @@ fn napi_extension_process(js: Arc<JsFnRef>) -> runjucks_core::extension::CustomE
             .call(&call_args)
             .map_err(|e: Error| RunjucksError::new(e.to_string()))?;
         Ok(value_to_string(&out))
+    })
+}
+
+fn napi_custom_global(js: Arc<JsFnRef>) -> CustomGlobalFn {
+    Arc::new(move |args, kwargs| {
+        let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
+            RunjucksError::new("custom global invoked without an active Node N-API render context")
+        })?;
+        if active != js.env {
+            return Err(RunjucksError::new(
+                "N-API environment mismatch during custom global call",
+            ));
+        }
+        let mut call_args: Vec<serde_json::Value> = args.to_vec();
+        if !kwargs.is_empty() {
+            let m: serde_json::Map<String, serde_json::Value> = kwargs.iter().cloned().collect();
+            call_args.push(serde_json::Value::Object(m));
+        }
+        js.call(&call_args)
+            .map_err(|e: Error| RunjucksError::new(e.to_string()))
     })
 }
 
@@ -472,14 +494,22 @@ impl JsEnvironment {
         Ok(env.remove_extension(&name))
     }
 
-    /// JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc).
+    /// Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `NUNJUCKS_PARITY.md` (P1).
     #[napi(js_name = "addGlobal")]
-    pub fn add_global(&self, name: String, value: serde_json::Value) -> Result<()> {
-        let mut env = self
+    pub fn add_global(&self, env: Env, name: String, value: Unknown) -> Result<()> {
+        let mut inner = self
             .inner
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        env.add_global(name, value);
+        if value.get_type()? == ValueType::Function {
+            let js = Arc::new(JsFnRef::new(&env, &value)?);
+            inner.add_global_callable(name, napi_custom_global(js));
+        } else {
+            let v = unsafe {
+                serde_json::Value::from_napi_value(env.raw(), value.value().value)?
+            };
+            inner.add_global(name, v);
+        }
         Ok(())
     }
 

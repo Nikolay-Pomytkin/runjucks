@@ -6,7 +6,7 @@ use crate::errors::{Result, RunjucksError};
 use crate::extension::{
     register_extension_inner, remove_extension_inner, CustomExtensionHandler, ExtensionTagMeta,
 };
-use crate::globals::{default_globals_map, value_is_callable};
+use crate::globals::{default_globals_map, value_is_callable, RJ_CALLABLE};
 use crate::lexer::{LexerOptions, Tags};
 use crate::loader::TemplateLoader;
 use crate::parser::is_reserved_tag_keyword;
@@ -23,6 +23,12 @@ pub type CustomFilter = Arc<dyn Fn(&Value, &[Value]) -> Result<Value> + Send + S
 
 /// User-registered `is` test (Nunjucks `addTest`). Invoked as `(value, extra_args…) -> bool`.
 pub type CustomTest = Arc<dyn Fn(&Value, &[Value]) -> Result<bool> + Send + Sync>;
+
+/// User-registered global **function** (Nunjucks `addGlobal` with a JS function in Node).
+///
+/// Positional args are passed in order; keyword args are passed as a single trailing object value
+/// (Nunjucks keyword-argument convention), represented as `[(String, Value)]` before marshalling.
+pub type CustomGlobalFn = Arc<dyn Fn(&[Value], &[(String, Value)]) -> Result<Value> + Send + Sync>;
 
 /// Configuration and entry point for rendering templates.
 ///
@@ -71,6 +77,8 @@ pub struct Environment {
     pub tags: Option<Tags>,
     pub(crate) custom_filters: HashMap<String, CustomFilter>,
     pub(crate) custom_tests: HashMap<String, CustomTest>,
+    /// Nunjucks `addGlobal` with a callable (Node: JS function; tests: [`Environment::add_global_callable`]).
+    pub(crate) custom_globals: HashMap<String, CustomGlobalFn>,
     /// Custom tag names → extension metadata (see [`Environment::register_extension`]).
     pub(crate) extension_tags: HashMap<String, ExtensionTagMeta>,
     pub(crate) extension_closing_tag_names: HashSet<String>,
@@ -86,6 +94,7 @@ impl std::fmt::Debug for Environment {
             .field("globals_len", &self.globals.len())
             .field("custom_filters_len", &self.custom_filters.len())
             .field("custom_tests_len", &self.custom_tests.len())
+            .field("custom_globals_len", &self.custom_globals.len())
             .field("extension_tags_len", &self.extension_tags.len())
             .field("throw_on_undefined", &self.throw_on_undefined)
             .field("random_seed", &self.random_seed)
@@ -127,6 +136,7 @@ impl Default for Environment {
             tags: None,
             custom_filters: HashMap::new(),
             custom_tests: HashMap::new(),
+            custom_globals: HashMap::new(),
             extension_tags: HashMap::new(),
             extension_closing_tag_names: HashSet::new(),
             custom_extensions: HashMap::new(),
@@ -136,8 +146,28 @@ impl Default for Environment {
 
 impl Environment {
     /// Registers or replaces a global value (Nunjucks `addGlobal`). Names still lose to template context keys with the same name.
+    ///
+    /// Replacing a global with a JSON value clears any registered [`Environment::add_global_callable`] for that name.
     pub fn add_global(&mut self, name: impl Into<String>, value: Value) -> &mut Self {
-        self.globals.insert(name.into(), value);
+        let name = name.into();
+        self.custom_globals.remove(&name);
+        self.globals.insert(name, value);
+        self
+    }
+
+    /// Registers a global **function** implemented in Rust (tests / embedders). Node callers use NAPI `addGlobal` with a JS function.
+    ///
+    /// The template sees a [`crate::globals::RJ_CALLABLE`] marker for `is callable` / variable resolution; invocation uses `f`.
+    pub fn add_global_callable(
+        &mut self,
+        name: impl Into<String>,
+        f: CustomGlobalFn,
+    ) -> &mut Self {
+        let name = name.into();
+        let mut m = Map::new();
+        m.insert(RJ_CALLABLE.to_string(), Value::Bool(true));
+        self.globals.insert(name.clone(), Value::Object(m));
+        self.custom_globals.insert(name, f);
         self
     }
 
@@ -168,7 +198,7 @@ impl Environment {
             extension_name,
             tag_specs,
             handler,
-            |s| is_reserved_tag_keyword(s),
+            is_reserved_tag_keyword,
         )
     }
 

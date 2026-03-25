@@ -33,7 +33,7 @@ Create with `new Environment()` or use the instance returned by `configure()`.
 
 ### Globals, filters, tests
 
-- **`addGlobal(name, value)`** — JSON-serializable values only. Arbitrary JavaScript functions from globals are not invoked from templates today; see [Limitations](./limitations/) for workarounds used in parity tests.
+- **`addGlobal(name, value)`** — JSON-serializable values **or** a **JavaScript function** invoked when the template calls `name(…)` (keyword arguments follow Nunjucks: trailing object). See [Limitations](./limitations/) for context vs globals.
 - **`addFilter(name, fn)`** — `(input, ...args) => any`. Overrides a built-in filter with the same name. Runs **synchronously** during render.
 - **`addTest(name, fn)`** — `(value, ...args) => boolean` (truthy return). Used for `is` tests and for `select` / `reject`. Built-in test names still use built-in implementations.
 

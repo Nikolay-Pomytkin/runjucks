@@ -18,8 +18,8 @@ export declare class Environment {
   hasExtension(name: string): boolean
   /** Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed. */
   removeExtension(name: string): boolean
-  /** JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc). */
-  addGlobal(name: string, value: any): void
+  /** Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `NUNJUCKS_PARITY.md` (P1). */
+  addGlobal(name: string, value: unknown): void
   /** Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */
   configure(opts: ConfigureOptions): void
   /** Loads a named template from this environment’s loader (same idea as Nunjucks `getTemplate`). */

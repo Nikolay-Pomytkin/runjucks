@@ -17,6 +17,9 @@ use rand::SeedableRng;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
+/// `{% extends %}` parent expression plus block name → AST bodies.
+type ExtendsLayout = (Expr, HashMap<String, Vec<Node>>);
+
 /// Nunjucks-style frame stack: inner frames shadow outer; `set` updates the innermost existing binding.
 #[derive(Debug, Clone)]
 pub struct CtxStack {
@@ -208,7 +211,7 @@ pub fn render_entry(
     }
 }
 
-fn extract_layout_if_any(root: &Node) -> Result<Option<(Expr, HashMap<String, Vec<Node>>)>> {
+fn extract_layout_if_any(root: &Node) -> Result<Option<ExtendsLayout>> {
     let Node::Root(children) = root else {
         return Ok(None);
     };
@@ -267,6 +270,7 @@ fn extends_parent_expr(root: &Node) -> Option<&Expr> {
 }
 
 /// Block bodies from innermost (overriding child) to outermost for each block name.
+#[allow(clippy::too_many_arguments)]
 fn build_block_chains(
     parent_name: &str,
     parent_ast: &Node,
@@ -323,11 +327,7 @@ fn build_block_chains(
             if let Some(rest) = inherited.get(&name) {
                 chain.extend(rest.iter().cloned());
             } else if let Some(l) = local_blocks.get(&name) {
-                if chain.is_empty() {
-                    chain.push(l.clone());
-                } else {
-                    chain.push(l.clone());
-                }
+                chain.push(l.clone());
             }
             if !chain.is_empty() {
                 out.insert(name, chain);
@@ -1466,7 +1466,7 @@ fn eval_to_value(
                 return Ok(undefined_value());
             }
             match b {
-                Value::Object(o) => Ok(o.get(attr).cloned().unwrap_or_else(|| undefined_value())),
+                Value::Object(o) => Ok(o.get(attr).cloned().unwrap_or_else(undefined_value)),
                 _ => Ok(undefined_value()),
             }
         }
@@ -1497,10 +1497,10 @@ fn eval_to_value(
                                 .as_u64()
                                 .or_else(|| n.as_f64().map(|x| x as u64))
                                 .unwrap_or(0) as usize;
-                            Ok(a.get(idx).cloned().unwrap_or_else(|| undefined_value()))
+                            Ok(a.get(idx).cloned().unwrap_or_else(undefined_value))
                         }
                         (Value::Object(o), Value::String(k)) => {
-                            Ok(o.get(k).cloned().unwrap_or_else(|| undefined_value()))
+                            Ok(o.get(k).cloned().unwrap_or_else(undefined_value))
                         }
                         _ => Ok(undefined_value()),
                     }
@@ -1613,6 +1613,9 @@ fn eval_to_value(
                 if let Some(r) = try_dispatch_builtin(state, stack, name, &arg_vals) {
                     return r;
                 }
+                if let Some(f) = env.custom_globals.get(name) {
+                    return f(&arg_vals, &kw_vals);
+                }
             }
             if let Expr::GetAttr { base, attr } = callee.as_ref() {
                 if let Expr::Variable(ns) = base.as_ref() {
@@ -1632,7 +1635,7 @@ fn eval_to_value(
                 }
             }
             Err(RunjucksError::new(
-                "only template macros, built-in globals (`range`, `cycler`, `joiner`), or `super`/`caller` are supported for `()` expressions",
+                "only template macros, built-in globals (`range`, `cycler`, `joiner`), registered global callables, or `super`/`caller` are supported for `()` expressions",
             ))
         }
         Expr::Filter { name, input, args } => {

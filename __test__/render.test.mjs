@@ -59,6 +59,20 @@ test('addGlobal: exposes JSON value to templates', () => {
   assert.equal(env.renderString('{{ greeting }}', {}), 'Hello')
 })
 
+test('addGlobal: JS function is callable from expressions', () => {
+  const env = new Environment()
+  env.addGlobal('add', (a, b) => Number(a) + Number(b))
+  assert.equal(env.renderString('{{ add(1, 2) }}', {}), '3')
+  assert.equal(env.renderString('{{ add is callable }}', {}), 'true')
+  assert.equal(env.renderString('{{ add }}', {}), '')
+})
+
+test('addGlobal: keyword args become trailing object (Nunjucks-style)', () => {
+  const env = new Environment()
+  env.addGlobal('g', (x, y, opts) => Number(x) + Number(y) + Number(opts?.y ?? 0))
+  assert.equal(env.renderString('{{ g(1, 2, y=100) }}', {}), '103')
+})
+
 test('configure: sets autoescape and dev', () => {
   const env = new Environment()
   env.configure({ autoescape: false, dev: true })

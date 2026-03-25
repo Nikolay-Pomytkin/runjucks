@@ -123,13 +123,13 @@ fn strip_keyword_prefix<'a>(body: &'a str, kws: &[&str]) -> Result<&'a str> {
 }
 
 /// Strips the `call` keyword from `{% call … %}`, allowing `call ` or `call(` (no space before `(`).
-fn strip_call_prefix<'a>(body: &'a str) -> Result<&'a str> {
+fn strip_call_prefix(body: &str) -> Result<&str> {
     let s = body.trim();
     if s == "call" {
         return Ok("");
     }
-    if s.starts_with("call ") {
-        return Ok(s[5..].trim_start());
+    if let Some(rest) = s.strip_prefix("call ") {
+        return Ok(rest.trim_start());
     }
     if s.starts_with("call(") {
         return Ok(&s[4..]);
@@ -493,7 +493,7 @@ fn parse_from_stmt(tokens: &[Token], i: &mut usize, _ctx: &ParseCtx<'_>) -> Resu
 }
 
 fn parse_block_name(rest: &str) -> Result<String> {
-    let mut it = rest.trim().split_whitespace();
+    let mut it = rest.split_whitespace();
     let name = it
         .next()
         .ok_or_else(|| RunjucksError::new("`block` requires a name"))?;
@@ -529,9 +529,7 @@ fn parse_filter_tag_header(rest: &str) -> Result<(String, Vec<Expr>)> {
         let args: Vec<Expr> = if segs.len() == 1 && segs[0].is_empty() {
             vec![]
         } else {
-            segs.into_iter()
-                .map(|t| parse_expr(t))
-                .collect::<Result<_>>()?
+            segs.into_iter().map(parse_expr).collect::<Result<_>>()?
         };
         return Ok((name.to_string(), args));
     }

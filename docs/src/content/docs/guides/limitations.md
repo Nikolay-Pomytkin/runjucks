@@ -18,7 +18,8 @@ Runjucks targets **Node.js** and **synchronous** rendering. This page lists **pr
 
 ## Globals and callables
 
-- **`addGlobal`** accepts **JSON-serializable** values. You cannot pass arbitrary live JavaScript functions and have templates call them like Nunjucks — that is a known follow-up. Tests use small **marker objects** for `is callable` parity in specific cases.
+- **`addGlobal(name, value)`** accepts **JSON-serializable** values **or** a **JavaScript function** for Nunjucks-style `{{ fn(…) }}` calls (same thread as `render`; keyword arguments become a trailing plain object). See **`NUNJUCKS_PARITY.md`** (P1).
+- **Render context** (`renderString(…, ctx)`) is still **JSON-shaped** — you cannot pass live functions inside `ctx` and expect them to be invoked from templates (use **`addGlobal`** on the environment instead).
 
 ## Custom extensions
 

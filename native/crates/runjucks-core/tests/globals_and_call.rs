@@ -1,8 +1,9 @@
 //! Globals (`range`, `cycler`, `joiner`), context shadowing, and `is callable`.
 
 use runjucks_core::globals::RJ_CALLABLE;
-use runjucks_core::Environment;
+use runjucks_core::{CustomGlobalFn, Environment};
 use serde_json::json;
+use std::sync::Arc;
 
 #[test]
 fn range_one_two_three_args() {
@@ -91,4 +92,59 @@ fn plain_string_is_not_callable() {
         .render_string("{{ s is callable }}".into(), json!({ "s": "hi" }))
         .unwrap();
     assert_eq!(out, "false");
+}
+
+#[test]
+fn add_global_callable_invoked_from_template() {
+    let mut env = Environment::default();
+    let sum: CustomGlobalFn = Arc::new(|args, kwargs| {
+        assert!(kwargs.is_empty());
+        let a = args.first().and_then(|v| v.as_i64()).unwrap_or(0);
+        let b = args.get(1).and_then(|v| v.as_i64()).unwrap_or(0);
+        Ok(json!(a + b))
+    });
+    env.add_global_callable("sum", sum);
+    let out = env
+        .render_string("{{ sum(40, 2) }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "42");
+    let out = env
+        .render_string("{{ sum is callable }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "true");
+    let out = env
+        .render_string("{{ sum }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "");
+}
+
+#[test]
+fn add_global_callable_receives_keyword_args() {
+    let mut env = Environment::default();
+    let f: CustomGlobalFn = Arc::new(|args, kwargs| {
+        let mut acc: i64 = args.iter().filter_map(|v| v.as_i64()).sum();
+        for (_, v) in kwargs {
+            acc += v.as_i64().unwrap_or(0);
+        }
+        Ok(json!(acc))
+    });
+    env.add_global_callable("g", f);
+    let out = env
+        .render_string("{{ g(1, 2, y=100) }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "103");
+}
+
+#[test]
+fn add_global_json_clears_callable() {
+    let mut env = Environment::default();
+    env.add_global_callable(
+        "dup",
+        Arc::new(|_, _| Ok(json!("should not appear"))),
+    );
+    env.add_global("dup", json!(7));
+    let out = env
+        .render_string("{{ dup }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "7");
 }

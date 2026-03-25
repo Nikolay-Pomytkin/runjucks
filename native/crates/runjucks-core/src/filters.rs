@@ -239,7 +239,7 @@ fn filter_sum(input: &Value, args: &[Value]) -> Result<Value> {
         arr.clone()
     };
 
-    let sum: f64 = mapped.iter().filter_map(|v| as_f64_arg(v)).sum();
+    let sum: f64 = mapped.iter().filter_map(as_f64_arg).sum();
     let total = start + sum;
     Ok(
         if total.fract() == 0.0 && total >= i64::MIN as f64 && total <= i64::MAX as f64 {
@@ -902,10 +902,7 @@ pub fn apply_builtin(
             _ => Ok(json!(0)),
         },
         "join" => {
-            let sep = args
-                .first()
-                .map(value_to_string)
-                .unwrap_or_else(|| "".to_string());
+            let sep = args.first().map(value_to_string).unwrap_or_default();
             let attr = args.get(1).map(value_to_string);
             let Value::Array(items) = input else {
                 return Ok(Value::String(String::new()));

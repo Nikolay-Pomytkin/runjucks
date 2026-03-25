@@ -3,6 +3,7 @@
 //! Also defines internal runtime markers: Nunjucks-style **safe** strings
 //! ([`RJ_SAFE`]) and **undefined** ([`RJ_UNDEFINED`]) for lookup and `default` filter parity.
 
+use crate::globals::{RJ_BUILTIN, RJ_CALLABLE};
 use serde_json::{json, Map, Value};
 use std::borrow::Cow;
 
@@ -83,8 +84,24 @@ pub fn mark_safe(s: String) -> Value {
 /// | [`Value::Number`] | Default numeric string |
 /// | [`Value::String`] | Cloned |
 /// | [`Value::Array`] / plain [`Value::Object`] | JSON `Display` |
+/// User `__runjucks_callable` marker objects (no `__runjucks_builtin`) stringify to empty — like printing a JS function reference without a useful `toString` for templates.
+fn is_empty_callable_marker_object(v: &Value) -> bool {
+    match v {
+        Value::Object(o) => {
+            if o.get(RJ_BUILTIN).is_some() {
+                return false;
+            }
+            o.len() == 1 && o.get(RJ_CALLABLE) == Some(&Value::Bool(true))
+        }
+        _ => false,
+    }
+}
+
 pub fn value_to_string(v: &Value) -> String {
     if is_undefined_value(v) {
+        return String::new();
+    }
+    if is_empty_callable_marker_object(v) {
         return String::new();
     }
     if let Some(s) = safe_payload(v) {

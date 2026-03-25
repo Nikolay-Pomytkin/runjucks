@@ -12,6 +12,11 @@ use nom::IResult;
 use nom::Parser;
 use serde_json::{json, Value};
 
+/// Keyword arguments in a `foo(a, b, k=v)` call.
+type CallKwArgs = Vec<(String, Expr)>;
+/// Positional and keyword pieces of a `foo(a, b, k=v)` call.
+type CallArgParts = (Vec<Expr>, CallKwArgs);
+
 fn trim_start(s: &str) -> &str {
     s.trim_start()
 }
@@ -277,7 +282,7 @@ fn split_call_inner_rest(rest_after_open_paren: &str) -> IResult<&str, &str> {
     )))
 }
 
-fn parse_call_argument_list_inner(inner: &str) -> Result<(Vec<Expr>, Vec<(String, Expr)>)> {
+fn parse_call_argument_list_inner(inner: &str) -> Result<CallArgParts> {
     let inner = inner.trim();
     if inner.is_empty() {
         return Ok((vec![], vec![]));
@@ -299,7 +304,7 @@ fn parse_call_argument_list_inner(inner: &str) -> Result<(Vec<Expr>, Vec<(String
     Ok((pos, kw))
 }
 
-fn parse_call_argument_list(input: &str) -> IResult<&str, (Vec<Expr>, Vec<(String, Expr)>)> {
+fn parse_call_argument_list(input: &str) -> IResult<&str, CallArgParts> {
     let input = trim_start(input);
     if let Some(r) = input.strip_prefix(')') {
         return Ok((r, (vec![], vec![])));
@@ -390,7 +395,7 @@ fn parse_subscript(input: &str) -> IResult<&str, Expr> {
     let rest = &input[end + 1..];
 
     if !has_top_level_colon(body) {
-        let (_, e) = all_consuming(parse_inline_if).parse(body).map_err(|e| e)?;
+        let (_, e) = all_consuming(parse_inline_if).parse(body)?;
         return Ok((rest, e));
     }
 
@@ -401,10 +406,9 @@ fn parse_subscript(input: &str) -> IResult<&str, Expr> {
             nom::error::ErrorKind::TooLarge,
         )));
     }
-    let start_e =
-        parse_optional_slice_segment(segs.first().copied().unwrap_or("")).map_err(|e| e)?;
-    let stop_e = parse_optional_slice_segment(segs.get(1).copied().unwrap_or("")).map_err(|e| e)?;
-    let step_e = parse_optional_slice_segment(segs.get(2).copied().unwrap_or("")).map_err(|e| e)?;
+    let start_e = parse_optional_slice_segment(segs.first().copied().unwrap_or(""))?;
+    let stop_e = parse_optional_slice_segment(segs.get(1).copied().unwrap_or(""))?;
+    let step_e = parse_optional_slice_segment(segs.get(2).copied().unwrap_or(""))?;
     let start = start_e.map(Box::new);
     let stop = stop_e.map(Box::new);
     let step = step_e.map(Box::new);

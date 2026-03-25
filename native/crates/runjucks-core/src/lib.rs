@@ -38,7 +38,7 @@ pub mod renderer;
 pub mod tag_lex;
 pub mod value;
 
-pub use environment::{CustomFilter, CustomTest, Environment};
+pub use environment::{CustomFilter, CustomGlobalFn, CustomTest, Environment};
 pub use errors::RunjucksError;
 pub use extension::{CustomExtensionHandler, ExtensionTagMeta};
 pub use lexer::{LexerOptions, Tags};

@@ -18,6 +18,34 @@
 
 ---
 
+## Roadmap: “partial parity” (prioritized)
+
+Features that are **mostly** implemented but differ from Nunjucks in edge cases — or need deliberate sequencing. **Do not** tackle all of these at once; pick **one track** until shipped.
+
+| Wave | Focus | Rationale |
+|------|--------|-----------|
+| **1 — P1** | **Live `addGlobal` callables** (JS functions from Node; Rust `add_global_callable` for tests) | **Shipped** — unblocks migrations (`{{ fn(…) }}`); see **P1 spec** below. |
+| **2** | **`{% import %}` / `{% from %}` exports** — multi-target `{% set %}`, block `{% set %}…{% endset %}` as exports | Library-style shared templates; subtle breakage when missing. |
+| **3 — P2** | Loaders, Express, perf allowlist expansion, optional `getExtension` | Ecosystem / DX, not language core. |
+| **Defer** | **ECMAScript `Map` / `Set`** in context, **full RegExp parity**, **macro SafeString** polish, **include** quirks vs nunjucks 3.x | Pursue when a **concrete** template or conformance ID demands it — often avoidable at the app layer. |
+| **Separate** | **`asyncEach` / `asyncAll` / `ifAsync`**, async `render`, precompile, browser bundle | **P3** — requires async pipeline or product decision; do not mix with wave 1–2 unless committing to async. |
+
+### P1 spec: live globals (`addGlobal` + template calls)
+
+**Goal:** Match Nunjucks’ pattern: `env.addGlobal('fn', function (...) { ... })` and `{{ fn(1, 2) }}` / keyword args per [keyword arguments](https://mozilla.github.io/nunjucks/templating.html#keyword-arguments) (`foo(1, 2, bar=3)` → last argument is a plain object in JS).
+
+**Scope (shipped):**
+
+- **Node (NAPI):** `addGlobal(name, value)` accepts a **JavaScript function**; synchronous call from the Rust renderer into that function during `render` / `renderTemplate` / `Template#render` (same thread as today — no async).
+- **Rust core:** `Environment` holds `custom_globals: HashMap<…, Arc<dyn Fn(&[Value], &[(String, Value)]) -> Result<Value>>>` (or equivalent). **`add_global` with JSON** removes any registered callable for that name. Public **`add_global_callable`** (or similar) for integration tests without Node.
+- **Calling convention:** Positional arguments map to JS arguments in order; non-empty keyword map is appended as a **single** trailing `serde_json::Value::Object` (Nunjucks-style hash), matching how custom filters/tests bridge kwargs elsewhere.
+- **`is callable`:** Globals registered as functions resolve like other callable markers (`__runjucks_callable` / existing rules).
+- **Output:** Interpolating a bare global function reference (`{{ fn }}`) should not dump noisy JSON — align with **empty string** for pure callable markers where that matches expectations (document in tests).
+
+**Non-goals (this wave):** Calling **methods** on arbitrary objects (`obj.method()` unless `obj` is already supported); async functions; passing non-JSON-safe exotic values beyond what `serde_json` can round-trip for args/results.
+
+---
+
 ## Documented language ([templating.html](https://mozilla.github.io/nunjucks/templating.html)) vs Runjucks
 
 Cross-check the official [Nunjucks templating reference](https://mozilla.github.io/nunjucks/templating.html) (tags, expressions, filters, globals). This table is the **language** layer; the [API](https://mozilla.github.io/nunjucks/api.html) matrix is below.
@@ -26,7 +54,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 |-------|--------|--------|
 | **Tags** `if`, `for`, `macro`, `set`, `extends`, `block`, `include`, `import`, `raw`, `verbatim`, `filter`, `call` | Shipped | See **Tags → Implemented**; `switch` also supported. |
 | **`{% asyncEach %}`, `{% asyncAll %}`** (and `ifAsync` in lexer) | Missing | **P3** — requires async pipeline; see **Tags → Remaining**. |
-| **Expressions:** literals, math, comparisons, inline `if`, calls | Mostly shipped | **Partial:** arbitrary **function calls** from context — see **Expressions → Partial / Remaining**. |
+| **Expressions:** literals, math, comparisons, inline `if`, calls | Mostly shipped | **Partial:** arbitrary **function calls** from **context** (still JSON-only); **global** callables via **`addGlobal` (Node)** / [`add_global_callable`](native/crates/runjucks-core/src/environment.rs) (Rust) — see **Roadmap → P1 spec**. |
 | **Regex literals** `r/pattern/flags` | Shipped | Rust `regex` crate; flags **`g`** (find), **`i`**, **`m`**, **`y`** — not full ECMAScript semantics. See **Expressions → Regex**. |
 | **`for` over Map / Set / iterables** | Partial | Core uses JSON values; **object** iteration uses sorted keys. **`length`** on JSON objects counts keys. ECMAScript **`Map`/`Set`** in Node context are not first-class (serialize to JSON or use objects/arrays) — see **Map / Set / length** below. |
 | **`is` tests (`defined`, `callable`, …)** | Shipped | **Dotted lookups** (`o.a`, `items[0]`) use Nunjucks-style **missing → undefined** so `is defined` matches upstream; **`lib.mac` is callable** for import namespaces uses the same rules. See **Expressions → Implemented**. |
@@ -56,7 +84,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 | Area | Still open / partial | Notes |
 |------|----------------------|--------|
 | **Tags** | `{% asyncEach %}`, `{% asyncAll %}`, `{% ifAsync %}` | **P3** — need async render pipeline or stay documented non-goal. |
-| **Expressions** | `addGlobal` with **live JS callables** from templates | **P1** — beyond JSON + `__runjucks_callable` markers. |
+| **Expressions** | `addGlobal` with **live JS callables** (`{{ fn(…) }}`) | **Shipped** (Node); context fields remain JSON — see **Roadmap → P1 spec**. |
 | **Expressions** | Filter names as `callable` in `is` tests | Minor — see **Expressions & runtime → Partial**. |
 | **Filters** | `length` on ECMAScript `Map`/`Set` in Node (not JSON-shaped) | Partial — core **`length`** on objects is key count; see **Map / Set / length**. **`safe`/`escape` chains** aligned for common cases — see **Filters → Partial**. |
 | **Node API** | **Filesystem / URL loaders**, **Express** helper | **P2** — today: `setTemplateMap` only. |
@@ -78,7 +106,7 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 | Loaders (`FileSystemLoader`, `WebLoader`, `PrecompiledLoader`, …) | **Not exposed** — use in-memory map or wrap your own loader that fills the map. |
 | `render` / `renderString` (sync + **callback**) | **Sync only** in NAPI; no promise/callback render path. |
 | `compile` / `Template` / `getTemplate(name, eagerCompile?, …)` | **Shipped** — parse-at-render; no JS bytecode cache. |
-| `addFilter` / `addTest` / `addGlobal` | **Shipped** — globals JSON-serializable only (see gaps above). |
+| `addFilter` / `addTest` / `addGlobal` | **Shipped** — `addGlobal` JSON values + **P1: JS functions** (see **Roadmap → P1 spec**). |
 | `addExtension` — JS object with **`parse`** | **Shipped** — different model: tag names + optional block ends + **`process(context, args, body)`**. |
 | `hasExtension` / `removeExtension` | **Shipped** (Rust: [`Environment::has_extension`](native/crates/runjucks-core/src/environment.rs) / [`remove_extension`](native/crates/runjucks-core/src/environment.rs); NAPI: [`hasExtension`](native/crates/runjucks-napi/src/lib.rs) / [`removeExtension`](native/crates/runjucks-napi/src/lib.rs)). |
 | `getExtension` | **Not exposed** — Nunjucks returns the registered extension object; runjucks keeps Rust-side handlers only. |
@@ -117,13 +145,13 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 
 ### Partial
 
-- **User callables from context:** only markers (`__runjucks_builtin`, `__runjucks_callable`) — not arbitrary JS functions from `addGlobal`.
+- **User callables from context:** **template context** (`renderString(…, ctx)`) remains JSON-serializable only (no live JS/Rust closures in `ctx`). Use **`addGlobal` with a function** (Node) or **`add_global_callable`** (Rust embedders) for invocable globals.
 - **`is callable`:** user-registered **filter** names are not treated as callables in `is` tests (Nunjucks behavior varies by version).
 - **Slices:** runjucks accepts slice syntax **without** `installJinjaCompat()`; upstream needs compat for the same syntax in vanilla Nunjucks.
 
 ### Remaining
 
-- [ ] **`addGlobal` with live JS functions** — callable from template expressions (**P1**).
+- [x] **`addGlobal` with live JS functions** — callable from template expressions (**P1**); see **Roadmap → P1 spec**, [`runjucks-napi` `addGlobal`](native/crates/runjucks-napi/src/lib.rs), [`Environment::add_global_callable`](native/crates/runjucks-core/src/environment.rs).
 
 ---
 

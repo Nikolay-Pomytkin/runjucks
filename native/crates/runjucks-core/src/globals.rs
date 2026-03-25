@@ -128,6 +128,8 @@ impl CyclerState {
         Self { items, pos: -1 }
     }
 
+    /// Nunjucks `cycler(...).next()` — not `Iterator::next`.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Value {
         if self.items.is_empty() {
             return Value::Null;
