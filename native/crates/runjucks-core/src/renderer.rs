@@ -271,7 +271,7 @@ fn build_block_chains(
                     env, state, gp_expr, ctx_stack,
                 )?);
                 let src = loader.load(&gp_name)?;
-                let tokens = lexer::tokenize(&src)?;
+                let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
                 let gp_ast = parser::parse(&tokens)?;
                 build_block_chains(
                     &gp_name,
@@ -329,7 +329,7 @@ fn render_extends(
         .loader
         .ok_or_else(|| RunjucksError::new("`extends` requires a template loader"))?;
     let src = loader.load(parent_name)?;
-    let tokens = lexer::tokenize(&src)?;
+    let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
     let parent_ast = parser::parse(&tokens)?;
     state.push_template(parent_name)?;
     let mut visited = HashSet::new();
@@ -488,7 +488,7 @@ fn render_node(
                 Err(_) if *ignore_missing => return Ok(String::new()),
                 Err(e) => return Err(e),
             };
-            let tokens = lexer::tokenize(&src)?;
+            let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
             let included = parser::parse(&tokens)?;
             state.push_template(&name)?;
             let out = if matches!(with_context, Some(false)) {
@@ -510,7 +510,7 @@ fn render_node(
             })?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let src = loader.load(&name)?;
-            let tokens = lexer::tokenize(&src)?;
+            let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
             let imported = parser::parse(&tokens)?;
             state.push_template(&name)?;
             scan_literal_import_graph(state, &imported, loader)?;
@@ -529,7 +529,7 @@ fn render_node(
             })?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let src = loader.load(&name)?;
-            let tokens = lexer::tokenize(&src)?;
+            let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
             let imported = parser::parse(&tokens)?;
             state.push_template(&name)?;
             scan_literal_import_graph(state, &imported, loader)?;

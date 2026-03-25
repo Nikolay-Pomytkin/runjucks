@@ -16,6 +16,18 @@
 
 use crate::errors::{Result, RunjucksError};
 
+/// Options controlling whitespace behavior during lexing.
+///
+/// Mirrors the Nunjucks `trimBlocks` / `lstripBlocks` configuration keys.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LexerOptions {
+    /// When `true`, the first newline after a `{% … %}` tag is stripped.
+    pub trim_blocks: bool,
+    /// When `true`, leading whitespace and tabs on a line are stripped up to a `{% … %}` tag or `{# … #}` comment
+    /// (only when the tag/comment is the first non-whitespace on that line).
+    pub lstrip_blocks: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OpenKind {
     Comment,
@@ -260,16 +272,25 @@ pub struct Lexer<'a> {
     pending: Option<Token>,
     /// After `-%}` or `-}}`, strip leading whitespace from the next [`Token::Text`].
     strip_leading_next_text: bool,
+    opts: LexerOptions,
+    /// After a `{% … %}` tag when `trim_blocks` is on, strip the first newline from the next text.
+    trim_block_newline: bool,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
+        Self::with_options(input, LexerOptions::default())
+    }
+
+    pub fn with_options(input: &'a str, opts: LexerOptions) -> Self {
         Self {
             input,
             position: 0,
             mode: LexerMode::Normal,
             pending: None,
             strip_leading_next_text: false,
+            opts,
+            trim_block_newline: false,
         }
     }
 
@@ -319,6 +340,8 @@ impl<'a> Lexer<'a> {
         self.position += total;
         if trim_close {
             self.strip_leading_next_text = true;
+        } else if self.opts.trim_blocks {
+            self.trim_block_newline = true;
         }
         Ok(body)
     }
@@ -361,6 +384,44 @@ impl<'a> Lexer<'a> {
         Ok(Some(Token::Tag(body)))
     }
 
+    /// Apply `trim_blocks` (strip leading `\n`) and `strip_leading_next_text` (`-%}` / `-}}`) to a text fragment.
+    fn apply_leading_strip(&mut self, text: &mut String) {
+        if self.strip_leading_next_text {
+            *text = text.trim_start().to_string();
+            self.strip_leading_next_text = false;
+            self.trim_block_newline = false;
+        } else if self.trim_block_newline {
+            if text.starts_with('\n') {
+                text.remove(0);
+            } else if text.starts_with("\r\n") {
+                text.drain(..2);
+            }
+            self.trim_block_newline = false;
+        }
+    }
+
+    /// When `lstrip_blocks` is enabled, strip trailing spaces/tabs that sit on the same line before a block tag or comment opener.
+    ///
+    /// Only strips when the opener is the first non-whitespace content on its line (i.e. only
+    /// horizontal whitespace appears between the preceding newline (or start of text) and the opener).
+    fn apply_lstrip_trailing(&self, text: &mut String, kind: OpenKind) {
+        if !self.opts.lstrip_blocks {
+            return;
+        }
+        let is_block = matches!(kind, OpenKind::Tag { .. } | OpenKind::Comment);
+        if !is_block {
+            return;
+        }
+        if let Some(nl) = text.rfind('\n') {
+            let after_nl = &text[nl + 1..];
+            if after_nl.chars().all(|c| c == ' ' || c == '\t') {
+                text.truncate(nl + 1);
+            }
+        } else if text.chars().all(|c| c == ' ' || c == '\t') {
+            text.clear();
+        }
+    }
+
     fn next_token_normal(&mut self) -> Result<Option<Token>> {
         loop {
             if self.is_eof() {
@@ -372,15 +433,15 @@ impl<'a> Lexer<'a> {
             match next_opener(rest) {
                 None => {
                     let mut text = rest.to_owned();
-                    if self.strip_leading_next_text {
-                        text = text.trim_start().to_string();
-                        self.strip_leading_next_text = false;
-                    }
+                    self.apply_leading_strip(&mut text);
                     self.position = self.input.len();
                     return Ok(Some(Token::Text(text)));
                 }
                 Some((0, OpenKind::Comment)) => {
                     self.skip_comment()?;
+                    if self.opts.trim_blocks {
+                        self.trim_block_newline = true;
+                    }
                     continue;
                 }
                 Some((0, OpenKind::Tag { .. })) => {
@@ -397,10 +458,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some((idx, kind)) => {
                     let mut text = rest[..idx].to_owned();
-                    if self.strip_leading_next_text {
-                        text = text.trim_start().to_string();
-                        self.strip_leading_next_text = false;
-                    }
+                    self.apply_leading_strip(&mut text);
                     let trim_open = matches!(
                         kind,
                         OpenKind::Tag { trim_open: true } | OpenKind::Var { trim_open: true }
@@ -408,6 +466,7 @@ impl<'a> Lexer<'a> {
                     if trim_open {
                         text = text.trim_end().to_string();
                     }
+                    self.apply_lstrip_trailing(&mut text, kind);
                     self.position += idx;
                     if text.is_empty() {
                         continue;
@@ -443,10 +502,15 @@ impl<'a> Lexer<'a> {
 /// assert!(matches!(tokens[1], Token::Expression(_)));
 /// ```
 pub fn tokenize(input: &str) -> Result<Vec<Token>> {
+    tokenize_with_options(input, LexerOptions::default())
+}
+
+/// Like [`tokenize`] but with explicit [`LexerOptions`].
+pub fn tokenize_with_options(input: &str, opts: LexerOptions) -> Result<Vec<Token>> {
     if input.is_empty() {
         return Ok(vec![Token::Text(String::new())]);
     }
-    let mut lexer = Lexer::new(input);
+    let mut lexer = Lexer::with_options(input, opts);
     let mut tokens = Vec::new();
     while let Some(t) = lexer.next_token()? {
         tokens.push(t);

@@ -38,4 +38,5 @@ pub mod value;
 
 pub use environment::{CustomFilter, CustomTest, Environment};
 pub use errors::RunjucksError;
+pub use lexer::LexerOptions;
 pub use loader::{map_loader, FnLoader, TemplateLoader};

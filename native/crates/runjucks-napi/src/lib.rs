@@ -181,6 +181,8 @@ pub struct ConfigureOptions {
     pub autoescape: Option<bool>,
     pub dev: Option<bool>,
     pub throw_on_undefined: Option<bool>,
+    pub trim_blocks: Option<bool>,
+    pub lstrip_blocks: Option<bool>,
 }
 
 #[napi(js_name = "Environment")]
@@ -279,7 +281,7 @@ impl JsEnvironment {
         Ok(())
     }
 
-    /// Subset of Nunjucks `configure`: `autoescape`, `dev`, and `throwOnUndefined` are applied; other keys are not supported yet.
+    /// Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, and `lstripBlocks` are applied.
     #[napi]
     pub fn configure(&self, opts: ConfigureOptions) -> Result<()> {
         let mut env = self
@@ -294,6 +296,12 @@ impl JsEnvironment {
         }
         if let Some(t) = opts.throw_on_undefined {
             env.throw_on_undefined = t;
+        }
+        if let Some(t) = opts.trim_blocks {
+            env.trim_blocks = t;
+        }
+        if let Some(l) = opts.lstrip_blocks {
+            env.lstrip_blocks = l;
         }
         Ok(())
     }

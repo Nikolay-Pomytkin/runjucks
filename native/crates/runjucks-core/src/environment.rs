@@ -4,6 +4,7 @@
 
 use crate::errors::{Result, RunjucksError};
 use crate::globals::{default_globals_map, value_is_callable};
+use crate::lexer::LexerOptions;
 use crate::loader::TemplateLoader;
 use crate::value::{is_undefined_value, undefined_value, value_to_string};
 use crate::{lexer, parser, renderer};
@@ -58,6 +59,10 @@ pub struct Environment {
     pub throw_on_undefined: bool,
     /// When set, [`crate::filters::apply_builtin`] `random` uses this seed for reproducible output (conformance / tests).
     pub random_seed: Option<u64>,
+    /// When true, the first newline after a block tag (`{% … %}`) is automatically removed (Nunjucks `trimBlocks`).
+    pub trim_blocks: bool,
+    /// When true, leading whitespace/tabs on a line before a block tag or comment are stripped (Nunjucks `lstripBlocks`).
+    pub lstrip_blocks: bool,
     pub(crate) custom_filters: HashMap<String, CustomFilter>,
     pub(crate) custom_tests: HashMap<String, CustomTest>,
 }
@@ -109,6 +114,8 @@ impl Default for Environment {
             globals: default_globals_map(),
             throw_on_undefined: false,
             random_seed: None,
+            trim_blocks: false,
+            lstrip_blocks: false,
             custom_filters: HashMap::new(),
             custom_tests: HashMap::new(),
         }
@@ -221,6 +228,14 @@ impl Environment {
         }
     }
 
+    /// Returns the [`LexerOptions`] derived from this environment's configuration.
+    pub fn lexer_options(&self) -> LexerOptions {
+        LexerOptions {
+            trim_blocks: self.trim_blocks,
+            lstrip_blocks: self.lstrip_blocks,
+        }
+    }
+
     /// Lexes `template`, parses it to an AST, and renders it with `context`.
     ///
     /// # Errors
@@ -244,7 +259,7 @@ impl Environment {
     /// assert_eq!(html, "&lt;ok&gt;");
     /// ```
     pub fn render_string(&self, template: String, context: Value) -> Result<String> {
-        let tokens = lexer::tokenize(&template)?;
+        let tokens = lexer::tokenize_with_options(&template, self.lexer_options())?;
         let ast = parser::parse(&tokens)?;
         let root = match context {
             Value::Object(m) => m,
@@ -264,7 +279,7 @@ impl Environment {
             .as_ref()
             .ok_or_else(|| RunjucksError::new("no template loader configured"))?;
         let src = loader.load(name)?;
-        let tokens = lexer::tokenize(&src)?;
+        let tokens = lexer::tokenize_with_options(&src, self.lexer_options())?;
         let ast = parser::parse(&tokens)?;
         let root = match context {
             Value::Object(m) => m,
