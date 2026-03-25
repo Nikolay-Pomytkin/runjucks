@@ -1,9 +1,19 @@
 ---
 title: Rust API (rustdoc)
-description: How to browse the Runjucks engine crate documentation.
+description: How to browse the Runjucks engine crate documentation and repository layout.
 ---
 
-The npm package is a thin NAPI layer over the **`runjucks_core`** crate in `native/crates/runjucks-core/`. Most users only need the [Node.js API](../../api/) (`renderString`, `Environment`).
+The npm package is a thin binding layer over the **`runjucks_core`** crate in `native/crates/runjucks-core/`. Most users only need the [Node.js API](../../api/) and the [JavaScript API guide](../guides/javascript-api/).
+
+## Workspace layout (contributors)
+
+| Piece | Role |
+|--------|------|
+| **`runjucks_core`** | Template engine: lexer, parser, AST, renderer, environment, filters |
+| **`runjucks-napi`** | Node native addon that exposes the JavaScript API |
+| **`native/fixtures/`** | Conformance and test data |
+
+Expression parsing, tag parsing, and built-in filters live inside **`runjucks_core`**. Use **rustdoc** (below) for module-level detail rather than duplicating it in the Starlight guides.
 
 ## On this site
 

@@ -43,7 +43,19 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'index' },
 						{ label: 'Installation', slug: 'guides/installation' },
-						{ label: 'Syntax and parity', slug: 'guides/syntax' },
+					],
+				},
+				{
+					label: 'Usage',
+					items: [
+						{ label: 'Template language', slug: 'guides/syntax' },
+						{ label: 'JavaScript API', slug: 'guides/javascript-api' },
+						{ label: 'Limitations', slug: 'guides/limitations' },
+					],
+				},
+				{
+					label: 'Contributing',
+					items: [
 						{ label: 'Development', slug: 'guides/development' },
 						{ label: 'Architecture', slug: 'guides/architecture' },
 					],
@@ -57,7 +69,7 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Contributing',
+					label: 'Contributing (advanced)',
 					items: [
 						{ label: 'Overview', slug: 'contributing' },
 						{ label: 'Rust API (rustdoc)', slug: 'contributing/rust' },

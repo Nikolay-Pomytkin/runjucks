@@ -1,33 +1,26 @@
 ---
 title: Architecture
-description: How Runjucks compares to Nunjucks and how data flows through the engine.
+description: How Runjucks compares to Nunjucks at a high level — no implementation internals.
 ---
 
 ## Pipeline
 
 | Nunjucks | Runjucks |
 |----------|----------|
-| lex → parse → transform → **compile to JS** → `new Function` → run | lex → parse → **tree-walk render in Rust** |
+| lex → parse → transform → **compile to JS** → `new Function` → run | lex → parse → **tree-walk render** in Rust |
 
-Template context from JavaScript is passed as a plain object and converted to `serde_json::Value` on the Rust side.
+Template context from JavaScript is passed as a **plain object** and converted to a JSON-compatible representation for the engine.
 
 ```mermaid
 flowchart LR
   JS["Node.js: renderString / Environment"]
-  R["Rust: lexer → parser → renderer"]
+  R["Rust engine: lex → parse → render"]
   JS -->|"template + context"| R
   R -->|"string"| JS
 ```
 
-## Rust workspace (`native/crates/`)
-
-| Crate / module | Role |
-|----------------|------|
-| **`runjucks_core`** | Pure engine: `lexer`, `parser`, `ast`, `renderer`, `environment`, `filters`, `value`, `errors` |
-| **`parser::expr`** | Expression grammar for `{{ }}` bodies (Nunjucks-style precedence; **nom** for literals / `all_consuming` scan). See [parser module](../../rustdoc/runjucks_core/parser/index.html). |
-| **`tag_lex`** | Keyword / ident tokenizer for the **inside** of a `{% … %}` tag string (after the template lexer). |
-| **`runjucks-napi`** | NAPI exports (`renderString`, `Environment`) built as the `.node` addon |
+The npm package is a **thin binding layer** around that engine. If you work on the Rust code, browse the **[Rust API (rustdoc)](../contributing/rust/)** on this site or open the repo layout described there.
 
 ## Reference implementation
 
-When porting behavior, use the [Nunjucks source](https://github.com/mozilla/nunjucks) as a reference — same pipeline ideas, but **no** compile-to-JS + `eval`; the Rust **renderer** evaluates an AST with JSON context instead of emitting JavaScript.
+When comparing behavior, the [Nunjucks source](https://github.com/mozilla/nunjucks) remains the reference for intent. Runjucks does **not** compile templates to JavaScript or `eval` them; it evaluates an AST with the same broad language goals.

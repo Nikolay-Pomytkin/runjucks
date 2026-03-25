@@ -24,3 +24,7 @@ The **`runjucks_core`** crate documents the engine publicly; browse it on the do
 ## Optional harness
 
 For notes on running a Nunjucks-style Mocha harness against `renderString`, see `test-shim/README.md` in the repo.
+
+## Parity backlog
+
+A detailed, maintainer-oriented checklist of behavior vs Nunjucks lives in **`NUNJUCKS_PARITY.md`** in the repository. End users should rely on [Template language](./syntax/), [JavaScript API](./javascript-api/), and [Limitations](./limitations/) instead.

@@ -3,7 +3,7 @@ title: Runjucks
 description: Nunjucks-compatible templates with a Rust rendering core for Node.js.
 template: splash
 hero:
-  tagline: Fast, familiar template syntax — lex tags and expressions in Rust, parse rich {{ }} with a Nunjucks-style engine, tree-walk render; Node bindings via NAPI-RS.
+  tagline: Fast, familiar Nunjucks-style templates for Node.js — same module and environment patterns you already know, with rendering done in Rust instead of compiling templates to JavaScript.
   image:
     file: ../../assets/houston.webp
   actions:
@@ -11,12 +11,12 @@ hero:
       link: guides/installation/
       icon: right-arrow
       variant: primary
-    - text: Syntax and parity
+    - text: Template language
       link: guides/syntax/
       icon: open-book
       variant: minimal
-    - text: Node.js API
-      link: api/
+    - text: JavaScript API
+      link: guides/javascript-api/
       icon: document
       variant: minimal
 ---
@@ -27,21 +27,21 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid stagger>
 	<Card title="Nunjucks-shaped API" icon="star">
-		`renderString` and `Environment` mirror the API you know from [Nunjucks](https://mozilla.github.io/nunjucks/).
+		`renderString`, `Environment`, `configure`, `compile`, and `Template` follow the same ideas as [Nunjucks](https://mozilla.github.io/nunjucks/). See [JavaScript API](guides/javascript-api/).
 	</Card>
-	<Card title="Rust core" icon="rocket">
-		Lex → parse → render in Rust: string-aware delimiters, whitespace control, and expression parsing (nom) — no compile-to-JS `eval` in the hot path.
+	<Card title="Rust-powered engine" icon="rocket">
+		Templates are lexed, parsed, and rendered in Rust — no compile-to-JavaScript step or `eval` on the hot path. Custom delimiters, trim markers, and whitespace options match Nunjucks-style behavior.
 	</Card>
 	<Card title="TypeScript" icon="document">
-		Types ship with the package (`index.d.ts`). Full reference is [generated on build](api/).
+		Types ship with the package (`index.d.ts`). The full Node API reference is [generated on build](api/).
 	</Card>
-	<Card title="Conformance" icon="approve-check">
-		Golden JSON fixtures under `native/fixtures/conformance/`; see [Development](guides/development/) and [Syntax and parity](guides/syntax/) for what is tested and what is skipped.
+	<Card title="Tested against Nunjucks" icon="approve-check">
+		Golden fixtures and parity checks help keep behavior aligned with the `nunjucks` npm package. Contributors: see [Development](guides/development/) and the repo’s parity notes.
 	</Card>
 </CardGrid>
 
-### Status
+### What you get
 
-**Working today:** plain text, `{# #}` comments, `{{ … }}` with literals, operators, `is` / `in`, and Nunjucks-style trim markers; the **lexer** emits `{% … %}` tags (and `raw` / `verbatim` blocks).
+**Template language:** control flow (`if`, `for`, `switch`), `set`, `include`, `extends`, `block`, `import` / `from`, `macro`, `call` / `caller`, `filter` blocks, `raw` / `verbatim`, and rich `{{ }}` expressions with filters and `is` tests — see [Template language](guides/syntax/).
 
-**Not wired through render yet:** template-level [`parse()`](rustdoc/runjucks_core/parser/fn.parse.html) still **errors on `Token::Tag`** — so full `{% if %}`, `{% for %}`, filters (`|`), and loaders are **not** end-to-end like upstream Nunjucks. See [Syntax and parity](guides/syntax/).
+**Node API:** environment options (autoescape, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, custom delimiters), in-memory template maps, custom filters, tests, tag extensions, and globals — see [JavaScript API](guides/javascript-api/) and [Limitations](guides/limitations/).

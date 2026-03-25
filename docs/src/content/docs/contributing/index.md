@@ -7,7 +7,9 @@ The canonical contributor guide lives in the repository as **[CONTRIBUTING.md](h
 
 On this site:
 
-- **[Rust API (rustdoc)](./rust/)** — browsing `runjucks_core` documentation.
+- **[Rust API (rustdoc)](./rust/)** — browsing `runjucks_core` documentation and workspace layout.
 - **[Package managers](./package-managers/)** — lockfiles and CI expectations.
+
+Deep parity notes and file-level references are kept in the repo (**`NUNJUCKS_PARITY.md`**) rather than in these docs.
 
 After cloning the repo, use **Node.js** and **npm** as described in CONTRIBUTING.md; the documentation app in `docs/` requires **Node ≥ 22.12** (see `docs/package.json` `engines`).

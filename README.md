@@ -105,7 +105,7 @@ npm run docs:dev      # local dev server
 npm run docs:build    # TypeDoc + rustdoc + Starlight → docs/dist/
 ```
 
-Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)).
+Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)). The site includes **Template language**, **JavaScript API**, and **Limitations** guides under [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/).
 
 ## Development
 

@@ -36,4 +36,4 @@ env.setAutoescape(true)
 console.log(env.renderString('Plain text', {}))
 ```
 
-See the [Node.js API reference](../../api/) for `Environment` methods.
+See [JavaScript API](./javascript-api/) for `configure`, template maps, and extensions, and the [Node.js API reference](../../api/) for full TypeScript signatures.

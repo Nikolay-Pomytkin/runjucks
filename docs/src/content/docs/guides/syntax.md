@@ -1,35 +1,58 @@
 ---
-title: Syntax and parity
-description: What Runjucks supports today versus full Nunjucks, and how we test it.
+title: Template language
+description: What Runjucks supports in templates — tags, expressions, filters, and whitespace — versus full Nunjucks.
 ---
 
-This page summarizes **template language support** in the Rust engine (`runjucks_core`). For the full Nunjucks language, see the [upstream templating documentation](https://mozilla.github.io/nunjucks/templating.html).
+Runjucks aims to match [Nunjucks templating](https://mozilla.github.io/nunjucks/templating.html) closely. This page summarizes **user-visible** behavior. For exact Node entrypoints, see [JavaScript API](./javascript-api/).
 
-## Supported in the lexer and renderer
+## Text and comments
 
 | Feature | Notes |
 |--------|--------|
-| Plain text | Passed through as-is. |
-| `{# … #}` comments | Removed from the token stream. |
-| `{{ … }}` expressions | Literals, identifiers, `.` / `[ ]` / `( )` postfix, `[…]` / `{…}` aggregates, operators, `in` / `is` (including `equalto(…)` / `sameas(…)`), inline `if`, and `\|` filter pipelines. |
-| Whitespace control | `{%-`, `-%}`, `{{-`, `-}}` and trimming between tokens (Nunjucks-style). See [lexer](../../rustdoc/runjucks_core/lexer/index.html) docs. |
-| Built-in filters (subset) | `upper`, `lower`, `length`, `join`, `replace`, `round`, `escape` / `e`, `default`, `abs`, `capitalize` — see `runjucks_core::filters::apply_builtin`. |
-| `{% … %}` statements | **`if` / `elif` / `elseif` / `else` / `endif`**, **`for … in …` / `else` / `endfor`** (single loop variable only), **`set name = expr`**. Other tags are rejected at parse time. |
-| `{% raw %}` / `{% verbatim %}` | Lexer only (literal regions). |
+| Plain text | Output as-is. |
+| `{# … #}` | Comments removed from output. |
 
-## Not implemented yet
+## `{{ … }}` expressions
 
-- Macros, `extends`, `include`, `import`, `block`, `call`, `filter` blocks, `switch`, async tags, and most other Nunjucks-specific tags.
-- Arbitrary **function calls** in expressions (`foo()`) except as used by `is` tests (`equalto`, `sameas`).
-- Filters such as **`batch`**, full **`default`** semantics for missing keys vs `null`, and “safe” / double-escaping rules matching Nunjucks exactly.
-- **`sameas`** for non–object/array values follows value equality; for two objects or two arrays the engine returns `false` (no reference identity in JSON).
+- **Literals** — strings, numbers, booleans, `null`.
+- **Variables** — dotted and bracket paths; `in` and chained comparisons.
+- **Operators** — arithmetic, logic, `not`, comparisons.
+- **Aggregates** — `[ … ]` lists and `{ … }` objects.
+- **Inline conditionals** — `a if cond else b`.
+- **Filters** — `value \| filter` and `value \| filter(args)`; pipelines chain left-to-right.
+- **`is` tests** — `value is name` and call forms such as `equalto(…)` / `sameas(…)` where supported.
+- **Calls** — macros, `super()`, `caller()`, and built-in globals such as `range`, `cycler`, `joiner` (see [JavaScript API](./javascript-api/) for globals and custom behavior).
 
-## Conformance tests
+**Slices:** Jinja-style array slices (e.g. `arr[1:4]`, `arr[::2]`) are accepted without a separate “compat” install — unlike stock `nunjucks`, which needs `installJinjaCompat()` for that syntax.
 
-Rust integration tests compare rendered output to golden strings from JSON fixtures under `native/fixtures/conformance/`. A few cases stay **skipped** (e.g. `undefined`, `batch`, `set` + safe-string escaping) — see [`conformance.rs`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/native/crates/runjucks-core/tests/conformance.rs).
+Built-in **filter** names and behavior are listed in the [Node.js API reference](../../api/) (TypeDoc). The set is large and growing; if something differs from Nunjucks, check [Limitations](./limitations/).
 
-## Further reading
+## `{% … %}` tags
 
-- [Development](./development/) — scripts, conformance layout, rustdoc.
-- [Architecture](./architecture/) — pipeline vs Nunjucks.
-- [Node.js API](../../api/) — `renderString`, `Environment`.
+Supported constructs include:
+
+- **`if` / `elif` / `else` / `endif`** — including `elseif` alias.
+- **`for` / `else` / `endfor`** — single or multiple loop variables, tuple unpack, `key, value` over objects (stable key order), `loop.*` (`index`, `index0`, `first`, `last`, `length`, `revindex`, `revindex0`), optional `{% else %}` when the sequence is empty.
+- **`switch` / `case` / `default` / `endswitch`** — including fall-through behavior for empty `case` bodies (JavaScript-style).
+- **`set`** — `{% set x = expr %}`, multi-target `{% set a, b = expr %}`, and block capture `{% set x %}…{% endset %}` with frame rules aligned to Nunjucks.
+- **`include`** — expression template name; `ignore missing`; optional `without context` / `with context` (see [Limitations](./limitations/) for nuances vs upstream).
+- **`extends`**, **`block` / `endblock`**, **`{{ super() }}`** — multi-level inheritance.
+- **`macro` / `endmacro`** — defaults and keyword arguments at call sites.
+- **`import` / `from`** — namespaces and imported macros (top-level macros from imported templates).
+- **`call` / `endcall`**, **`caller()`** — optional caller argument lists on the opening `{% call %}` tag.
+- **`filter` / `endfilter`** — block filtered as a whole.
+- **`raw` / `endraw`**, **`verbatim` / `endverbatim`** — literal regions; nesting is balanced like Nunjucks.
+
+Async-only tags (`asyncEach`, `asyncAll`, `ifAsync`) are **not** supported — see [Limitations](./limitations/).
+
+## Whitespace control
+
+Nunjucks-style trim markers work: `{%-`, `-%}`, `{{-`, `-}}`, and the interaction of **`trimBlocks`** / **`lstripBlocks`** with the lexer (configured on the environment — see [JavaScript API](./javascript-api/)). Block-tag trimming does not apply the same rules to comment-only lines as to `{% %}` tags; `endraw` / `endverbatim` closing tags follow upstream newline behavior.
+
+## Custom tag extensions
+
+Register opening tag names (and optional closing names) on the environment; your **`process(context, args, body)`** runs when those tags appear. This is a **declarative** model — not the Nunjucks extension API that customizes parsing in JavaScript. See [JavaScript API](./javascript-api/#custom-tags-addextension).
+
+## When in doubt
+
+Use the [Nunjucks templating docs](https://mozilla.github.io/nunjucks/templating.html) for language concepts, then verify against Runjucks behavior or the [Limitations](./limitations/) page. A detailed parity backlog for maintainers lives in the GitHub repo (`NUNJUCKS_PARITY.md`).
