@@ -9,6 +9,8 @@ From the package root (`runjucks/`):
 ```bash
 npm run build
 npm run perf
+# optional: machine-readable output for local trend logs (gitignored)
+npm run perf:json
 ```
 
 A release build of the `.node` binary is required; otherwise results are meaningless.
@@ -16,7 +18,7 @@ A release build of the `.node` binary is required; otherwise results are meaning
 ## What it measures
 
 - **Synthetic** templates in [`synthetic.mjs`](synthetic.mjs) (size / loops / filters).
-- **Conformance subset** via IDs in [`conformance-allowlist.json`](conformance-allowlist.json), loaded from `native/fixtures/conformance/*.json`.
+- **Conformance subset** via IDs in [`conformance-allowlist.json`](conformance-allowlist.json), loaded through [`__test__/conformance/load-fixtures.mjs`](../__test__/conformance/load-fixtures.mjs) (same vectors as Rust + Node): `render_cases.json`, `filter_cases.json`, and `tag_parity_cases.json`.
 
 Each case:
 
@@ -25,6 +27,8 @@ Each case:
 3. Runs **[tinybench](https://github.com/tinylibs/tinybench)** with warmup + timed iterations; prints mean latency (ms) per engine and **nj/rj** (Nunjucks mean / Runjucks mean).
 
 Interpretation: **nj/rj > 1** means Nunjucks is slower on average for that case (Runjucks faster). Values **&lt; 1** mean Runjucks was slower.
+
+**`npm run perf:json`** writes [`last-run.json`](last-run.json) (gitignored) with per-case latencies and skip reasons; useful for comparing runs on one machine, not for CI gates.
 
 ## Fairness notes
 

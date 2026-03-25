@@ -12,5 +12,6 @@ JSON files are arrays of cases consumed by Rust (`native/crates/runjucks-core/te
 | `context` | no | JSON object (default `{}`). |
 | `env` | no | `{ "autoescape": bool, "dev": bool }` — partial ok, defaults match `Environment::default()`. |
 | `expected` | yes | Exact string output Nunjucks produces (golden). |
+| `skip` | no | If `true`, Rust (`conformance` / `tag_parity` tests) and Node conformance skip the case until the engine matches (see [`NUNJUCKS_PARITY.md`](../../../NUNJUCKS_PARITY.md)). |
 
 Scenarios are BSD-2-Clause Nunjucks test vectors; `source` should point to upstream for traceability.

@@ -10,7 +10,8 @@
 | `parser.rs` | Basic parse |
 | `parser_expressions.rs` | Literals, operators (parity with nunjucks parser tests) |
 | `parser_tags.rs` | `{% %}` tokenization for control flow |
-| `conformance.rs` | JSON goldens in [`../../../fixtures/conformance/`](../../../fixtures/conformance/README.md) |
+| `conformance.rs` | JSON goldens (`render_cases.json` + `filter_cases.json`; respects `"skip"`) |
+| `tag_parity.rs` | [`tag_parity_cases.json`](../../../fixtures/conformance/tag_parity_cases.json) |
 | Other `*.rs` | Renderer, filters, value, … |
 
 ```bash
@@ -21,4 +22,4 @@ npm run test:rust
 ```
 
 - **`npm run test:rust:green`** — subset that excludes long-running / parity crates (see `package.json`).
-- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — shared JSON fixtures (Rust vs `renderString`).
+- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — same JSON fixtures as **`npm test`** (Rust vs NAPI `renderString`; Node also runs `__test__/parity.test.mjs` vs `nunjucks`).

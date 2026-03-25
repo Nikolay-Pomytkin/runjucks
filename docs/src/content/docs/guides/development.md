@@ -9,10 +9,10 @@ description: Tests, conformance vectors, and project layout for contributors.
 |--------|---------|
 | `npm run build` | Release native addon + generated JS/TS |
 | `npm run build:debug` | Debug native build |
-| `npm test` | Node tests (`__test__/*.test.mjs`; build first) |
+| `npm test` | Node tests: `__test__/*.test.mjs`, JSON conformance, parity vs `nunjucks` (build first) |
 | `npm run test:rust` | Rust integration tests (`native/crates/runjucks-core/tests/`) |
 | `npm run test:rust:green` | Smaller subset of Rust tests |
-| `npm run test:conformance:rust` / `test:conformance:node` | JSON goldens under `native/fixtures/conformance/` |
+| `npm run test:conformance:rust` / `test:conformance:node` | JSON goldens (subset of `npm test`) |
 
 ## Layout
 

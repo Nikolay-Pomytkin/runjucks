@@ -21,7 +21,7 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 | **Expressions** | `addFilter` wiring | `addGlobal` + `range`/`cycler`/`joiner`, `callable` test | `throwOnUndefined`, Jinja slices | |
 | **Filters** | `safe`, `default` (full), `batch` | `first`, `last`, `sort`, `reverse`, `trim`, `int`, `float`, `string`, `title`, `truncate`, `striptags`, `urlencode`, `indent`, `nl2br`, `sum`, `wordcount` | `groupby`, `dictsort`, `select`/`reject`/`*attr`, `center`, `dump`, `forceescape`, `list`, `random`, `slice`, `urlize` | |
 | **Node API** | `addFilter` functional | `addGlobal`, `configure` basics | `compile`, `getTemplate`, `render(name)`, filesystem loader, Express | async `render`, `addExtension`, precompile, browser build |
-| **Conformance** | fix 3 skipped render cases | grow `tag_parity_cases.json` | expand perf allowlist | |
+| **Conformance** | fix 3 skipped render cases (`skip` in JSON) | more vectors from upstream tests | optional perf CI artifact | |
 
 ---
 
@@ -172,19 +172,19 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 
 ### Current state
 
-- **34** conformance cases across `render_cases.json` (28) + `filter_cases.json` (6).
-- **3** render cases skipped in [`conformance.rs`](native/crates/runjucks-core/tests/conformance.rs):
+- **46** JSON vectors: `render_cases.json` (29) + `filter_cases.json` (6) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (11).
+- **3** render cases marked `"skip": true` (Rust + Node skip until implemented):
   - `tests_js_filter_default_undefined` — needs full `default` filter semantics.
   - `tests_js_for_batch` — needs `batch` filter.
   - `tests_js_set_and_output` — needs `set` + `escape` + autoescape interplay.
-- **4** additional cases in [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json), run by `tag_parity.rs`.
-- **31** cases in the [perf allowlist](perf/conformance-allowlist.json) (matches the non-skipped conformance set).
+- **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) compares runjucks vs the `nunjucks` npm package for every ID in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (non-skipped fixtures + tag parity subset).
+- **Perf allowlist** — grows with green cases; includes `render_cases`, `filter_cases`, and `tag_parity_cases` keys (see file).
 
 ### Next steps
 
-- [ ] **Fix 3 skipped render cases** — **P0**: implement `default` (full), `batch`, fix `set`+escape. Un-skip and add to perf allowlist.
-- [ ] **Grow `tag_parity_cases.json`** — **P1**: add vectors for `switch` fall-through, `for`+`loop.*`, block `set`, `include ignore missing`, nested scoping.
-- [ ] **Expand perf allowlist** — **P2**: as new conformance cases go green, append IDs and verify perf harness still runs.
+- [ ] **Fix 3 skipped render cases** — **P0**: implement `default` (full), `batch`, fix `set`+escape. Remove `"skip": true` from JSON and keep IDs on the perf allowlist.
+- [ ] **Grow `tag_parity_cases.json`** — **P1**: add vectors for composition-only cases (`include`/`extends` with loader — often covered in Rust + Node integration tests), more edge cases from upstream.
+- [ ] **Expand perf allowlist** — **P2**: as new conformance cases go green, append IDs under the right key and run `npm run perf`.
 
 ---
 

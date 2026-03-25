@@ -113,7 +113,7 @@ Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/doc
 cd runjucks
 npm install
 npm run build        # release build; produces runjucks.<platform>.node + index.js + index.d.ts
-npm test             # Node tests (__test__/*.test.mjs; requires `npm run build` first)
+npm test             # Node tests: __test__/*.test.mjs + JSON conformance (__test__/conformance/run.mjs); requires `npm run build` first
 npm run test:rust    # Rust integration tests (`native/crates/runjucks-core/tests/`; `cargo test --manifest-path native/Cargo.toml`)
 ```
 
@@ -128,10 +128,10 @@ npm run build:debug
 Integration tests live under [`native/crates/runjucks-core/tests/`](native/crates/runjucks-core/tests/). The **`runjucks_core`** crate documents the full engine API (see `cargo doc -p runjucks_core` or the docs site’s **Rust crate (rustdoc)** link).
 
 - **`npm run test:rust`** or **`cargo test --manifest-path native/Cargo.toml`** — all Rust integration tests.
-- **`npm test`** — Node tests (run `npm run build` first).
+- **`npm test`** — Node tests: hand-written cases, **`__test__/parity.test.mjs`** (runjucks vs `nunjucks` npm on the perf allowlist), and JSON goldens for the NAPI layer (run `npm run build` first).
 - **`npm run test:rust:green`** — subset of Rust tests (see [`package.json`](package.json)).
-- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — Nunjucks golden vectors from [`native/fixtures/conformance/`](native/fixtures/conformance/README.md) (many cases fail until parity).
-- **`npm run perf`** — local-only speed comparison vs the `nunjucks` devDependency (see [`perf/README.md`](perf/README.md); run `npm run build` first).
+- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — same as the JSON suite in `npm test` (split out for focused runs); skipped cases use `"skip": true` in the fixture until parity lands (see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md)).
+- **`npm run perf`** / **`npm run perf:json`** — local-only speed comparison vs `nunjucks` (see [`perf/README.md`](perf/README.md); `perf:json` writes `perf/last-run.json`; run `npm run build` first).
 - **`npm run test:pending`** — optional Node checks in [`__test__/interpolation-pending.mjs`](__test__/interpolation-pending.mjs).
 - Optional Mocha-style harness notes: [`test-shim/README.md`](test-shim/README.md).
 

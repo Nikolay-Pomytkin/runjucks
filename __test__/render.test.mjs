@@ -11,7 +11,7 @@ test('renderString: multiline and unicode', () => {
   assert.equal(renderString(s, {}), s)
 })
 
-test('renderString: context is ignored for plain-text-only lexer', () => {
+test('renderString: plain text without delimiters is unchanged', () => {
   assert.equal(
     renderString('no substitution yet', { name: 'Ada', n: 42 }),
     'no substitution yet',
