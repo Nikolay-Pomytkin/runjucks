@@ -24,7 +24,8 @@
     "array_index_zero",
     "filter_length_array",
     "if_truthy_branch",
-    "for_simple_sum_style"
+    "for_simple_sum_style",
+    "expr_inline_if"
   ],
   "filter_cases": [
     "filters_join_simple",
@@ -33,5 +34,18 @@
     "filters_replace",
     "filters_round",
     "filters_escape_autoescape_off"
+  ],
+  "tag_parity_cases": [
+    "tag_switch_basic",
+    "tag_for_kv_sorted",
+    "tag_multi_set",
+    "tag_set_block",
+    "tag_raw_braces",
+    "tag_verbatim_braces",
+    "tag_macro_greet",
+    "tag_filter_block_upper",
+    "tag_switch_case1_only",
+    "tag_for_loop_builtins",
+    "tag_call_macro_caller"
   ]
 }

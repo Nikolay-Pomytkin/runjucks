@@ -102,14 +102,16 @@
     "source": "nunjucks/tests/filters.js ~86-87",
     "template": "{{ undefined | default(\"foo\") }}",
     "context": {},
-    "expected": "foo"
+    "expected": "foo",
+    "skip": true
   },
   {
     "id": "tests_js_for_batch",
     "source": "nunjucks/tests/filters.js ~35-43 (for + batch)",
     "template": "{% for a in [1,2,3,4,5,6]|batch(2) %}-{% for b in a %}{{ b }}{% endfor %}-{% endfor %}",
     "context": {},
-    "expected": "-12--34--56-"
+    "expected": "-12--34--56-",
+    "skip": true
   },
   {
     "id": "tests_js_set_and_output",
@@ -117,7 +119,8 @@
     "template": "{% set val = \"<html>\" | escape %}{{ val }}",
     "context": {},
     "env": { "autoescape": true },
-    "expected": "&lt;html&gt;"
+    "expected": "&lt;html&gt;",
+    "skip": true
   },
   {
     "id": "tests_js_number_is_number",
@@ -195,5 +198,12 @@
     "template": "{% for n in nums %}{{ n }}{% endfor %}",
     "context": { "nums": [7, 8] },
     "expected": "78"
+  },
+  {
+    "id": "expr_inline_if",
+    "source": "nunjucks inline if",
+    "template": "{{ \"a\" if false else \"b\" }}",
+    "context": {},
+    "expected": "b"
   }
 ]

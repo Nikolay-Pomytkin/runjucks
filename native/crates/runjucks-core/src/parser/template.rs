@@ -1,4 +1,4 @@
-//! `{% … %}` statement parsing: `if` / `elif` / `else`, `for`, `set`, `include`, `switch`, `extends`, `block`, `macro`.
+//! `{% … %}` statement parsing: `if` / `elif` / `else`, `for`, `set`, `include`, `import`, `from`, `switch`, `extends` (expression), `block`, `macro`.
 
 #![allow(clippy::manual_contains)]
 
@@ -13,13 +13,19 @@ const TAG_KEYWORDS: &[&str] = &[
     "endset",
     "elseif",
     "elif",
+    "endcall",
+    "endfilter",
     "endblock",
     "endmacro",
     "endif",
     "endfor",
     "extends",
     "include",
+    "import",
+    "from",
     "macro",
+    "call",
+    "filter",
     "block",
     "switch",
     "case",
@@ -181,16 +187,222 @@ fn strip_ignore_missing(rest: &str) -> (&str, bool) {
     }
 }
 
-/// Parses a quoted template path (`"a.html"` or `'a.html'`).
-fn parse_quoted_path(rest: &str) -> Result<String> {
+/// Byte index of `needle` in `rest` only when outside double-quoted regions (`\"` escapes respected).
+fn find_keyword_outside_quotes(rest: &str, needle: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let nlen = needle.len();
+    if nlen == 0 || rest.len() < nlen {
+        return None;
+    }
+    let mut i = 0usize;
+    let mut in_dq = false;
+    let mut escaped = false;
+    while i + nlen <= bytes.len() {
+        if in_dq {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if bytes[i] == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                in_dq = false;
+            }
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            in_dq = true;
+            i += 1;
+            continue;
+        }
+        if rest[i..].starts_with(needle) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_simple_ident(rest: &str) -> Result<(String, &str)> {
     let s = rest.trim();
-    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
-        return Ok(s[1..s.len() - 1].to_string());
+    let end = s
+        .char_indices()
+        .find(|(_, c)| !c.is_ascii_alphanumeric() && *c != '_')
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    if end == 0 {
+        return Err(RunjucksError::new("expected identifier"));
     }
-    if s.len() >= 2 && s.starts_with('\'') && s.ends_with('\'') {
-        return Ok(s[1..s.len() - 1].to_string());
+    let name = s[..end].to_string();
+    Ok((name, s[end..].trim_start()))
+}
+
+fn parse_import_as_suffix(rest_after_alias: &str) -> Result<Option<bool>> {
+    let t = rest_after_alias.trim();
+    if t.is_empty() {
+        return Ok(None);
     }
-    Err(RunjucksError::new("expected quoted template path"))
+    if t == "without context" {
+        return Ok(Some(false));
+    }
+    if t == "with context" {
+        return Ok(Some(true));
+    }
+    Err(RunjucksError::new(format!(
+        "expected end of tag, `with context`, or `without context`, found {t:?}"
+    )))
+}
+
+fn split_comma_outside_quotes(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    let mut in_dq = false;
+    let mut escaped = false;
+    while i < bytes.len() {
+        if in_dq {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if bytes[i] == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                in_dq = false;
+            }
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            in_dq = true;
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b',' {
+            out.push(s[start..i].trim());
+            start = i + 1;
+        }
+        i += 1;
+    }
+    out.push(s[start..].trim());
+    out
+}
+
+fn strip_trailing_with_context_segment(seg: &str) -> (&str, Option<bool>) {
+    let t = seg.trim();
+    if let Some(p) = t.strip_suffix("without context") {
+        return (p.trim_end(), Some(false));
+    }
+    if let Some(p) = t.strip_suffix("with context") {
+        return (p.trim_end(), Some(true));
+    }
+    (t, None)
+}
+
+fn parse_from_import_name_segment(seg: &str) -> Result<(String, Option<String>, Option<bool>)> {
+    let (core, wc_seg) = strip_trailing_with_context_segment(seg);
+    let core = core.trim();
+    if let Some(idx) = find_keyword_outside_quotes(core, " as ") {
+        let left = core[..idx].trim();
+        let right = core[idx + 4..].trim();
+        if left.starts_with('_') {
+            return Err(RunjucksError::new(
+                "names starting with an underscore cannot be imported",
+            ));
+        }
+        let (export_name, tail_left) = parse_simple_ident(left)?;
+        if !tail_left.trim().is_empty() {
+            return Err(RunjucksError::new("invalid `from` import name"));
+        }
+        let (alias, tail) = parse_simple_ident(right)?;
+        if !tail.trim().is_empty() {
+            return Err(RunjucksError::new("unexpected tokens after `as` alias"));
+        }
+        return Ok((export_name, Some(alias), wc_seg));
+    }
+    let (name, tail) = parse_simple_ident(core)?;
+    if !tail.trim().is_empty() {
+        return Err(RunjucksError::new("unexpected tokens in `from` import list"));
+    }
+    if name.starts_with('_') {
+        return Err(RunjucksError::new(
+            "names starting with an underscore cannot be imported",
+        ));
+    }
+    Ok((name, None, wc_seg))
+}
+
+fn parse_import_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `import` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["import"])?;
+    let idx = find_keyword_outside_quotes(rest, " as ").ok_or_else(|| {
+        RunjucksError::new("expected `{% import <expr> as <name> %}`")
+    })?;
+    let template_part = rest[..idx].trim();
+    let after_as = rest[idx + 4..].trim();
+    let template = parse_expr(template_part)?;
+    let (alias, after_alias) = parse_simple_ident(after_as)?;
+    let with_context = parse_import_as_suffix(after_alias)?;
+    *i += 1;
+    Ok(Node::Import {
+        template,
+        alias,
+        with_context,
+    })
+}
+
+fn parse_from_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `from` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["from"])?;
+    let idx = find_keyword_outside_quotes(rest, " import ").ok_or_else(|| {
+        RunjucksError::new("expected `{% from <expr> import <names> %}`")
+    })?;
+    let template_part = rest[..idx].trim();
+    let list_part = rest[idx + " import ".len()..].trim();
+    if list_part.is_empty() {
+        return Err(RunjucksError::new(
+            "expected at least one name in `from` import list",
+        ));
+    }
+    let template = parse_expr(template_part)?;
+    let segments = split_comma_outside_quotes(list_part);
+    let mut names: Vec<(String, Option<String>)> = Vec::new();
+    let mut with_context: Option<bool> = None;
+    for seg in segments {
+        if seg.is_empty() {
+            continue;
+        }
+        let (export_name, alias, wc) = parse_from_import_name_segment(seg)?;
+        names.push((export_name, alias));
+        if let Some(w) = wc {
+            with_context = Some(w);
+        }
+    }
+    if names.is_empty() {
+        return Err(RunjucksError::new(
+            "expected at least one name in `from` import list",
+        ));
+    }
+    *i += 1;
+    Ok(Node::FromImport {
+        template,
+        names,
+        with_context,
+    })
 }
 
 fn parse_block_name(rest: &str) -> Result<String> {
@@ -208,6 +420,97 @@ fn parse_block_name(rest: &str) -> Result<String> {
         return Err(RunjucksError::new("unexpected tokens after `block` name"));
     }
     Ok(name.to_string())
+}
+
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    let mut depth = 0i32;
+    let mut in_string: Option<u8> = None;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = in_string {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if c == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if c == q {
+                in_string = None;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'"' || c == b'\'' {
+            in_string = Some(c);
+            i += 1;
+            continue;
+        }
+        match c {
+            b'(' => depth += 1,
+            b')' => depth = (depth - 1).max(0),
+            b',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push(s[start..].trim());
+    out
+}
+
+fn parse_filter_tag_header(rest: &str) -> Result<(String, Vec<Expr>)> {
+    let s = rest.trim();
+    if s.is_empty() {
+        return Err(RunjucksError::new("`filter` requires a filter name"));
+    }
+    if let Some(open_paren) = s.find('(') {
+        let name = s[..open_paren].trim();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(RunjucksError::new("invalid filter name"));
+        }
+        let after = &s[open_paren + 1..];
+        let close = after
+            .rfind(')')
+            .ok_or_else(|| RunjucksError::new("unclosed `)` in `filter` tag"))?;
+        let inner = after[..close].trim();
+        let tail = after[close + 1..].trim();
+        if !tail.is_empty() {
+            return Err(RunjucksError::new("unexpected tokens after `filter` call"));
+        }
+        let segs = split_top_level_commas(inner);
+        let args: Vec<Expr> = if segs.len() == 1 && segs[0].is_empty() {
+            vec![]
+        } else {
+            segs
+                .into_iter()
+                .map(|t| parse_expr(t))
+                .collect::<Result<_>>()?
+        };
+        return Ok((name.to_string(), args));
+    }
+    let (name, tail) = parse_simple_ident(s)?;
+    if !tail.is_empty() {
+        return Err(RunjucksError::new("unexpected tokens after filter name"));
+    }
+    Ok((name, vec![]))
 }
 
 fn parse_macro_header(rest: &str) -> Result<(String, Vec<String>)> {
@@ -439,7 +742,7 @@ fn parse_extends_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
         return Err(RunjucksError::new("internal: expected `extends` tag"));
     };
     let rest = strip_keyword_prefix(body, &["extends"])?;
-    let parent = parse_quoted_path(rest)?;
+    let parent = parse_expr(rest.trim())?;
     *i += 1;
     Ok(Node::Extends { parent })
 }
@@ -469,6 +772,30 @@ fn parse_block_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     })
 }
 
+fn parse_filter_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `filter` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["filter"])?;
+    let (name, args) = parse_filter_tag_header(rest)?;
+    *i += 1;
+    let body = parse_until_tags(tokens, i, &["endfilter"])?;
+    expect_tag(tokens, i, &["endfilter"])?;
+    Ok(Node::FilterBlock { name, args, body })
+}
+
+fn parse_call_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `call` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["call"])?;
+    let callee = parse_expr(rest)?;
+    *i += 1;
+    let body = parse_until_tags(tokens, i, &["endcall"])?;
+    expect_tag(tokens, i, &["endcall"])?;
+    Ok(Node::CallBlock { callee, body })
+}
+
 fn parse_macro_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `macro` tag"));
@@ -479,6 +806,22 @@ fn parse_macro_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     let body = parse_until_tags(tokens, i, &["endmacro"])?;
     expect_tag(tokens, i, &["endmacro"])?;
     Ok(Node::MacroDef(MacroDef { name, params, body }))
+}
+
+/// `{% raw %}…{% endraw %}` / `{% verbatim %}…{% endverbatim %}` — lexer emits literal [`Token::Text`]
+/// between opening and closing tags (including nested inner raw/verbatim pairs).
+fn parse_raw_block(tokens: &[Token], i: &mut usize, close_tags: &[&str]) -> Result<Node> {
+    let Some(Token::Tag(_)) = tokens.get(*i) else {
+        return Err(RunjucksError::new("internal: expected raw/verbatim tag"));
+    };
+    *i += 1;
+    let mut content = String::new();
+    if let Some(Token::Text(s)) = tokens.get(*i) {
+        content = s.clone();
+        *i += 1;
+    }
+    expect_tag(tokens, i, close_tags)?;
+    Ok(Node::Text(content))
 }
 
 fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
@@ -500,11 +843,18 @@ fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
                 "switch" => parse_switch_stmt(tokens, i),
                 "set" => parse_set_stmt(tokens, i),
                 "include" => parse_include_stmt(tokens, i),
+                "import" => parse_import_stmt(tokens, i),
+                "from" => parse_from_stmt(tokens, i),
                 "extends" => parse_extends_stmt(tokens, i),
                 "block" => parse_block_stmt(tokens, i),
+                "filter" => parse_filter_stmt(tokens, i),
+                "call" => parse_call_stmt(tokens, i),
                 "macro" => parse_macro_stmt(tokens, i),
+                "raw" => parse_raw_block(tokens, i, &["endraw"]),
+                "verbatim" => parse_raw_block(tokens, i, &["endverbatim"]),
                 "elif" | "elseif" | "else" | "endif" | "endfor" | "endblock" | "endmacro"
-                | "case" | "default" | "endswitch" | "endset" => {
+                | "endfilter" | "endcall" | "case" | "default" | "endswitch" | "endset"
+                | "endraw" | "endverbatim" => {
                     Err(RunjucksError::new(format!(
                         "unexpected `{{%{body}%}}` (no matching opening tag)"
                     )))

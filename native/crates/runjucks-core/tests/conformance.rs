@@ -15,6 +15,9 @@ struct Case {
     context: Value,
     env: Option<EnvOpt>,
     expected: String,
+    /// When true, skip until engine matches Nunjucks (see `NUNJUCKS_PARITY.md`).
+    #[serde(default)]
+    skip: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,13 +53,7 @@ fn conformance_render_matches_nunjucks_golden_outputs() {
                 env.dev = d;
             }
         }
-        // Skip cases that need filters or language bits we do not model yet.
-        if matches!(
-            case.id.as_str(),
-            "tests_js_filter_default_undefined"
-                | "tests_js_for_batch"
-                | "tests_js_set_and_output"
-        ) {
+        if case.skip {
             continue;
         }
         let result = env.render_string(case.template.clone(), case.context.clone());

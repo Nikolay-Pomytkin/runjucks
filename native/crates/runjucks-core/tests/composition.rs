@@ -1,6 +1,9 @@
 //! Template composition: `include`, `extends` / `block`, macros.
 
+use runjucks_core::ast::{Expr, Node};
+use runjucks_core::lexer::tokenize;
 use runjucks_core::loader::map_loader;
+use runjucks_core::parser::parse;
 use runjucks_core::Environment;
 use serde_json::json;
 use std::collections::HashMap;
@@ -55,6 +58,74 @@ fn extends_block_override() {
         out,
         "<!doctype><title>Hi</title><body>B</body>"
     );
+}
+
+#[test]
+fn extends_dynamic_parent_from_context() {
+    let mut m = HashMap::new();
+    m.insert(
+        "base.html".into(),
+        r#"{% block body %}BASE{% endblock %}"#.into(),
+    );
+    m.insert(
+        "child.html".into(),
+        r#"{% extends layout %}{% block body %}CHILD{{ super() }}{% endblock %}"#.into(),
+    );
+    let env = env_with_map(m);
+    let out = env
+        .render_template("child.html", json!({ "layout": "base.html" }))
+        .unwrap();
+    assert_eq!(out, "CHILDBASE");
+}
+
+#[test]
+fn extends_dynamic_concat_template_name() {
+    let mut m = HashMap::new();
+    m.insert(
+        "main.html".into(),
+        r#"{% block x %}M{% endblock %}"#.into(),
+    );
+    m.insert(
+        "child.html".into(),
+        r#"{% extends prefix ~ ".html" %}{% block x %}C{{ super() }}{% endblock %}"#.into(),
+    );
+    let env = env_with_map(m);
+    let out = env
+        .render_template("child.html", json!({ "prefix": "main" }))
+        .unwrap();
+    assert_eq!(out, "CM");
+}
+
+#[test]
+fn extends_three_level_second_extends_still_literal() {
+    let mut m = HashMap::new();
+    m.insert("g.html".into(), r#"{% block b %}G{% endblock %}"#.into());
+    m.insert(
+        "p.html".into(),
+        r#"{% extends "g.html" %}{% block b %}P{{ super() }}{% endblock %}"#.into(),
+    );
+    m.insert(
+        "c.html".into(),
+        r#"{% extends parent %}{% block b %}C{{ super() }}{% endblock %}"#.into(),
+    );
+    let env = env_with_map(m);
+    let out = env
+        .render_template("c.html", json!({ "parent": "p.html" }))
+        .unwrap();
+    assert_eq!(out, "CPG");
+}
+
+#[test]
+fn parse_extends_stores_expression_not_only_string_literal() {
+    let t = tokenize(r#"{% extends layout %}"#).unwrap();
+    let root = parse(&t).unwrap();
+    let Node::Root(ch) = root else {
+        panic!("expected root");
+    };
+    let Node::Extends { parent } = &ch[0] else {
+        panic!("expected extends");
+    };
+    assert!(matches!(parent, Expr::Variable(name) if name == "layout"));
 }
 
 #[test]

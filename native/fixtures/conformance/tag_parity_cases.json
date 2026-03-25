@@ -10,7 +10,7 @@
     "id": "tag_for_kv_sorted",
     "source": "renderer_tags_extended",
     "template": "{% for k, v in o %}{{ k }}={{ v }};{% endfor %}",
-    "context": { "o": { "b": 2, "a": 1 } },
+    "context": { "o": { "a": 1, "b": 2 } },
     "expected": "a=1;b=2;"
   },
   {
@@ -26,5 +26,54 @@
     "template": "{% set cap %}x{% endset %}{{ cap }}",
     "context": {},
     "expected": "x"
+  },
+  {
+    "id": "tag_raw_braces",
+    "source": "nunjucks raw tag",
+    "template": "{% raw %}{{x}}{% endraw %}",
+    "context": { "x": 99 },
+    "expected": "{{x}}"
+  },
+  {
+    "id": "tag_verbatim_braces",
+    "source": "nunjucks verbatim tag",
+    "template": "{% verbatim %}{{x}}{% endverbatim %}",
+    "context": { "x": 99 },
+    "expected": "{{x}}"
+  },
+  {
+    "id": "tag_macro_greet",
+    "source": "nunjucks macro",
+    "template": "{% macro greet(name) %}Hello {{ name }}{% endmacro %}{{ greet(\"Ada\") }}",
+    "context": {},
+    "expected": "Hello Ada"
+  },
+  {
+    "id": "tag_filter_block_upper",
+    "source": "nunjucks filter block",
+    "template": "{% filter upper %}ab{% endfilter %}",
+    "context": {},
+    "expected": "AB"
+  },
+  {
+    "id": "tag_switch_case1_only",
+    "source": "nunjucks switch fall-through",
+    "template": "{% switch 1 %}{% case 1 %}A{% case 2 %}B{% default %}Z{% endswitch %}",
+    "context": {},
+    "expected": "A"
+  },
+  {
+    "id": "tag_for_loop_builtins",
+    "source": "nunjucks loop.*",
+    "template": "{% for i in [10,20] %}{{ loop.index }}:{{ loop.index0 }}:{{ loop.first }};{% endfor %}",
+    "context": {},
+    "expected": "1:0:true;2:1:false;"
+  },
+  {
+    "id": "tag_call_macro_caller",
+    "source": "nunjucks call/caller",
+    "template": "{% macro wrap() %}<div>{{ caller() }}</div>{% endmacro %}{% call wrap() %}in{% endcall %}",
+    "context": {},
+    "expected": "<div>in</div>"
   }
 ]

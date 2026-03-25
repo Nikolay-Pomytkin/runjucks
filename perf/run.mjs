@@ -1,14 +1,16 @@
 /**
  * Local perf harness: runjucks (NAPI) vs nunjucks npm.
  * Run from package root: `npm run build && npm run perf`
+ * Optional: `node perf/run.mjs --json` for machine-readable output.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { Bench } from 'tinybench'
 import { syntheticCases } from './synthetic.mjs'
+import { conformanceCasesById } from '../__test__/conformance/load-fixtures.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkgRoot = join(__dirname, '..')
@@ -21,37 +23,20 @@ const allowlist = JSON.parse(
   readFileSync(join(__dirname, 'conformance-allowlist.json'), 'utf8'),
 )
 
-function loadConformanceFiles() {
-  const renderPath = join(
-    pkgRoot,
-    'native/fixtures/conformance/render_cases.json',
-  )
-  const filterPath = join(
-    pkgRoot,
-    'native/fixtures/conformance/filter_cases.json',
-  )
-  const render = JSON.parse(readFileSync(renderPath, 'utf8'))
-  const filter = JSON.parse(readFileSync(filterPath, 'utf8'))
-  const byId = new Map()
-  for (const c of render) {
-    byId.set(c.id, { ...c, _file: 'render_cases' })
-  }
-  for (const c of filter) {
-    byId.set(c.id, { ...c, _file: 'filter_cases' })
-  }
-  return byId
-}
+const jsonOut = process.argv.includes('--json')
 
 function makeRunjucksEnv(case_) {
   const env = new runjucks.Environment()
   const ae = case_.env?.autoescape
   env.setAutoescape(ae !== false)
+  if (case_.env?.dev === true) env.setDev(true)
   return env
 }
 
 function makeNunjucksEnv(case_) {
   const autoescape = case_.env?.autoescape !== false
-  return new nunjucks.Environment(null, { autoescape })
+  const dev = case_.env?.dev === true
+  return new nunjucks.Environment(null, { autoescape, dev })
 }
 
 function cloneCtx(ctx) {
@@ -78,6 +63,14 @@ async function benchCase(case_) {
   const { name, template, context = {}, expected } = case_
   const tpl = template
   const ctx = context
+
+  if (case_.skip === true) {
+    return {
+      name,
+      skip: true,
+      reason: 'fixture marked skip (pending parity)',
+    }
+  }
 
   const rjEnv = makeRunjucksEnv(case_)
   const njEnv = makeNunjucksEnv(case_)
@@ -126,13 +119,8 @@ function pad(s, n) {
   return str.length >= n ? str.slice(0, n) : str + ' '.repeat(n - str.length)
 }
 
-async function main() {
-  console.log('runjucks perf vs nunjucks (local only; noisy across machines)\n')
-  console.log(`Node ${process.version} | nunjucks 3.2.4\n`)
-
-  const conformanceById = loadConformanceFiles()
+function collectAllowlistedCases(conformanceById) {
   const conformanceCases = []
-
   for (const id of allowlist.render_cases ?? []) {
     const c = conformanceById.get(id)
     if (!c) {
@@ -149,6 +137,25 @@ async function main() {
     }
     conformanceCases.push({ ...c, name: `conf:${id}` })
   }
+  for (const id of allowlist.tag_parity_cases ?? []) {
+    const c = conformanceById.get(id)
+    if (!c) {
+      console.warn(`allowlist: missing tag_parity case id ${id}`)
+      continue
+    }
+    conformanceCases.push({ ...c, name: `conf:${id}` })
+  }
+  return conformanceCases
+}
+
+async function main() {
+  if (!jsonOut) {
+    console.log('runjucks perf vs nunjucks (local only; noisy across machines)\n')
+    console.log(`Node ${process.version} | nunjucks 3.2.4\n`)
+  }
+
+  const conformanceById = conformanceCasesById()
+  const conformanceCases = collectAllowlistedCases(conformanceById)
 
   const all = [
     ...syntheticCases().map((c) => ({ ...c, expected: undefined })),
@@ -159,9 +166,39 @@ async function main() {
   for (const c of all) {
     const row = await benchCase(c)
     rows.push(row)
-    if (row.skip) {
+    if (!jsonOut && row.skip) {
       console.log(`SKIP ${pad(row.name, 36)} ${row.reason}`)
     }
+  }
+
+  const ok = rows.filter((r) => !r.skip)
+  const avgSp =
+    ok.length > 0 ? ok.reduce((a, r) => a + r.speedup, 0) / ok.length : 0
+
+  if (jsonOut) {
+    const payload = {
+      node: process.version,
+      generatedAt: new Date().toISOString(),
+      rows: rows.map((r) =>
+        r.skip
+          ? { name: r.name, skip: true, reason: r.reason }
+          : {
+              name: r.name,
+              skip: false,
+              runjucks_ms: r.rjMs,
+              nunjucks_ms: r.njMs,
+              nj_over_rj: r.speedup,
+            },
+      ),
+      summary: {
+        nonSkippedCount: ok.length,
+        avg_nj_over_rj: avgSp || null,
+      },
+    }
+    const outPath = join(__dirname, 'last-run.json')
+    writeFileSync(outPath, JSON.stringify(payload, null, 2), 'utf8')
+    console.log(`Wrote ${outPath}`)
+    return
   }
 
   console.log('')
@@ -177,14 +214,14 @@ async function main() {
     )
   }
 
-  const ok = rows.filter((r) => !r.skip)
   if (ok.length) {
-    const avgSp = ok.reduce((a, r) => a + r.speedup, 0) / ok.length
     console.log('-'.repeat(74))
     console.log(
       `${pad('avg nj/rj (non-skipped)', 38)} ${pad('', 12)} ${pad('', 12)} ${pad(avgSp.toFixed(2) + 'x', 8)}`,
     )
-    console.log('\n>1x means nunjucks is slower (runjucks faster). <1x means runjucks slower.')
+    console.log(
+      '\n>1x means nunjucks is slower (runjucks faster). <1x means runjucks slower.',
+    )
   }
 }
 

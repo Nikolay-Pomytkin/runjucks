@@ -67,21 +67,64 @@ fn parse_tag_prefix(rest: &str) -> Result<(String, usize, bool)> {
     Ok((body, total, trim_close))
 }
 
-/// Byte-scan so `{%` inside verbatim/raw is not mistaken for a tag unless it completes `{% endraw %}` / etc.
-fn find_closing_tag_open(rest: &str, end_name: &str) -> Option<usize> {
-    let prefix = format!("{end_name} ");
-    let mut i = 0;
-    while i < rest.len() {
-        if rest[i..].starts_with("{%") || rest[i..].starts_with("{%-") {
-            if let Ok((body, _, _)) = parse_tag_prefix(&rest[i..]) {
-                if body == end_name || body.starts_with(&prefix) {
-                    return Some(i);
-                }
+/// Finds the byte index of the `{%` that starts the **matching** closing tag, balancing nested
+/// `{% raw %}` / `{% endraw %}` (or `verbatim` / `endverbatim`) like Nunjucks `parseRaw`.
+///
+/// `rest` is the template suffix **after** the opening `{% raw %}` / `{% verbatim %}` tag was consumed.
+/// Nesting level starts at 1 (inside the outer block).
+fn find_matching_block_close(rest: &str, open_name: &str, end_name: &str) -> Result<usize> {
+    let open_prefix = format!("{open_name} ");
+    let end_prefix = format!("{end_name} ");
+    let mut pos = 0usize;
+    let mut level = 1usize;
+    while pos < rest.len() {
+        let slice = &rest[pos..];
+        if !slice.starts_with("{%") && !slice.starts_with("{%-") {
+            let adv = slice
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1);
+            pos += adv;
+            continue;
+        }
+        let tag_start = pos;
+        let (body, total, _) = match parse_tag_prefix(slice) {
+            Ok(t) => t,
+            Err(_) => {
+                pos += slice
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(1);
+                continue;
+            }
+        };
+        // `{%` inside literal text can make `parse_tag_prefix` "succeed" by pairing the wrong `%}`
+        // (e.g. `{%{% endverbatim %}`). Match the old byte-scanner: treat as not-a-tag and step.
+        if body.contains("{%") {
+            pos += slice
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1);
+            continue;
+        }
+        let is_open = body == open_name || body.starts_with(&open_prefix);
+        let is_close = body == end_name || body.starts_with(&end_prefix);
+        if is_open {
+            level += 1;
+        } else if is_close {
+            level = level.saturating_sub(1);
+            if level == 0 {
+                return Ok(tag_start);
             }
         }
-        i += 1;
+        pos = tag_start + total;
     }
-    None
+    Err(RunjucksError::new(format!(
+        "unclosed {end_name} block: expected matching `%}}` tag"
+    )))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -288,15 +331,20 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn open_tag_name(mode: LexerMode) -> &'static str {
+        match mode {
+            LexerMode::Raw => "raw",
+            LexerMode::Verbatim => "verbatim",
+            LexerMode::Normal => "",
+        }
+    }
+
     fn next_token_block_mode(&mut self) -> Result<Option<Token>> {
         let mode = self.mode;
+        let open_name = Self::open_tag_name(mode);
         let end_name = Self::end_tag_name(mode);
         let rest = self.rest();
-        let idx = find_closing_tag_open(rest, end_name).ok_or_else(|| {
-            RunjucksError::new(format!(
-                "unclosed {end_name} block: expected matching `%}}` tag"
-            ))
-        })?;
+        let idx = find_matching_block_close(rest, open_name, end_name)?;
         let literal = rest[..idx].to_string();
         self.position += idx;
         let rest2 = self.rest();
@@ -337,9 +385,9 @@ impl<'a> Lexer<'a> {
                 }
                 Some((0, OpenKind::Tag { .. })) => {
                     let body = self.consume_tag_at_position()?;
-                    if body == "raw" {
+                    if body == "raw" || body.starts_with("raw ") {
                         self.mode = LexerMode::Raw;
-                    } else if body == "verbatim" {
+                    } else if body == "verbatim" || body.starts_with("verbatim ") {
                         self.mode = LexerMode::Verbatim;
                     }
                     return Ok(Some(Token::Tag(body)));

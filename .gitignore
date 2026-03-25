@@ -6,3 +6,4 @@ artifacts/
 .DS_Store
 .env
 .env.*
+perf/last-run.json

@@ -47,7 +47,7 @@
     "build:debug": "napi build --platform --manifest-path native/crates/runjucks-napi/Cargo.toml --output-dir .",
     "napi:artifacts": "napi artifacts --output-dir artifacts --npm-dir npm",
     "napi:prepublish": "napi pre-publish -p npm --tag-style npm --no-gh-release",
-    "test": "node --test __test__/*.test.mjs",
+    "test": "node --test __test__/*.test.mjs __test__/conformance/run.mjs",
     "test:conformance:node": "node --test __test__/conformance/run.mjs",
     "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",
     "test:pending": "node --test __test__/interpolation-pending.mjs",
@@ -57,7 +57,8 @@
     "docs:dev": "npm run dev --prefix docs",
     "docs:build": "npm run build --prefix docs",
     "docs:preview": "npm run preview --prefix docs",
-    "perf": "node perf/run.mjs"
+    "perf": "node perf/run.mjs",
+    "perf:json": "node perf/run.mjs --json"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0",

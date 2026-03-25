@@ -19,7 +19,7 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 - **Templates** — `{% import %}`, `{% from %}`, `{% call %}` / `caller`, `{{ super() }}` in blocks, `{% raw %}` (partial: lexer may handle), etc.
 - **Loaders & async** — Async / filesystem loaders beyond an in-memory map; Nunjucks’ full async story.
 - **JS `addFilter`** — Exposed on `Environment` but **not wired** into Rust yet (no-op); custom filters are Rust built-ins only today.
-- **Parity** — Many upstream golden tests still fail; see [`native/fixtures/conformance/`](native/fixtures/conformance/README.md).
+- **Parity** — Many upstream golden tests still fail; see [`native/fixtures/conformance/`](native/fixtures/conformance/README.md). For a full prioritized backlog of remaining gaps (tags, filters, API, conformance), see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md).
 
 Development continues against [Nunjucks](https://github.com/mozilla/nunjucks) behavior; if you keep a checkout next to this repo, the vendored tree is still useful as [`../nunjucks`](../nunjucks).
 

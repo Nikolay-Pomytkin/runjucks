@@ -1,7 +1,7 @@
 //! Builds [`crate::ast::Node`] trees from [`crate::lexer::Token`] streams.
 //!
 //! `{{ … }}` bodies are parsed with [`parse_expr`] (nom-driven, Nunjucks-style precedence; see [`expr`]).
-//! `{% … %}` supports `if` / `elif` / `else` / `endif`, `switch` / `case` / `default` / `endswitch`, `for` / `else` / `endfor` (multi-var / tuple unpack), `set` (incl. `endset` capture), `include` (expression + `ignore missing`), `extends`, `block` / `endblock`, and `macro` / `endmacro` (see [`template`]).
+//! `{% … %}` supports `if` / `elif` / `else` / `endif`, `switch` / `case` / `default` / `endswitch`, `for` / `else` / `endfor` (multi-var / tuple unpack), `set` (incl. `endset` capture), `include` (expression + `ignore missing`), `import` / `from` (macro libraries), `extends` (expression), `block` / `endblock`, `macro` / `endmacro`, `filter` / `endfilter`, `call` / `endcall`, and `raw` / `endraw` / `verbatim` / `endverbatim` (see [`template`]).
 //! For unimplemented tags, use [`crate::tag_lex::tokenize_tag_body`] for tokenization only.
 
 pub mod expr;

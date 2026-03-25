@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// - **`autoescape`**: When `true` (the default), HTML-escapes string output from variable tags via
 ///   [`crate::filters::escape_html`].
 /// - **`dev`**: Reserved for developer-mode behavior (e.g. richer errors); currently unused in the renderer.
-/// - **`loader`**: Optional [`TemplateLoader`] for [`Environment::render_template`], `{% include %}`, and `{% extends %}`.
+/// - **`loader`**: Optional [`TemplateLoader`] for [`Environment::render_template`], `{% include %}`, `{% import %}`, `{% from %}`, and `{% extends %}`.
 ///
 /// # Default
 ///
@@ -100,7 +100,7 @@ impl Environment {
 
     /// Renders a named template using the configured [`TemplateLoader`].
     ///
-    /// Supports `{% extends %}`, `{% include %}`, and `{% macro %}` across files.
+    /// Supports `{% extends %}`, `{% include %}`, `{% import %}`, `{% from %}`, and `{% macro %}` across files.
     pub fn render_template(&self, name: &str, context: Value) -> Result<String> {
         let loader = self
             .loader

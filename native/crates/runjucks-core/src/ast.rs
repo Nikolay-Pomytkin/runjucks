@@ -74,12 +74,37 @@ pub enum Node {
         cases: Vec<SwitchCase>,
         default_body: Option<Vec<Node>>,
     },
-    /// `{% extends "parent" %}` — must appear before meaningful content in a child template.
-    Extends { parent: String },
+    /// `{% extends expr %}` — template name from any expression (e.g. quoted string or variable); must appear before meaningful child content.
+    Extends { parent: Expr },
     /// `{% block name %}…{% endblock %}` — default body when used in a base layout.
     Block { name: String, body: Vec<Node> },
     /// `{% macro name(a, b) %}…{% endmacro %}` — emits no output; registers a macro for the current template.
     MacroDef(MacroDef),
+    /// `{% import expr as alias %}` — loads a template and exposes its top-level macros under `alias` (`alias.macro()`).
+    Import {
+        template: Expr,
+        alias: String,
+        /// `Some(true)` = `with context`, `Some(false)` = `without context`; `None` if omitted (static macro load ignores this for now).
+        with_context: Option<bool>,
+    },
+    /// `{% from expr import a, b as c %}` — imports named macros into the current macro scope.
+    FromImport {
+        template: Expr,
+        /// `(exported_name, alias)` where `alias` is the local name (same as exported if `None`).
+        names: Vec<(String, Option<String>)>,
+        with_context: Option<bool>,
+    },
+    /// `{% filter name %}…{% endfilter %}` — render body to a string, then apply a builtin filter.
+    FilterBlock {
+        name: String,
+        args: Vec<Expr>,
+        body: Vec<Node>,
+    },
+    /// `{% call macro(args) %}…{% endcall %}` — macro may invoke `caller()` to render this body.
+    CallBlock {
+        callee: Expr,
+        body: Vec<Node>,
+    },
 }
 
 /// Comparison operators in a Nunjucks-style chain (`a == b < c`).

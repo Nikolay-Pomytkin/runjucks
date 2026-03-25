@@ -40,5 +40,22 @@ export function syntheticCases() {
       template: `{% if a %}{% if b %}{{ x }}{% else %}no{% endif %}{% else %}outer{% endif %}`,
       context: { a: true, b: true, x: 'ok' },
     },
+    {
+      name: 'synth_nested_for',
+      template:
+        '{% for a in outer %}{% for b in a %}{{ b }}{% endfor %}{% endfor %}',
+      context: { outer: [[1, 2], [3, 4]] },
+    },
+    {
+      name: 'synth_long_var_lines',
+      template: Array.from({ length: 50 }, () => '{{ x }}\n').join(''),
+      context: { x: 'ok' },
+    },
+    {
+      name: 'synth_deep_if_chain',
+      template:
+        '{% if a %}{% if b %}{% if c %}x{% endif %}{% endif %}{% endif %}',
+      context: { a: true, b: true, c: true },
+    },
   ]
 }

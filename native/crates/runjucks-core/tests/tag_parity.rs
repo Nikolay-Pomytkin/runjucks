@@ -13,6 +13,8 @@ struct Case {
     #[serde(default)]
     context: Value,
     expected: String,
+    #[serde(default)]
+    skip: bool,
 }
 
 #[test]
@@ -23,6 +25,9 @@ fn tag_parity_cases_match_expected() {
     .expect("parse tag_parity_cases.json");
     let env = Environment::default();
     for case in cases {
+        if case.skip {
+            continue;
+        }
         let out = env
             .render_string(case.template.clone(), case.context.clone())
             .unwrap_or_else(|e| panic!("case {}: {e}", case.id));
