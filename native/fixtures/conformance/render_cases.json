@@ -293,5 +293,26 @@
     "context": { "nums": [0, 1, 2, 3, 4] },
     "env": { "jinjaCompat": true },
     "expected": "0,2,4"
+  },
+  {
+    "id": "is_defined_missing_object_key",
+    "source": "nunjucks `is defined` on missing object property",
+    "template": "{{ o.a is defined }}",
+    "context": { "o": {} },
+    "expected": "false"
+  },
+  {
+    "id": "is_defined_array_oob",
+    "source": "nunjucks `is defined` on array index",
+    "template": "{{ items[0] is defined }} {{ items[99] is defined }}",
+    "context": { "items": [1, 2] },
+    "expected": "true false"
+  },
+  {
+    "id": "regex_literal_test_substring",
+    "source": "nunjucks templating.html — Regular expressions",
+    "template": "{{ 'yes' if r/foo/.test('barfoobaz') else 'no' }}",
+    "context": {},
+    "expected": "yes"
   }
 ]

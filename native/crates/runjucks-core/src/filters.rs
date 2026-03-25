@@ -2,10 +2,10 @@
 
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
-use rand::Rng;
 use crate::value::{
     is_marked_safe, is_undefined_value, mark_safe, value_to_string, value_to_string_raw,
 };
+use rand::Rng;
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::sync::OnceLock;
@@ -67,9 +67,7 @@ fn as_f64_arg(v: &Value) -> Option<f64> {
 
 fn striptags_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r"(?i)<\/?([a-z][a-z0-9]*)\b[^>]*>|<!--[\s\S]*?-->").unwrap()
-    })
+    RE.get_or_init(|| Regex::new(r"(?i)<\/?([a-z][a-z0-9]*)\b[^>]*>|<!--[\s\S]*?-->").unwrap())
 }
 
 fn word_re() -> &'static Regex {
@@ -83,8 +81,18 @@ fn encode_uri_component(s: &str) -> String {
         let mut buf = [0u8; 4];
         for byte in c.encode_utf8(&mut buf).as_bytes() {
             match *byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*'
-                | b'\'' | b'(' | b')' => out.push(char::from(*byte)),
+                b'A'..=b'Z'
+                | b'a'..=b'z'
+                | b'0'..=b'9'
+                | b'-'
+                | b'_'
+                | b'.'
+                | b'!'
+                | b'~'
+                | b'*'
+                | b'\''
+                | b'('
+                | b')' => out.push(char::from(*byte)),
                 _ => out.push_str(&format!("%{:02x}", byte)),
             }
         }
@@ -117,9 +125,7 @@ fn filter_default(input: &Value, args: &[Value]) -> Value {
             || input.is_null()
             || matches!(input, Value::Bool(false))
             || (matches!(input, Value::String(s) if s.is_empty()))
-            || input
-                .as_f64()
-                .is_some_and(|x| x == 0.0 && !x.is_nan())
+            || input.as_f64().is_some_and(|x| x == 0.0 && !x.is_nan())
         {
             def
         } else {
@@ -147,7 +153,10 @@ fn filter_batch(input: &Value, args: &[Value]) -> Result<Value> {
         return Err(RunjucksError::new("`batch` chunk size must be positive"));
     }
     let linecount = linecount as usize;
-    let fill_with = args.get(1).cloned().filter(|v| !v.is_null() && !is_undefined_value(v));
+    let fill_with = args
+        .get(1)
+        .cloned()
+        .filter(|v| !v.is_null() && !is_undefined_value(v));
 
     let mut res: Vec<Value> = Vec::new();
     let mut tmp: Vec<Value> = Vec::new();
@@ -232,11 +241,13 @@ fn filter_sum(input: &Value, args: &[Value]) -> Result<Value> {
 
     let sum: f64 = mapped.iter().filter_map(|v| as_f64_arg(v)).sum();
     let total = start + sum;
-    Ok(if total.fract() == 0.0 && total >= i64::MIN as f64 && total <= i64::MAX as f64 {
-        json!(total as i64)
-    } else {
-        json!(total)
-    })
+    Ok(
+        if total.fract() == 0.0 && total >= i64::MIN as f64 && total <= i64::MAX as f64 {
+            json!(total as i64)
+        } else {
+            json!(total)
+        },
+    )
 }
 
 fn filter_wordcount(input: &Value) -> Value {
@@ -316,8 +327,14 @@ fn filter_truncate(input: &Value, args: &[Value]) -> Value {
     if s.chars().count() <= length {
         return Value::String(s.into_owned());
     }
-    let killwords = args.get(1).map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
-    let end = args.get(2).map(value_to_string).unwrap_or_else(|| "...".to_string());
+    let killwords = args
+        .get(1)
+        .map(|v| v.as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    let end = args
+        .get(2)
+        .map(value_to_string)
+        .unwrap_or_else(|| "...".to_string());
 
     let out: String = if killwords {
         s.chars().take(length).collect()
@@ -336,7 +353,10 @@ fn filter_striptags(input: &Value, args: &[Value]) -> Value {
     let s = value_to_string_raw(input);
     let stripped = striptags_re().replace_all(&s, "");
     let trimmed_input = stripped.trim();
-    let preserve = args.first().map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let preserve = args
+        .first()
+        .map(|v| v.as_bool().unwrap_or(false))
+        .unwrap_or(false);
     let res = if preserve {
         striptags_preserve_linebreaks_nunjucks(trimmed_input)
     } else {
@@ -447,18 +467,27 @@ fn filter_sort(input: &Value, args: &[Value]) -> Result<Value> {
     let Value::Array(arr) = input else {
         return Ok(Value::Array(vec![]));
     };
-    let reversed = args.first().map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
-    let case_sensitive = args.get(1).map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let reversed = args
+        .first()
+        .map(|v| v.as_bool().unwrap_or(false))
+        .unwrap_or(false);
+    let case_sensitive = args
+        .get(1)
+        .map(|v| v.as_bool().unwrap_or(false))
+        .unwrap_or(false);
     let attr = args.get(2).map(value_to_string).unwrap_or_default();
 
-    let mut keys: Vec<Vec<Value>> = arr.iter().map(|item| {
-        let key = if attr.is_empty() {
-            item.clone()
-        } else {
-            get_attr_value(item, &attr)
-        };
-        vec![key, item.clone()]
-    }).collect();
+    let mut keys: Vec<Vec<Value>> = arr
+        .iter()
+        .map(|item| {
+            let key = if attr.is_empty() {
+                item.clone()
+            } else {
+                get_attr_value(item, &attr)
+            };
+            vec![key, item.clone()]
+        })
+        .collect();
 
     keys.sort_by(|a, b| {
         let x = &a[0];
@@ -470,7 +499,9 @@ fn filter_sort(input: &Value, args: &[Value]) -> Result<Value> {
         ord
     });
 
-    Ok(Value::Array(keys.into_iter().map(|p| p[1].clone()).collect()))
+    Ok(Value::Array(
+        keys.into_iter().map(|p| p[1].clone()).collect(),
+    ))
 }
 
 fn compare_sort_keys(a: &Value, b: &Value, case_sensitive: bool) -> std::cmp::Ordering {
@@ -484,7 +515,9 @@ fn compare_sort_keys(a: &Value, b: &Value, case_sensitive: bool) -> std::cmp::Or
 
 fn partial_cmp_str(a: &str, b: &str) -> std::cmp::Ordering {
     match (a.parse::<f64>(), b.parse::<f64>()) {
-        (Ok(x), Ok(y)) if !x.is_nan() && !y.is_nan() => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        (Ok(x), Ok(y)) if !x.is_nan() && !y.is_nan() => {
+            x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal)
+        }
         _ => a.cmp(b),
     }
 }
@@ -493,7 +526,10 @@ fn filter_dictsort(input: &Value, args: &[Value]) -> Result<Value> {
     let Value::Object(o) = input else {
         return Ok(Value::Array(vec![]));
     };
-    let case_sensitive = args.first().map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let case_sensitive = args
+        .first()
+        .map(|v| v.as_bool().unwrap_or(false))
+        .unwrap_or(false);
     let by_value = args
         .get(1)
         .map(|v| value_to_string(v) == "value")
@@ -572,7 +608,9 @@ fn filter_list(input: &Value) -> Result<Value> {
                 .collect();
             Ok(Value::Array(out))
         }
-        _ => Err(RunjucksError::new("`list` filter expects string, array, or object")),
+        _ => Err(RunjucksError::new(
+            "`list` filter expects string, array, or object",
+        )),
     }
 }
 
@@ -613,10 +651,7 @@ fn filter_slice_(input: &Value, args: &[Value]) -> Result<Value> {
 }
 
 fn filter_selectattr(input: &Value, args: &[Value]) -> Value {
-    let attr = args
-        .first()
-        .map(value_to_string)
-        .unwrap_or_default();
+    let attr = args.first().map(value_to_string).unwrap_or_default();
     let Value::Array(arr) = input else {
         return Value::Array(vec![]);
     };
@@ -629,10 +664,7 @@ fn filter_selectattr(input: &Value, args: &[Value]) -> Value {
 }
 
 fn filter_rejectattr(input: &Value, args: &[Value]) -> Value {
-    let attr = args
-        .first()
-        .map(value_to_string)
-        .unwrap_or_default();
+    let attr = args.first().map(value_to_string).unwrap_or_default();
     let Value::Array(arr) = input else {
         return Value::Array(vec![]);
     };
@@ -728,10 +760,7 @@ fn filter_urlize(input: &Value, args: &[Value]) -> Value {
     let nf = if nofollow { r#" rel="nofollow""# } else { "" };
 
     let punc_re = Regex::new(r"^(?:\(|<|&lt;)?(.*?)(?:\.|,|\)|\n|&gt;)?$").unwrap();
-    let email_re = Regex::new(
-        r"^[\w.!#$%&'*+\-/=?\^`{|}~]+@[a-z\d\-]+(\.[a-z\d\-]+)+$",
-    )
-    .unwrap();
+    let email_re = Regex::new(r"^[\w.!#$%&'*+\-/=?\^`{|}~]+@[a-z\d\-]+(\.[a-z\d\-]+)+$").unwrap();
     let http_re = Regex::new(r"^https?://.*$").unwrap();
     let www_re = Regex::new(r"^www\.").unwrap();
     let tld_re = Regex::new(r"\.(?:org|net|com)(?:\:|\/|$)").unwrap();
@@ -755,15 +784,11 @@ fn filter_urlize(input: &Value, args: &[Value]) -> Value {
         let linked = if http_re.is_match(possible) {
             format!(r#"<a href="{possible}"{nf}>{short}</a>"#)
         } else if www_re.is_match(possible) {
-            format!(
-                r#"<a href="http://{possible}"{nf}>{short}</a>"#
-            )
+            format!(r#"<a href="http://{possible}"{nf}>{short}</a>"#)
         } else if email_re.is_match(possible) {
             format!(r#"<a href="mailto:{possible}">{possible}</a>"#)
         } else if tld_re.is_match(possible) {
-            format!(
-                r#"<a href="http://{possible}"{nf}>{short}</a>"#
-            )
+            format!(r#"<a href="http://{possible}"{nf}>{short}</a>"#)
         } else {
             word.to_string()
         };
@@ -784,10 +809,7 @@ fn filter_replace_nunjucks(input: &Value, args: &[Value]) -> Result<Value> {
             return Ok(input.clone());
         }
     };
-    let to = args
-        .get(1)
-        .map(value_to_string)
-        .unwrap_or_default();
+    let to = args.get(1).map(value_to_string).unwrap_or_default();
     let max_count = args
         .get(2)
         .and_then(|v| {
@@ -914,7 +936,8 @@ pub fn apply_builtin(
             Ok(arr[idx].clone())
         }
         "round" => {
-            let n = as_f64_arg(input).ok_or_else(|| RunjucksError::new("round filter expects a number"))?;
+            let n = as_f64_arg(input)
+                .ok_or_else(|| RunjucksError::new("round filter expects a number"))?;
             let prec = args
                 .first()
                 .and_then(|a| a.as_i64().or_else(|| value_to_string(a).parse().ok()))
@@ -926,11 +949,13 @@ pub fn apply_builtin(
                 "floor" => (n * factor).floor() / factor,
                 _ => js_style_round(n, prec),
             };
-            Ok(if r.fract() == 0.0 && r >= i64::MIN as f64 && r <= i64::MAX as f64 {
-                json!(r as i64)
-            } else {
-                json!(r)
-            })
+            Ok(
+                if r.fract() == 0.0 && r >= i64::MIN as f64 && r <= i64::MAX as f64 {
+                    json!(r as i64)
+                } else {
+                    json!(r)
+                },
+            )
         }
         "escape" | "e" => {
             if is_marked_safe(input) {
@@ -974,13 +999,16 @@ pub fn apply_builtin(
         "reject" => filter_reject(env, input, args),
         "groupby" => filter_groupby(input, args),
         "abs" => {
-            let n = as_f64_arg(input).ok_or_else(|| RunjucksError::new("abs filter expects a number"))?;
+            let n = as_f64_arg(input)
+                .ok_or_else(|| RunjucksError::new("abs filter expects a number"))?;
             let a = n.abs();
-            Ok(if a.fract() == 0.0 && a >= i64::MIN as f64 && a <= i64::MAX as f64 {
-                json!(a as i64)
-            } else {
-                json!(a)
-            })
+            Ok(
+                if a.fract() == 0.0 && a >= i64::MIN as f64 && a <= i64::MAX as f64 {
+                    json!(a as i64)
+                } else {
+                    json!(a)
+                },
+            )
         }
         "capitalize" => {
             let s = value_to_string(input);

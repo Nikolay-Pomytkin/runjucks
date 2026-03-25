@@ -1,16 +1,19 @@
 //! Walks [`crate::ast::Node`] trees and produces output strings using an [`crate::Environment`] and JSON context.
 
-use crate::ast::{BinOp, CompareOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp};
+use crate::ast::{
+    BinOp, CompareOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp,
+};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
-use rand::rngs::SmallRng;
-use rand::SeedableRng;
 use crate::globals::{
     builtin_range, cycler_handle_value, is_builtin_marker_value, joiner_handle_value,
-    parse_cycler_id, parse_joiner_id, CyclerState, JoinerState,
+    parse_cycler_id, parse_joiner_id, CyclerState, JoinerState, RJ_CALLABLE,
 };
 use crate::loader::TemplateLoader;
+use crate::value::{is_undefined_value, undefined_value};
 use crate::{lexer, parser};
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -22,9 +25,7 @@ pub struct CtxStack {
 
 impl CtxStack {
     pub fn from_root(root: Map<String, Value>) -> Self {
-        Self {
-            frames: vec![root],
-        }
+        Self { frames: vec![root] }
     }
 
     pub fn push_frame(&mut self) {
@@ -95,6 +96,9 @@ pub struct RenderState<'a> {
     pub macro_scopes: Vec<HashMap<String, MacroDef>>,
     /// `{% import "x" as ns %}` — macros callable as `ns.macro_name()`.
     pub macro_namespaces: HashMap<String, HashMap<String, MacroDef>>,
+    /// Top-level `{% set %}` exports from each `import … as ns` namespace (`ns.name`), also the
+    /// lexical scope for macros defined in that namespace.
+    pub macro_namespace_values: HashMap<String, HashMap<String, Value>>,
     /// Per-block inheritance: innermost template first (child → parent → …) for `{{ super() }}`.
     pub block_chains: Option<HashMap<String, Vec<Vec<Node>>>>,
     /// When rendering a block layer, `Some((block_name, layer_index))` for `super()` resolution.
@@ -110,7 +114,10 @@ pub struct RenderState<'a> {
 }
 
 impl<'a> RenderState<'a> {
-    pub fn new(loader: Option<&'a (dyn TemplateLoader + Send + Sync)>, rng_seed: Option<u64>) -> Self {
+    pub fn new(
+        loader: Option<&'a (dyn TemplateLoader + Send + Sync)>,
+        rng_seed: Option<u64>,
+    ) -> Self {
         let rng = match rng_seed {
             Some(s) => SmallRng::seed_from_u64(s),
             None => SmallRng::from_entropy(),
@@ -120,6 +127,7 @@ impl<'a> RenderState<'a> {
             stack: Vec::new(),
             macro_scopes: Vec::new(),
             macro_namespaces: HashMap::new(),
+            macro_namespace_values: HashMap::new(),
             block_chains: None,
             super_context: None,
             caller_stack: Vec::new(),
@@ -165,6 +173,12 @@ impl<'a> RenderState<'a> {
             .get(ns)
             .and_then(|m| m.get(macro_name))
     }
+
+    pub fn lookup_namespaced_value(&self, ns: &str, name: &str) -> Option<&Value> {
+        self.macro_namespace_values
+            .get(ns)
+            .and_then(|m| m.get(name))
+    }
 }
 
 /// Renders `root` to a string using `env` and `ctx_stack`.
@@ -186,9 +200,8 @@ pub fn render_entry(
     ctx_stack: &mut CtxStack,
 ) -> Result<String> {
     if let Some((parent_expr, blocks)) = extract_layout_if_any(root)? {
-        let parent_name = crate::value::value_to_string(&eval_to_value(
-            env, state, &parent_expr, ctx_stack,
-        )?);
+        let parent_name =
+            crate::value::value_to_string(&eval_to_value(env, state, &parent_expr, ctx_stack)?);
         render_extends(env, state, &parent_name, blocks, ctx_stack)
     } else {
         render_with_state(env, state, root, ctx_stack)
@@ -274,9 +287,8 @@ fn build_block_chains(
         let local_blocks = collect_blocks_in_root(parent_ast);
         let inherited: HashMap<String, Vec<Vec<Node>>> =
             if let Some(gp_expr) = extends_parent_expr(parent_ast) {
-                let gp_name = crate::value::value_to_string(&eval_to_value(
-                    env, state, gp_expr, ctx_stack,
-                )?);
+                let gp_name =
+                    crate::value::value_to_string(&eval_to_value(env, state, gp_expr, ctx_stack)?);
                 let src = loader.load(&gp_name)?;
                 let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
                 let gp_ast = parser::parse_with_env(
@@ -298,8 +310,7 @@ fn build_block_chains(
                 HashMap::new()
             };
 
-        let mut all_names: HashSet<String> =
-            immediate_child_overrides.keys().cloned().collect();
+        let mut all_names: HashSet<String> = immediate_child_overrides.keys().cloned().collect();
         all_names.extend(local_blocks.keys().cloned());
         all_names.extend(inherited.keys().cloned());
 
@@ -387,6 +398,51 @@ fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
         }
     }
     m
+}
+
+/// Top-level `{% set name = expr %}` (single target, no `{% set %}…{% endset %}` block).
+fn collect_top_level_sets(root: &Node) -> Vec<(String, Expr)> {
+    let mut out = Vec::new();
+    let Node::Root(children) = root else {
+        return out;
+    };
+    for n in children {
+        if let Node::Set {
+            targets,
+            value: Some(expr),
+            body: None,
+        } = n
+        {
+            if targets.len() == 1 {
+                out.push((targets[0].clone(), expr.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Evaluates exported top-level assignments (`getExported`) with Nunjucks-style context:
+/// `with context` → parent context; omitted or `without context` → isolated root (globals still resolve via [`Environment`].
+fn eval_exported_top_level_sets(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    root: &Node,
+    ctx_stack: &mut CtxStack,
+    with_context: Option<bool>,
+) -> Result<HashMap<String, Value>> {
+    let mut out = HashMap::new();
+    let sets = collect_top_level_sets(root);
+    let mut import_stack = if matches!(with_context, Some(true)) {
+        CtxStack::from_root(ctx_stack.flatten())
+    } else {
+        CtxStack::from_root(Map::new())
+    };
+    for (name, expr) in sets {
+        let v = eval_to_value(env, state, &expr, &mut import_stack)?;
+        import_stack.set(&name, v.clone());
+        out.insert(name, v);
+    }
+    Ok(out)
 }
 
 /// Detects `{% import "x" %}` / `{% from "x" %}` cycles using **string-literal** paths only (matches
@@ -500,9 +556,9 @@ fn render_node(
             ignore_missing,
             with_context,
         } => {
-            let loader = state.loader.ok_or_else(|| {
-                RunjucksError::new("`include` requires a template loader")
-            })?;
+            let loader = state
+                .loader
+                .ok_or_else(|| RunjucksError::new("`include` requires a template loader"))?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let src = match loader.load(&name) {
                 Ok(s) => s,
@@ -528,11 +584,11 @@ fn render_node(
         Node::Import {
             template,
             alias,
-            with_context: _,
+            with_context,
         } => {
-            let loader = state.loader.ok_or_else(|| {
-                RunjucksError::new("`import` requires a template loader")
-            })?;
+            let loader = state
+                .loader
+                .ok_or_else(|| RunjucksError::new("`import` requires a template loader"))?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let src = loader.load(&name)?;
             let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
@@ -544,18 +600,23 @@ fn render_node(
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, &imported, loader)?;
             let defs = collect_top_level_macros(&imported);
+            let exported_sets =
+                eval_exported_top_level_sets(env, state, &imported, stack, *with_context)?;
             state.pop_template();
             state.macro_namespaces.insert(alias.clone(), defs);
+            state
+                .macro_namespace_values
+                .insert(alias.clone(), exported_sets);
             Ok(String::new())
         }
         Node::FromImport {
             template,
             names,
-            with_context: _,
+            with_context,
         } => {
-            let loader = state.loader.ok_or_else(|| {
-                RunjucksError::new("`from` requires a template loader")
-            })?;
+            let loader = state
+                .loader
+                .ok_or_else(|| RunjucksError::new("`from` requires a template loader"))?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let src = loader.load(&name)?;
             let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
@@ -567,14 +628,19 @@ fn render_node(
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, &imported, loader)?;
             let defs = collect_top_level_macros(&imported);
+            let exported_sets =
+                eval_exported_top_level_sets(env, state, &imported, stack, *with_context)?;
             state.pop_template();
             let mut scope = HashMap::new();
             for (export_name, alias_opt) in names {
-                let mdef = defs.get(export_name).ok_or_else(|| {
-                    RunjucksError::new(format!("cannot import '{export_name}'"))
-                })?;
                 let local = alias_opt.as_ref().unwrap_or(export_name);
-                scope.insert(local.clone(), mdef.clone());
+                if let Some(mdef) = defs.get(export_name) {
+                    scope.insert(local.clone(), mdef.clone());
+                } else if let Some(v) = exported_sets.get(export_name) {
+                    stack.set(local, v.clone());
+                } else {
+                    return Err(RunjucksError::new(format!("cannot import '{export_name}'")));
+                }
             }
             state.push_macros(scope);
             Ok(String::new())
@@ -650,9 +716,7 @@ fn render_node(
                     state
                         .lookup_namespaced_macro(ns, attr)
                         .cloned()
-                        .ok_or_else(|| {
-                            RunjucksError::new(format!("unknown macro `{ns}.{attr}`"))
-                        })?
+                        .ok_or_else(|| RunjucksError::new(format!("unknown macro `{ns}.{attr}`")))?
                 } else {
                     return Err(RunjucksError::new(
                         "`{% call %}` only supports simple macro or `namespace.macro()` calls",
@@ -668,7 +732,25 @@ fn render_node(
                 params: caller_params.clone(),
             };
             state.caller_stack.push(frame);
-            let res = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack);
+            let module_closure_owned =
+                if let Expr::GetAttr { base, attr: _ } = macro_target.as_ref() {
+                    if let Expr::Variable(ns) = base.as_ref() {
+                        state.macro_namespace_values.get(ns).cloned()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+            let res = render_macro_body(
+                env,
+                state,
+                &mdef,
+                &arg_vals,
+                &kw_vals,
+                stack,
+                module_closure_owned.as_ref(),
+            );
             state.caller_stack.pop();
             res
         }
@@ -904,10 +986,7 @@ fn is_truthy(v: &Value) -> bool {
     match v {
         Value::Null | Value::Bool(false) => false,
         Value::Bool(true) => true,
-        Value::Number(n) => n
-            .as_f64()
-            .map(|x| x != 0.0 && !x.is_nan())
-            .unwrap_or(true),
+        Value::Number(n) => n.as_f64().map(|x| x != 0.0 && !x.is_nan()).unwrap_or(true),
         Value::String(s) => !s.is_empty(),
         Value::Array(_) | Value::Object(_) => true,
     }
@@ -1042,7 +1121,11 @@ fn is_test_parts(e: &Expr) -> Option<(&str, &[Expr])> {
         Expr::Variable(n) => Some((n.as_str(), &[])),
         Expr::Literal(Value::String(s)) => Some((s.as_str(), &[])),
         Expr::Literal(Value::Null) => Some(("null", &[])),
-        Expr::Call { callee, args, kwargs } => {
+        Expr::Call {
+            callee,
+            args,
+            kwargs,
+        } => {
             if !kwargs.is_empty() {
                 return None;
             }
@@ -1118,9 +1201,7 @@ fn try_dispatch_builtin(
         "range" => Some(builtin_range(arg_vals)),
         "cycler" => {
             let id = state.cyclers.len();
-            state
-                .cyclers
-                .push(CyclerState::new(arg_vals.to_vec()));
+            state.cyclers.push(CyclerState::new(arg_vals.to_vec()));
             Some(Ok(cycler_handle_value(id)))
         }
         "joiner" => {
@@ -1155,8 +1236,14 @@ fn render_macro_body(
     positional: &[Value],
     kwargs: &[(String, Value)],
     outer: &mut CtxStack,
+    module_closure: Option<&HashMap<String, Value>>,
 ) -> Result<String> {
     let mut inner = outer.flatten();
+    if let Some(mc) = module_closure {
+        for (k, v) in mc {
+            inner.insert(k.clone(), v.clone());
+        }
+    }
     for p in &m.params {
         let val = if let Some(ref d) = p.default {
             eval_to_value(env, state, d, outer)?
@@ -1232,9 +1319,8 @@ fn eval_to_value(
             Ok(match op {
                 UnaryOp::Not => Value::Bool(!is_truthy(&v)),
                 UnaryOp::Neg => {
-                    let n = as_number(&v).ok_or_else(|| {
-                        RunjucksError::new("unary '-' expects a numeric value")
-                    })?;
+                    let n = as_number(&v)
+                        .ok_or_else(|| RunjucksError::new("unary '-' expects a numeric value"))?;
                     json_num(-n)
                 }
                 UnaryOp::Pos => v,
@@ -1360,14 +1446,35 @@ fn eval_to_value(
             }
         }
         Expr::GetAttr { base, attr } => {
+            if let Expr::Variable(ns) = base.as_ref() {
+                if state.macro_namespaces.contains_key(ns)
+                    || state.macro_namespace_values.contains_key(ns)
+                {
+                    if let Some(v) = state.lookup_namespaced_value(ns, attr) {
+                        return Ok(v.clone());
+                    }
+                    if state.lookup_namespaced_macro(ns, attr).is_some() {
+                        let mut m = Map::new();
+                        m.insert(RJ_CALLABLE.to_string(), Value::Bool(true));
+                        return Ok(Value::Object(m));
+                    }
+                    return Ok(undefined_value());
+                }
+            }
             let b = eval_to_value(env, state, base, stack)?;
+            if is_undefined_value(&b) || b.is_null() {
+                return Ok(undefined_value());
+            }
             match b {
-                Value::Object(o) => Ok(o.get(attr).cloned().unwrap_or(Value::Null)),
-                _ => Ok(Value::Null),
+                Value::Object(o) => Ok(o.get(attr).cloned().unwrap_or_else(|| undefined_value())),
+                _ => Ok(undefined_value()),
             }
         }
         Expr::GetItem { base, index } => {
             let b = eval_to_value(env, state, base, stack)?;
+            if is_undefined_value(&b) || b.is_null() {
+                return Ok(undefined_value());
+            }
             match index.as_ref() {
                 Expr::Slice {
                     start: s,
@@ -1390,12 +1497,12 @@ fn eval_to_value(
                                 .as_u64()
                                 .or_else(|| n.as_f64().map(|x| x as u64))
                                 .unwrap_or(0) as usize;
-                            Ok(a.get(idx).cloned().unwrap_or(Value::Null))
+                            Ok(a.get(idx).cloned().unwrap_or_else(|| undefined_value()))
                         }
                         (Value::Object(o), Value::String(k)) => {
-                            Ok(o.get(k).cloned().unwrap_or(Value::Null))
+                            Ok(o.get(k).cloned().unwrap_or_else(|| undefined_value()))
                         }
-                        _ => Ok(Value::Null),
+                        _ => Ok(undefined_value()),
                     }
                 }
             }
@@ -1403,7 +1510,11 @@ fn eval_to_value(
         Expr::Slice { .. } => Err(RunjucksError::new(
             "slice expression is only valid inside `[ ]`",
         )),
-        Expr::Call { callee, args, kwargs } => {
+        Expr::Call {
+            callee,
+            args,
+            kwargs,
+        } => {
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
@@ -1412,6 +1523,28 @@ fn eval_to_value(
                 .iter()
                 .map(|(k, e)| Ok((k.clone(), eval_to_value(env, state, e, stack)?)))
                 .collect::<Result<_>>()?;
+            if let Expr::GetAttr { base, attr } = callee.as_ref() {
+                if attr == "test" {
+                    let base_v = eval_to_value(env, state, base, stack)?;
+                    if crate::value::is_regexp_value(&base_v) {
+                        if !kw_vals.is_empty() {
+                            return Err(RunjucksError::new(
+                                "regex `.test` does not accept keyword arguments",
+                            ));
+                        }
+                        if arg_vals.len() != 1 {
+                            return Err(RunjucksError::new(
+                                "regex `.test` expects exactly one argument",
+                            ));
+                        }
+                        let Some((pat, fl)) = crate::value::regexp_pattern_flags(&base_v) else {
+                            return Err(RunjucksError::new("invalid regex value"));
+                        };
+                        let s = crate::value::value_to_string(&arg_vals[0]);
+                        return Ok(Value::Bool(crate::js_regex::regexp_test(&pat, &fl, &s)?));
+                    }
+                }
+            }
             if let Expr::GetAttr { base, attr } = callee.as_ref() {
                 if attr == "next" && arg_vals.is_empty() && kw_vals.is_empty() {
                     let b = eval_to_value(env, state, base, stack)?;
@@ -1433,10 +1566,14 @@ fn eval_to_value(
                     })?;
                     let (body_to_render, next) = {
                         let chains = state.block_chains.as_ref().ok_or_else(|| {
-                            RunjucksError::new("`super()` requires template inheritance (`{% extends %}`)")
+                            RunjucksError::new(
+                                "`super()` requires template inheritance (`{% extends %}`)",
+                            )
                         })?;
                         let chain = chains.get(&block_name).ok_or_else(|| {
-                            RunjucksError::new(format!("no super block available for `{block_name}`"))
+                            RunjucksError::new(format!(
+                                "no super block available for `{block_name}`"
+                            ))
                         })?;
                         let next = layer + 1;
                         if next >= chain.len() {
@@ -1452,21 +1589,17 @@ fn eval_to_value(
                     return Ok(Value::String(s));
                 }
                 if name == "caller" {
-                    let frame = state
-                        .caller_stack
-                        .last()
-                        .cloned()
-                        .ok_or_else(|| {
-                            RunjucksError::new(
-                                "`caller()` is only valid inside a macro invoked from `{% call %}`",
-                            )
-                        })?;
+                    let frame = state.caller_stack.last().cloned().ok_or_else(|| {
+                        RunjucksError::new(
+                            "`caller()` is only valid inside a macro invoked from `{% call %}`",
+                        )
+                    })?;
                     let s =
                         render_caller_invocation(env, state, &frame, &arg_vals, &kw_vals, stack)?;
                     return Ok(Value::String(s));
                 }
                 if let Some(mdef) = state.lookup_macro(name).cloned() {
-                    let s = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack)?;
+                    let s = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack, None)?;
                     return Ok(Value::String(s));
                 }
                 if arg_vals.is_empty() {
@@ -1484,7 +1617,16 @@ fn eval_to_value(
             if let Expr::GetAttr { base, attr } = callee.as_ref() {
                 if let Expr::Variable(ns) = base.as_ref() {
                     if let Some(mdef) = state.lookup_namespaced_macro(ns, attr).cloned() {
-                        let s = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack)?;
+                        let mc = state.macro_namespace_values.get(ns).cloned();
+                        let s = render_macro_body(
+                            env,
+                            state,
+                            &mdef,
+                            &arg_vals,
+                            &kw_vals,
+                            stack,
+                            mc.as_ref(),
+                        )?;
                         return Ok(Value::String(s));
                     }
                 }
@@ -1519,6 +1661,13 @@ fn eval_to_value(
                 };
                 m.insert(key, eval_to_value(env, state, v, stack)?);
             }
+            Ok(Value::Object(m))
+        }
+        Expr::RegexLiteral { pattern, flags } => {
+            let mut m = Map::new();
+            m.insert(crate::value::RJ_REGEXP.to_string(), Value::Bool(true));
+            m.insert("pattern".to_string(), Value::String(pattern.clone()));
+            m.insert("flags".to_string(), Value::String(flags.clone()));
             Ok(Value::Object(m))
         }
     }

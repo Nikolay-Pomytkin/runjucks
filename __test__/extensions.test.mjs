@@ -76,3 +76,14 @@ test('addExtension: orphan end tag fails at render', () => {
     /without matching opening/,
   )
 })
+
+test('hasExtension and removeExtension', () => {
+  const env = new Environment()
+  assert.equal(env.hasExtension('e'), false)
+  env.setAutoescape(false)
+  env.addExtension('e', ['show'], null, () => 'ok')
+  assert.equal(env.hasExtension('e'), true)
+  assert.equal(env.removeExtension('e'), true)
+  assert.equal(env.hasExtension('e'), false)
+  assert.equal(env.removeExtension('e'), false)
+})

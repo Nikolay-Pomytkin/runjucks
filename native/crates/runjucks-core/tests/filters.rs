@@ -32,8 +32,7 @@ fn builtin_join_round_replace() {
     let env = Environment::default();
     let mut rng = test_rng();
     assert_eq!(
-        apply_builtin(&env, &mut rng, "join", &json!(["a", "b"]), &[json!(",")])
-            .unwrap(),
+        apply_builtin(&env, &mut rng, "join", &json!(["a", "b"]), &[json!(",")]).unwrap(),
         json!("a,b")
     );
     assert_eq!(
@@ -160,14 +159,7 @@ fn default_undefined_and_boolean_mode() {
         json!("foo")
     );
     assert_eq!(
-        apply_builtin(
-            &env,
-            &mut rng,
-            "default",
-            &Value::Null,
-            &[json!("foo")]
-        )
-        .unwrap(),
+        apply_builtin(&env, &mut rng, "default", &Value::Null, &[json!("foo")]).unwrap(),
         Value::Null
     );
     assert_eq!(
@@ -182,14 +174,7 @@ fn default_undefined_and_boolean_mode() {
         json!("foo")
     );
     assert_eq!(
-        apply_builtin(
-            &env,
-            &mut rng,
-            "d",
-            &undefined_value(),
-            &[json!("z")]
-        )
-        .unwrap(),
+        apply_builtin(&env, &mut rng, "d", &undefined_value(), &[json!("z")]).unwrap(),
         json!("z")
     );
 }
@@ -260,29 +245,12 @@ fn selectattr_rejectattr_and_sort() {
     let env = Environment::default();
     let mut rng = test_rng();
     let arr = json!([{"a": 1}, {"a": 0}, {"a": 2}]);
-    let sel = apply_builtin(
-        &env,
-        &mut rng,
-        "selectattr",
-        &arr,
-        &[json!("a")],
-    )
-    .unwrap();
+    let sel = apply_builtin(&env, &mut rng, "selectattr", &arr, &[json!("a")]).unwrap();
     assert_eq!(sel, json!([{"a": 1}, {"a": 2}]));
-    let rej = apply_builtin(
-        &env,
-        &mut rng,
-        "rejectattr",
-        &arr,
-        &[json!("a")],
-    )
-    .unwrap();
+    let rej = apply_builtin(&env, &mut rng, "rejectattr", &arr, &[json!("a")]).unwrap();
     assert_eq!(rej, json!([{"a": 0}]));
     let sorted = apply_builtin(&env, &mut rng, "sort", &arr, &[]).unwrap();
-    assert_eq!(
-        sorted,
-        json!([{"a": 0}, {"a": 1}, {"a": 2}])
-    );
+    assert_eq!(sorted, json!([{"a": 0}, {"a": 1}, {"a": 2}]));
 }
 
 #[test]
@@ -293,6 +261,36 @@ fn template_safe_outputs_raw_html_when_autoescape_on() {
         .render_string(r#"{{ "<b>" | safe }}"#.into(), json!({}))
         .unwrap();
     assert_eq!(out, "<b>");
+}
+
+#[test]
+fn safe_escape_chain_matches_nunjucks() {
+    let env = Environment::default();
+    let out = env
+        .render_string(r#"{{ "<x>" | safe | escape }}"#.into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "<x>");
+}
+
+#[test]
+fn escape_safe_chain_matches_nunjucks() {
+    let env = Environment::default();
+    let out = env
+        .render_string(r#"{{ "<x>" | escape | safe }}"#.into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "&lt;x&gt;");
+}
+
+#[test]
+fn length_filter_counts_object_keys() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{{ m | length }}"#.into(),
+            json!({ "m": { "a": 1, "b": 2 } }),
+        )
+        .unwrap();
+    assert_eq!(out, "2");
 }
 
 #[test]
@@ -317,8 +315,14 @@ fn striptags_matches_nunjucks_preserve_and_flat() {
         " HEADER \n\n<ul>\n  <li>option  1</li>\n<li>option  2</li>\n</ul>"
     );
     assert_eq!(
-        apply_builtin(&env, &mut rng, "striptags", &json!(html_preserve), &[json!(true)])
-            .unwrap(),
+        apply_builtin(
+            &env,
+            &mut rng,
+            "striptags",
+            &json!(html_preserve),
+            &[json!(true)]
+        )
+        .unwrap(),
         json!("row1\nrow2\nrow3\n\nHEADER\n\noption 1\noption 2")
     );
 }

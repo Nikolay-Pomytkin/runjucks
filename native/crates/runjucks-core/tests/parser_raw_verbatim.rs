@@ -111,7 +111,9 @@ fn render_raw_does_not_evaluate_interpolation() {
 fn render_nested_raw_full_template() {
     let env = Environment::default();
     let tpl = "{% raw %}{% raw %}{{ x }}{% endraw %}{% endraw %}";
-    let out = env.render_string(tpl.into(), json!({ "x": "evaluated" })).unwrap();
+    let out = env
+        .render_string(tpl.into(), json!({ "x": "evaluated" }))
+        .unwrap();
     assert_eq!(out, "{% raw %}{{ x }}{% endraw %}");
 }
 
@@ -138,10 +140,7 @@ fn render_multiple_raw_blocks() {
 #[test]
 fn tokenize_unclosed_raw_errors() {
     let msg = tokenize("{% raw %}no close").unwrap_err().to_string();
-    assert!(
-        msg.contains("endraw") || msg.contains("%}"),
-        "{msg}"
-    );
+    assert!(msg.contains("endraw") || msg.contains("%}"), "{msg}");
 }
 
 #[test]

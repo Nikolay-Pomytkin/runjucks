@@ -1,5 +1,4 @@
 //! Parser edge cases and Nunjucks `tests/parser.js`-inspired cases (expression subset).
-//! Regex literal `{{ r/.../ }}` is intentionally unsupported — see `regex_literal_not_supported`.
 
 use runjucks_core::ast::{BinOp, CompareOp, Expr, Node, UnaryOp};
 use runjucks_core::lexer::tokenize;
@@ -47,10 +46,7 @@ fn internal_whitespace_preserved_in_meaning() {
 fn null_keyword_is_literal() {
     let tokens = tokenize("{{ null }}").unwrap();
     let ast = parse(&tokens).unwrap();
-    assert_eq!(
-        ast,
-        Node::Root(vec![Node::Output(vec![elit(Value::Null)])])
-    );
+    assert_eq!(ast, Node::Root(vec![Node::Output(vec![elit(Value::Null)])]));
 }
 
 #[test]
@@ -67,13 +63,7 @@ fn or_and_not_precedence() {
                     right,
                 } => {
                     assert!(matches!(&**left, Expr::Literal(v) if *v == json!(true)));
-                    assert!(matches!(
-                        &**right,
-                        Expr::Binary {
-                            op: BinOp::And,
-                            ..
-                        }
-                    ));
+                    assert!(matches!(&**right, Expr::Binary { op: BinOp::And, .. }));
                 }
                 _ => panic!("unexpected {:?}", exprs[0]),
             },
@@ -120,13 +110,7 @@ fn parenthesis_override_precedence() {
                     left,
                     right,
                 } => {
-                    assert!(matches!(
-                        &**left,
-                        Expr::Binary {
-                            op: BinOp::Add,
-                            ..
-                        }
-                    ));
+                    assert!(matches!(&**left, Expr::Binary { op: BinOp::Add, .. }));
                     assert!(matches!(&**right, Expr::Literal(_)));
                 }
                 _ => panic!("unexpected {:?}", exprs[0]),
@@ -171,7 +155,20 @@ fn tokenize_parse_round_trip_mixed_text() {
 }
 
 #[test]
-#[ignore = "JS RegExp literal has no Rust semantics yet"]
-fn regex_literal_not_supported() {
-    let _tokens = tokenize("{{ r/23/gi }}").unwrap();
+fn regex_literal_parses_with_flags() {
+    let tokens = tokenize("{{ r/23/gi }}").unwrap();
+    let ast = parse(&tokens).unwrap();
+    match ast {
+        Node::Root(ref ch) if ch.len() == 1 => match &ch[0] {
+            Node::Output(exprs) if exprs.len() == 1 => match &exprs[0] {
+                Expr::RegexLiteral { pattern, flags } => {
+                    assert_eq!(pattern, "23");
+                    assert_eq!(flags, "gi");
+                }
+                _ => panic!("unexpected {:?}", exprs[0]),
+            },
+            _ => panic!("unexpected {:?}", ch[0]),
+        },
+        _ => panic!("unexpected {:?}", ast),
+    }
 }

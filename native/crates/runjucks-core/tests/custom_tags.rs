@@ -80,10 +80,7 @@ fn custom_delimiters_with_trim_blocks() {
         ..LexerOptions::default()
     };
     let tokens = tokenize_with_options("<% if true %>\nhello", opts).unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("if true"), Token::Text("hello".into())]
-    );
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("hello".into())]);
 }
 
 #[test]
@@ -114,7 +111,10 @@ fn env_custom_tags_if() {
     env.autoescape = false;
     env.tags = Some(custom_tags());
     let out = env
-        .render_string("<% if x %>yes<% else %>no<% endif %>".into(), json!({"x": true}))
+        .render_string(
+            "<% if x %>yes<% else %>no<% endif %>".into(),
+            json!({"x": true}),
+        )
         .unwrap();
     assert_eq!(out, "yes");
 }
@@ -125,7 +125,10 @@ fn env_custom_tags_for() {
     env.autoescape = false;
     env.tags = Some(custom_tags());
     let out = env
-        .render_string("<% for i in items %><$ i $><% endfor %>".into(), json!({"items": ["a", "b", "c"]}))
+        .render_string(
+            "<% for i in items %><$ i $><% endfor %>".into(),
+            json!({"items": ["a", "b", "c"]}),
+        )
         .unwrap();
     assert_eq!(out, "abc");
 }
@@ -149,7 +152,10 @@ fn env_custom_tags_trim_dash() {
     env.autoescape = false;
     env.tags = Some(custom_tags());
     let out = env
-        .render_string("  <%- if true -%>  hello  <%- endif -%>  ".into(), json!({}))
+        .render_string(
+            "  <%- if true -%>  hello  <%- endif -%>  ".into(),
+            json!({}),
+        )
         .unwrap();
     assert_eq!(out, "hello");
 }

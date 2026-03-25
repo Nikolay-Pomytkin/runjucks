@@ -96,7 +96,8 @@ pub enum Node {
     Import {
         template: Expr,
         alias: String,
-        /// `Some(true)` = `with context`, `Some(false)` = `without context`; `None` if omitted (static macro load ignores this for now).
+        /// `Some(true)` = `with context` (parent context when evaluating top-level `{% set %}` and macro bodies);
+        /// `Some(false)` or omitted = isolated (Nunjucks default).
         with_context: Option<bool>,
     },
     /// `{% from expr import a, b as c %}` — imports named macros into the current macro scope.
@@ -231,5 +232,12 @@ pub enum Expr {
     Compare {
         head: Box<Expr>,
         rest: Vec<(CompareOp, Expr)>,
+    },
+    /// JavaScript-style regex literal `r/pattern/flags` ([Nunjucks lexer](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/lexer.js)).
+    RegexLiteral {
+        /// Raw pattern body between slashes (may contain `\/` escapes).
+        pattern: String,
+        /// Flag letters `g`, `i`, `m`, `y` (subset of ECMAScript).
+        flags: String,
     },
 }

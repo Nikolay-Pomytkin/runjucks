@@ -78,7 +78,10 @@ fn conformance_render_matches_nunjucks_golden_outputs() {
         let result = env.render_string(case.template.clone(), case.context.clone());
         match result {
             Ok(out) => assert_eq!(out, case.expected, "case {}", case.id),
-            Err(e) => panic!("case {}: render error: {} (source: {:?})", case.id, e, case.source),
+            Err(e) => panic!(
+                "case {}: render error: {} (source: {:?})",
+                case.id, e, case.source
+            ),
         }
     }
 }

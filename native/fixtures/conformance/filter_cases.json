@@ -150,5 +150,26 @@
       "html": "  <p>an  \n <a href=\"#\">example</a> link</p>\n<p>to a webpage</p> <!-- <p>and some comments</p> -->"
     },
     "expected": "an example link to a webpage"
+  },
+  {
+    "id": "filters_length_object",
+    "source": "nunjucks length on plain object (JSON)",
+    "template": "{{ m | length }}",
+    "context": { "m": { "a": 1, "b": 2 } },
+    "expected": "2"
+  },
+  {
+    "id": "filters_safe_then_escape",
+    "source": "nunjucks copySafeness: safe then escape",
+    "template": "{{ \"<x>\" | safe | escape }}",
+    "context": {},
+    "expected": "<x>"
+  },
+  {
+    "id": "filters_escape_then_safe",
+    "source": "nunjucks copySafeness: escape then safe",
+    "template": "{{ \"<x>\" | escape | safe }}",
+    "context": {},
+    "expected": "&lt;x&gt;"
   }
 ]

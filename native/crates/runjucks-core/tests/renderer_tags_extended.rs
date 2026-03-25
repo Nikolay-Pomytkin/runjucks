@@ -127,7 +127,10 @@ fn include_sees_enclosing_loop() {
 #[test]
 fn include_ignore_missing_empty() {
     let mut m = HashMap::new();
-    m.insert("main.html".into(), r#"x{% include "nope.html" ignore missing %}y"#.into());
+    m.insert(
+        "main.html".into(),
+        r#"x{% include "nope.html" ignore missing %}y"#.into(),
+    );
     let env = env_map(m);
     let out = env.render_template("main.html", json!({})).unwrap();
     assert_eq!(out, "xy");
@@ -162,7 +165,8 @@ fn nested_for_shadows_outer_loop_var() {
     let env = Environment::default();
     let out = env
         .render_string(
-            r#"{% for i in [1,2] %}{% for i in [3,4] %}{{ i }}{% endfor %}{{ i }}{% endfor %}"#.into(),
+            r#"{% for i in [1,2] %}{% for i in [3,4] %}{{ i }}{% endfor %}{{ i }}{% endfor %}"#
+                .into(),
             json!({}),
         )
         .unwrap();
@@ -173,10 +177,7 @@ fn nested_for_shadows_outer_loop_var() {
 fn multi_set_same_value() {
     let env = Environment::default();
     let out = env
-        .render_string(
-            r#"{% set x, y = "foo" %}{{ x }}{{ y }}"#.into(),
-            json!({}),
-        )
+        .render_string(r#"{% set x, y = "foo" %}{{ x }}{{ y }}"#.into(), json!({}))
         .unwrap();
     assert_eq!(out, "foofoo");
 }

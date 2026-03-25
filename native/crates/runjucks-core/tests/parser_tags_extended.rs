@@ -42,10 +42,7 @@ fn parse_for_comma_vars_no_space() {
     let Node::For { vars, .. } = &nodes[0] else {
         panic!("expected for");
     };
-    assert_eq!(
-        vars,
-        &ForVars::Multi(vec!["k".into(), "v".into()])
-    );
+    assert_eq!(vars, &ForVars::Multi(vec!["k".into(), "v".into()]));
 }
 
 #[test]

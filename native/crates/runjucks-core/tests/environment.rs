@@ -1,5 +1,5 @@
-use runjucks_core::Environment;
 use runjucks_core::value::value_to_string;
+use runjucks_core::Environment;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -144,7 +144,10 @@ fn add_test_registers_is_expression() {
         }),
     );
     let out = env
-        .render_string("{{ 3 is positive }} — {{ -1 is positive }}".into(), json!({}))
+        .render_string(
+            "{{ 3 is positive }} — {{ -1 is positive }}".into(),
+            json!({}),
+        )
         .unwrap();
     assert_eq!(out, "true — false");
 }

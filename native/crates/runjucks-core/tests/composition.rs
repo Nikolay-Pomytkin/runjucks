@@ -18,10 +18,7 @@ fn env_with_map(templates: HashMap<String, String>) -> Environment {
 fn include_renders_subtemplate() {
     let mut m = HashMap::new();
     m.insert("part.html".into(), "Hello {{ name }}".into());
-    m.insert(
-        "main.html".into(),
-        r#"{% include "part.html" %}!"#.into(),
-    );
+    m.insert("main.html".into(), r#"{% include "part.html" %}!"#.into());
     let env = env_with_map(m);
     let out = env
         .render_template("main.html", json!({ "name": "Ada" }))
@@ -32,10 +29,7 @@ fn include_renders_subtemplate() {
 #[test]
 fn include_without_context_sees_only_globals() {
     let mut m = HashMap::new();
-    m.insert(
-        "inner.html".into(),
-        r#"{{ x | default("inner") }}"#.into(),
-    );
+    m.insert("inner.html".into(), r#"{{ x | default("inner") }}"#.into());
     m.insert(
         "main.html".into(),
         r#"{% set x = "outer" %}{% include "inner.html" without context %}"#.into(),
@@ -70,10 +64,7 @@ fn extends_block_override() {
     );
     let env = env_with_map(m);
     let out = env.render_template("child.html", json!({})).unwrap();
-    assert_eq!(
-        out,
-        "<!doctype><title>Hi</title><body>B</body>"
-    );
+    assert_eq!(out, "<!doctype><title>Hi</title><body>B</body>");
 }
 
 #[test]
@@ -97,10 +88,7 @@ fn extends_dynamic_parent_from_context() {
 #[test]
 fn extends_dynamic_concat_template_name() {
     let mut m = HashMap::new();
-    m.insert(
-        "main.html".into(),
-        r#"{% block x %}M{% endblock %}"#.into(),
-    );
+    m.insert("main.html".into(), r#"{% block x %}M{% endblock %}"#.into());
     m.insert(
         "child.html".into(),
         r#"{% extends prefix ~ ".html" %}{% block x %}C{{ super() }}{% endblock %}"#.into(),

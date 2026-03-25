@@ -33,19 +33,13 @@ fn tag(s: &str) -> Token {
 #[test]
 fn trim_blocks_strips_newline_after_tag() {
     let tokens = tokenize_with_options("{% if true %}\ncontent", opts_trim()).unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("if true"), Token::Text("content".into())]
-    );
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("content".into())]);
 }
 
 #[test]
 fn trim_blocks_strips_crlf_after_tag() {
     let tokens = tokenize_with_options("{% if true %}\r\ncontent", opts_trim()).unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("if true"), Token::Text("content".into())]
-    );
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("content".into())]);
 }
 
 #[test]
@@ -53,10 +47,7 @@ fn trim_blocks_does_not_strip_spaces_only_newline() {
     let tokens = tokenize_with_options("{% if true %}  \ncontent", opts_trim()).unwrap();
     assert_eq!(
         tokens,
-        vec![
-            tag("if true"),
-            Token::Text("  \ncontent".into()),
-        ]
+        vec![tag("if true"), Token::Text("  \ncontent".into()),]
     );
 }
 
@@ -75,16 +66,12 @@ fn trim_blocks_does_not_affect_variable_tags() {
 #[test]
 fn trim_blocks_explicit_minus_overrides() {
     let tokens = tokenize_with_options("{% if true -%}  \n  content", opts_trim()).unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("if true"), Token::Text("content".into())]
-    );
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("content".into())]);
 }
 
 #[test]
 fn trim_blocks_preserves_newline_after_endraw_like_nunjucks() {
-    let tokens =
-        tokenize_with_options("{% raw %}x{% endraw %}\nafter", opts_trim()).unwrap();
+    let tokens = tokenize_with_options("{% raw %}x{% endraw %}\nafter", opts_trim()).unwrap();
     assert_eq!(
         tokens,
         vec![
@@ -99,10 +86,7 @@ fn trim_blocks_preserves_newline_after_endraw_like_nunjucks() {
 #[test]
 fn trim_blocks_no_newline_after_tag_no_strip() {
     let tokens = tokenize_with_options("{% if true %}content", opts_trim()).unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("if true"), Token::Text("content".into())]
-    );
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("content".into())]);
 }
 
 // ── lstripBlocks lexer tests ────────────────────────────────────────────
@@ -122,19 +106,13 @@ fn lstrip_blocks_strips_tabs_before_tag() {
 #[test]
 fn lstrip_blocks_only_strips_same_line_whitespace() {
     let tokens = tokenize_with_options("text\n  {% if true %}", opts_lstrip()).unwrap();
-    assert_eq!(
-        tokens,
-        vec![Token::Text("text\n".into()), tag("if true")]
-    );
+    assert_eq!(tokens, vec![Token::Text("text\n".into()), tag("if true")]);
 }
 
 #[test]
 fn lstrip_blocks_does_not_strip_if_non_whitespace_before_tag() {
     let tokens = tokenize_with_options("x  {% if true %}", opts_lstrip()).unwrap();
-    assert_eq!(
-        tokens,
-        vec![Token::Text("x  ".into()), tag("if true")]
-    );
+    assert_eq!(tokens, vec![Token::Text("x  ".into()), tag("if true")]);
 }
 
 #[test]
@@ -157,10 +135,7 @@ fn lstrip_blocks_strips_before_comment() {
 #[test]
 fn both_trim_and_lstrip() {
     let tokens = tokenize_with_options("  {% if true %}\ncontent", opts_both()).unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("if true"), Token::Text("content".into())]
-    );
+    assert_eq!(tokens, vec![tag("if true"), Token::Text("content".into())]);
 }
 
 #[test]
@@ -187,10 +162,7 @@ fn env_trim_blocks_render() {
     env.trim_blocks = true;
     env.autoescape = false;
     let out = env
-        .render_string(
-            "{% if true %}\nhello{% endif %}".into(),
-            json!({}),
-        )
+        .render_string("{% if true %}\nhello{% endif %}".into(), json!({}))
         .unwrap();
     assert_eq!(out, "hello");
 }
@@ -201,10 +173,7 @@ fn env_lstrip_blocks_render() {
     env.lstrip_blocks = true;
     env.autoescape = false;
     let out = env
-        .render_string(
-            "  {% if true %}hello  {% endif %}".into(),
-            json!({}),
-        )
+        .render_string("  {% if true %}hello  {% endif %}".into(), json!({}))
         .unwrap();
     assert_eq!(out, "hello  ");
 }
@@ -216,10 +185,7 @@ fn env_both_trim_lstrip_render() {
     env.lstrip_blocks = true;
     env.autoescape = false;
     let out = env
-        .render_string(
-            "  {% if true %}\nhello\n  {% endif %}\n".into(),
-            json!({}),
-        )
+        .render_string("  {% if true %}\nhello\n  {% endif %}\n".into(), json!({}))
         .unwrap();
     assert_eq!(out, "hello\n");
 }
@@ -245,10 +211,7 @@ fn env_trim_blocks_does_not_strip_newline_after_comment() {
     env.trim_blocks = true;
     env.autoescape = false;
     let out = env
-        .render_string(
-            "before{# comment #}\nafter".into(),
-            json!({}),
-        )
+        .render_string("before{# comment #}\nafter".into(), json!({}))
         .unwrap();
     // Nunjucks `trimBlocks` applies to `{% %}` only, not `{# #}`.
     assert_eq!(out, "before\nafter");
@@ -260,10 +223,7 @@ fn env_trim_blocks_does_not_strip_newline_after_endraw_matches_nunjucks() {
     env.trim_blocks = true;
     env.autoescape = false;
     let out = env
-        .render_string(
-            "{% raw %}x{% endraw %}\nafter".into(),
-            json!({}),
-        )
+        .render_string("{% raw %}x{% endraw %}\nafter".into(), json!({}))
         .unwrap();
     assert_eq!(out, "x\nafter");
 }

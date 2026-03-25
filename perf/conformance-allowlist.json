@@ -40,7 +40,10 @@
     "globals_js_range_is_callable",
     "globals_macro_is_callable",
     "globals_shadow_range_context",
-    "env_add_global_callable_marker"
+    "env_add_global_callable_marker",
+    "regex_literal_test_substring",
+    "is_defined_missing_object_key",
+    "is_defined_array_oob"
   ],
   "filter_cases": [
     "filters_join_simple",
@@ -56,7 +59,10 @@
     "filters_reject_even",
     "filters_abs_negative_int",
     "filters_striptags_upstream_preserve",
-    "filters_striptags_upstream_flat"
+    "filters_striptags_upstream_flat",
+    "filters_length_object",
+    "filters_safe_then_escape",
+    "filters_escape_then_safe"
   ],
   "tag_parity_cases": [
     "tag_switch_basic",
@@ -96,6 +102,11 @@
     "tag_macro_default_args",
     "tag_import_macro_ns",
     "tag_from_import_macro",
+    "tag_import_top_level_set",
+    "tag_import_with_context_macro",
+    "tag_import_without_context_macro",
+    "tag_from_import_set_and_macro",
+    "tag_import_macro_is_callable",
     "tag_filter_block_lower",
     "tag_inline_if_expr",
     "tag_inline_if_false",

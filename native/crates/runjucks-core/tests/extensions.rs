@@ -92,8 +92,7 @@ fn block_extension_receives_rendered_body() {
 fn block_body_interpolates_nested_extension() {
     let mut env = Environment::default();
     env.autoescape = false;
-    env
-        .register_extension("a", vec![("a".into(), None)], echo_handler())
+    env.register_extension("a", vec![("a".into(), None)], echo_handler())
         .unwrap();
     env.register_extension(
         "w",
@@ -127,23 +126,19 @@ fn multiple_opening_tags_same_extension() {
 fn register_extension_replaces_prior_tags_for_same_name() {
     let mut env = Environment::default();
     env.autoescape = false;
-    env
-        .register_extension(
-            "e",
-            vec![("echo".into(), None)],
-            Arc::new(|_, _, _| Ok("first".into())),
-        )
-        .unwrap();
-    env
-        .register_extension(
-            "e",
-            vec![("echo".into(), None)],
-            Arc::new(|_, _, _| Ok("second".into())),
-        )
-        .unwrap();
-    let out = env
-        .render_string("{% echo %}".into(), json!({}))
-        .unwrap();
+    env.register_extension(
+        "e",
+        vec![("echo".into(), None)],
+        Arc::new(|_, _, _| Ok("first".into())),
+    )
+    .unwrap();
+    env.register_extension(
+        "e",
+        vec![("echo".into(), None)],
+        Arc::new(|_, _, _| Ok("second".into())),
+    )
+    .unwrap();
+    let out = env.render_string("{% echo %}".into(), json!({})).unwrap();
     assert_eq!(out, "second");
 }
 
@@ -153,11 +148,7 @@ fn empty_tag_list_errors() {
     let err = env
         .register_extension("e", vec![], echo_handler())
         .unwrap_err();
-    assert!(
-        err.to_string().contains("at least one tag"),
-        "{}",
-        err
-    );
+    assert!(err.to_string().contains("at least one tag"), "{}", err);
 }
 
 #[test]
@@ -183,11 +174,7 @@ fn reserved_builtin_tag_name_errors() {
     let err = env
         .register_extension("e", vec![("if".into(), None)], echo_handler())
         .unwrap_err();
-    assert!(
-        err.to_string().contains("built-in tag"),
-        "{}",
-        err
-    );
+    assert!(err.to_string().contains("built-in tag"), "{}", err);
 }
 
 #[test]
@@ -200,11 +187,7 @@ fn reserved_end_tag_name_errors() {
             echo_handler(),
         )
         .unwrap_err();
-    assert!(
-        err.to_string().contains("built-in tag"),
-        "{}",
-        err
-    );
+    assert!(err.to_string().contains("built-in tag"), "{}", err);
 }
 
 #[test]
@@ -215,11 +198,7 @@ fn conflicting_tag_between_two_extensions_errors() {
     let err = env
         .register_extension("b", vec![("echo".into(), None)], echo_handler())
         .unwrap_err();
-    assert!(
-        err.to_string().contains("already registered"),
-        "{}",
-        err
-    );
+    assert!(err.to_string().contains("already registered"), "{}", err);
 }
 
 #[test]
@@ -270,9 +249,7 @@ fn extension_output_is_autoescaped_when_enabled() {
         Arc::new(|_, _, _| Ok("<b>x</b>".into())),
     )
     .unwrap();
-    let out = env
-        .render_string("{% unsafe %}".into(), json!({}))
-        .unwrap();
+    let out = env.render_string("{% unsafe %}".into(), json!({})).unwrap();
     assert_eq!(out, "&lt;b&gt;x&lt;/b&gt;");
 }
 
@@ -287,10 +264,19 @@ fn extension_inside_if_branch() {
     )
     .unwrap();
     let out = env
-        .render_string(
-            "{% if true %}{% mark ok %}{% endif %}".into(),
-            json!({}),
-        )
+        .render_string("{% if true %}{% mark ok %}{% endif %}".into(), json!({}))
         .unwrap();
     assert_eq!(out, "[ok]");
+}
+
+#[test]
+fn has_extension_and_remove_extension() {
+    let mut env = Environment::default();
+    assert!(!env.has_extension("myext"));
+    env.register_extension("myext", vec![("echo".into(), None)], echo_handler())
+        .unwrap();
+    assert!(env.has_extension("myext"));
+    assert!(env.remove_extension("myext"));
+    assert!(!env.has_extension("myext"));
+    assert!(!env.remove_extension("myext"));
 }

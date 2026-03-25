@@ -33,8 +33,7 @@ fn lexer_splits_for_endfor() {
 
 #[test]
 fn lexer_splits_extends_and_block() {
-    let tokens =
-        tokenize("{% extends \"base.html\" %}{% block main %}{% endblock %}").unwrap();
+    let tokens = tokenize("{% extends \"base.html\" %}{% block main %}{% endblock %}").unwrap();
     assert_eq!(
         tokens,
         vec![

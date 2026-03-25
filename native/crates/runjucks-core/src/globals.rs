@@ -66,9 +66,7 @@ fn as_f64(v: &Value) -> Result<f64> {
 pub fn builtin_range(args: &[Value]) -> Result<Value> {
     let (start, stop, step) = match args.len() {
         0 => {
-            return Err(RunjucksError::new(
-                "`range` expects at least one argument",
-            ));
+            return Err(RunjucksError::new("`range` expects at least one argument"));
         }
         1 => (0.0, as_f64(&args[0])?, 1.0),
         2 => (as_f64(&args[0])?, as_f64(&args[1])?, 1.0),
@@ -129,7 +127,6 @@ impl CyclerState {
     pub fn new(items: Vec<Value>) -> Self {
         Self { items, pos: -1 }
     }
-
 
     pub fn next(&mut self) -> Value {
         if self.items.is_empty() {

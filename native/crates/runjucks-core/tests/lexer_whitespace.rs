@@ -19,11 +19,7 @@ fn trim_tag_open_close() {
     let tokens = tokenize("{%- if true -%}x{%- endif -%}").unwrap();
     assert_eq!(
         tokens,
-        vec![
-            tag("if true"),
-            Token::Text("x".into()),
-            tag("endif"),
-        ]
+        vec![tag("if true"), Token::Text("x".into()), tag("endif"),]
     );
 }
 

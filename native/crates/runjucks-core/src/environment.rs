@@ -3,7 +3,9 @@
 //! It ties together [`crate::lexer::tokenize`], [`crate::parser::parse`], and [`crate::renderer::render`].
 
 use crate::errors::{Result, RunjucksError};
-use crate::extension::{register_extension_inner, CustomExtensionHandler, ExtensionTagMeta};
+use crate::extension::{
+    register_extension_inner, remove_extension_inner, CustomExtensionHandler, ExtensionTagMeta,
+};
 use crate::globals::{default_globals_map, value_is_callable};
 use crate::lexer::{LexerOptions, Tags};
 use crate::loader::TemplateLoader;
@@ -98,10 +100,7 @@ fn is_truthy_value(v: &Value) -> bool {
     match v {
         Value::Null | Value::Bool(false) => false,
         Value::Bool(true) => true,
-        Value::Number(n) => n
-            .as_f64()
-            .map(|x| x != 0.0 && !x.is_nan())
-            .unwrap_or(true),
+        Value::Number(n) => n.as_f64().map(|x| x != 0.0 && !x.is_nan()).unwrap_or(true),
         Value::String(s) => !s.is_empty(),
         Value::Array(_) | Value::Object(_) => true,
     }
@@ -170,6 +169,21 @@ impl Environment {
             tag_specs,
             handler,
             |s| is_reserved_tag_keyword(s),
+        )
+    }
+
+    /// Returns whether a custom extension with this name is registered (Nunjucks `hasExtension`).
+    pub fn has_extension(&self, name: &str) -> bool {
+        self.custom_extensions.contains_key(name)
+    }
+
+    /// Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed.
+    pub fn remove_extension(&mut self, name: &str) -> bool {
+        remove_extension_inner(
+            &mut self.extension_tags,
+            &mut self.extension_closing_tag_names,
+            &mut self.custom_extensions,
+            name,
         )
     }
 
@@ -338,8 +352,7 @@ impl Environment {
             _ => Map::new(),
         };
         let mut stack = renderer::CtxStack::from_root(root);
-        let mut state =
-            renderer::RenderState::new(Some(loader.as_ref()), self.random_seed);
+        let mut state = renderer::RenderState::new(Some(loader.as_ref()), self.random_seed);
         state.push_template(name)?;
         let out = renderer::render_entry(self, &mut state, &ast, &mut stack)?;
         state.pop_template();

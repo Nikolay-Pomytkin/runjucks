@@ -87,10 +87,7 @@ fn parse_number(input: &str) -> IResult<&str, Value> {
     map_res(
         recognize((
             opt(char('-')),
-            alt((
-                recognize((digit1, char('.'), digit1)),
-                digit1,
-            )),
+            alt((recognize((digit1, char('.'), digit1)), digit1)),
         )),
         |s: &str| -> std::result::Result<Value, ()> {
             if s.contains('.') {
@@ -387,10 +384,7 @@ fn parse_optional_slice_segment(
 
 fn parse_subscript(input: &str) -> IResult<&str, Expr> {
     let end = bracket_content_end(input).ok_or_else(|| {
-        nom::Err::Failure(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Tag,
-        ))
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
     })?;
     let body = trim_start(&input[..end]);
     let rest = &input[end + 1..];
@@ -414,14 +408,7 @@ fn parse_subscript(input: &str) -> IResult<&str, Expr> {
     let start = start_e.map(Box::new);
     let stop = stop_e.map(Box::new);
     let step = step_e.map(Box::new);
-    Ok((
-        rest,
-        Expr::Slice {
-            start,
-            stop,
-            step,
-        },
-    ))
+    Ok((rest, Expr::Slice { start, stop, step }))
 }
 
 fn parse_postfix(input: &str, mut node: Expr) -> IResult<&str, Expr> {
@@ -464,10 +451,7 @@ fn parse_postfix(input: &str, mut node: Expr) -> IResult<&str, Expr> {
 fn parse_list_literal(input: &str) -> IResult<&str, Expr> {
     let input = trim_start(input);
     let after = input.strip_prefix('[').ok_or_else(|| {
-        nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Tag,
-        ))
+        nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
     })?;
     let mut rest = trim_start(after);
     if let Some(r) = rest.strip_prefix(']') {
@@ -482,10 +466,7 @@ fn parse_list_literal(input: &str) -> IResult<&str, Expr> {
             return Ok((r2, Expr::List(items)));
         }
         let r = r.strip_prefix(',').ok_or_else(|| {
-            nom::Err::Failure(nom::error::Error::new(
-                r,
-                nom::error::ErrorKind::Tag,
-            ))
+            nom::Err::Failure(nom::error::Error::new(r, nom::error::ErrorKind::Tag))
         })?;
         rest = trim_start(r);
     }
@@ -494,10 +475,7 @@ fn parse_list_literal(input: &str) -> IResult<&str, Expr> {
 fn parse_dict_literal(input: &str) -> IResult<&str, Expr> {
     let input = trim_start(input);
     let after = input.strip_prefix('{').ok_or_else(|| {
-        nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Tag,
-        ))
+        nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
     })?;
     let mut rest = trim_start(after);
     if let Some(r) = rest.strip_prefix('}') {
@@ -508,10 +486,7 @@ fn parse_dict_literal(input: &str) -> IResult<&str, Expr> {
         let (r, k) = parse_inline_if(rest)?;
         let r = trim_start(r);
         let r = r.strip_prefix(':').ok_or_else(|| {
-            nom::Err::Failure(nom::error::Error::new(
-                r,
-                nom::error::ErrorKind::Tag,
-            ))
+            nom::Err::Failure(nom::error::Error::new(r, nom::error::ErrorKind::Tag))
         })?;
         let (r, v) = parse_inline_if(trim_start(r))?;
         pairs.push((k, v));
@@ -520,10 +495,7 @@ fn parse_dict_literal(input: &str) -> IResult<&str, Expr> {
             return Ok((r2, Expr::Dict(pairs)));
         }
         let r = r.strip_prefix(',').ok_or_else(|| {
-            nom::Err::Failure(nom::error::Error::new(
-                r,
-                nom::error::ErrorKind::Tag,
-            ))
+            nom::Err::Failure(nom::error::Error::new(r, nom::error::ErrorKind::Tag))
         })?;
         rest = trim_start(r);
     }
@@ -535,10 +507,7 @@ fn parse_atom(input: &str) -> IResult<&str, Expr> {
         let (rest, e) = parse_inline_if(after)?;
         let rest = trim_start(rest);
         let r = rest.strip_prefix(')').ok_or_else(|| {
-            nom::Err::Failure(nom::error::Error::new(
-                rest,
-                nom::error::ErrorKind::Tag,
-            ))
+            nom::Err::Failure(nom::error::Error::new(rest, nom::error::ErrorKind::Tag))
         })?;
         return Ok((r, e));
     }
@@ -557,8 +526,53 @@ fn parse_atom(input: &str) -> IResult<&str, Expr> {
     if let Ok((rest, v)) = parse_number(input) {
         return Ok((rest, Expr::Literal(v)));
     }
+    if let Ok((rest, rx)) = parse_regex_literal(input) {
+        return Ok((rest, rx));
+    }
     let (rest, name) = parse_identifier(input)?;
     Ok((rest, Expr::Variable(name)))
+}
+
+/// `r/pattern/flags` — see [Nunjucks lexer](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/lexer.js).
+fn parse_regex_literal(input: &str) -> IResult<&str, Expr> {
+    let input = trim_start(input);
+    let Some(after_r_slash) = input.strip_prefix("r/") else {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
+    };
+    let mut prev = None::<char>;
+    let mut body = String::new();
+    let mut end_slash = None::<usize>;
+    for (i, c) in after_r_slash.char_indices() {
+        if c == '/' && prev != Some('\\') {
+            end_slash = Some(i);
+            break;
+        }
+        body.push(c);
+        prev = Some(c);
+    }
+    let end_idx = end_slash.ok_or_else(|| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Eof))
+    })?;
+    let after_slash = &after_r_slash[end_idx + 1..];
+    let mut flags = String::new();
+    for ch in after_slash.chars() {
+        if matches!(ch, 'g' | 'i' | 'm' | 'y') {
+            flags.push(ch);
+        } else {
+            break;
+        }
+    }
+    let rest = &after_slash[flags.len()..];
+    Ok((
+        rest,
+        Expr::RegexLiteral {
+            pattern: body,
+            flags,
+        },
+    ))
 }
 
 fn parse_atom_with_postfix(input: &str) -> IResult<&str, Expr> {
@@ -611,8 +625,7 @@ fn parse_unary_no_filters(input: &str) -> IResult<&str, Expr> {
         ));
     }
     if t.starts_with('-')
-        && t
-            .as_bytes()
+        && t.as_bytes()
             .get(1)
             .is_some_and(|b| b.is_ascii_digit() || *b == b'.')
     {
@@ -1038,13 +1051,7 @@ mod tests {
                 right,
             } => {
                 assert!(matches!(*left, Expr::Literal(_)));
-                assert!(matches!(
-                    *right,
-                    Expr::Binary {
-                        op: BinOp::Mul,
-                        ..
-                    }
-                ));
+                assert!(matches!(*right, Expr::Binary { op: BinOp::Mul, .. }));
             }
             _ => panic!("unexpected {:?}", e),
         }

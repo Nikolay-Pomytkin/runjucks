@@ -333,6 +333,66 @@
     "expected": "Hi B"
   },
   {
+    "id": "tag_import_top_level_set",
+    "source": "nunjucks import namespace top-level set",
+    "template": "{% import \"lib.njk\" as lib %}{{ lib.exported }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set exported = 42 %}"
+      }
+    },
+    "expected": "42"
+  },
+  {
+    "id": "tag_import_with_context_macro",
+    "source": "nunjucks import with context for module scope",
+    "template": "{% import \"lib.njk\" as lib with context %}{{ lib.m() }}",
+    "context": { "ctxval": 42 },
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set x = ctxval %}{% macro m() %}{{ x }}{% endmacro %}"
+      }
+    },
+    "expected": "42"
+  },
+  {
+    "id": "tag_import_without_context_macro",
+    "source": "nunjucks import default isolates parent context for module",
+    "template": "{% import \"lib.njk\" as lib %}{{ lib.m() }}",
+    "context": { "ctxval": 42 },
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set x = ctxval %}{% macro m() %}{{ x }}{% endmacro %}"
+      }
+    },
+    "expected": ""
+  },
+  {
+    "id": "tag_from_import_set_and_macro",
+    "source": "nunjucks from import set + macro",
+    "template": "{% from \"lib.njk\" import v, m %}{{ v }}{{ m() }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set v = 99 %}{% macro m() %}M{% endmacro %}"
+      }
+    },
+    "expected": "99M"
+  },
+  {
+    "id": "tag_import_macro_is_callable",
+    "source": "nunjucks `is callable` on namespaced macro",
+    "template": "{% import \"lib.njk\" as lib %}{{ lib.greet is callable }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% macro greet() %}x{% endmacro %}"
+      }
+    },
+    "expected": "true"
+  },
+  {
     "id": "tag_filter_block_lower",
     "source": "nunjucks filter block lower",
     "template": "{% filter lower %}HELLO WORLD{% endfilter %}",

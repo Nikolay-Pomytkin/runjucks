@@ -15,19 +15,13 @@ fn tag_body_with_percent_brace_inside_string() {
 #[test]
 fn expression_with_close_braces_inside_string() {
     let tokens = tokenize(r#"{{ "a }}b" }}"#).unwrap();
-    assert_eq!(
-        tokens,
-        vec![Token::Expression(r#" "a }}b" "#.into())]
-    );
+    assert_eq!(tokens, vec![Token::Expression(r#" "a }}b" "#.into())]);
 }
 
 #[test]
 fn expression_escaped_quote_before_close_braces_in_string() {
     let tokens = tokenize(r#"{{ "foo\" }}bar" }}"#).unwrap();
-    assert_eq!(
-        tokens,
-        vec![Token::Expression(r#" "foo\" }}bar" "#.into())]
-    );
+    assert_eq!(tokens, vec![Token::Expression(r#" "foo\" }}bar" "#.into())]);
 }
 
 #[test]

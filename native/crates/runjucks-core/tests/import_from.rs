@@ -44,7 +44,10 @@ fn import_as_namespace_calls_macro() {
 #[test]
 fn import_without_context_modifier_parses_and_renders() {
     let mut m = HashMap::new();
-    m.insert("lib.html".into(), r#"{% macro x() %}X{% endmacro %}"#.into());
+    m.insert(
+        "lib.html".into(),
+        r#"{% macro x() %}X{% endmacro %}"#.into(),
+    );
     m.insert(
         "main.html".into(),
         r#"{% import "lib.html" as lib without context %}{{ lib.x() }}"#.into(),
@@ -101,13 +104,19 @@ fn from_import_comma_list() {
 #[test]
 fn from_import_missing_macro_errors() {
     let mut m = HashMap::new();
-    m.insert("macros.html".into(), r#"{% macro only() %}x{% endmacro %}"#.into());
+    m.insert(
+        "macros.html".into(),
+        r#"{% macro only() %}x{% endmacro %}"#.into(),
+    );
     m.insert(
         "main.html".into(),
         r#"{% from "macros.html" import only, missing %}"#.into(),
     );
     let env = env_with_map(m);
-    let msg = env.render_template("main.html", json!({})).unwrap_err().to_string();
+    let msg = env
+        .render_template("main.html", json!({}))
+        .unwrap_err()
+        .to_string();
     assert!(
         msg.contains("cannot import") && msg.contains("missing"),
         "{msg}"
@@ -145,10 +154,7 @@ fn import_cycle_errors_with_custom_tags() {
 fn import_requires_loader_at_render() {
     let env = Environment::default();
     let err = env
-        .render_string(
-            r#"{% import "x.html" as m %}"#.into(),
-            json!({}),
-        )
+        .render_string(r#"{% import "x.html" as m %}"#.into(), json!({}))
         .unwrap_err();
     assert!(err.to_string().contains("import"));
 }
@@ -169,24 +175,27 @@ fn empty_imported_macros_namespace_call_errors() {
         r#"{% import "empty.html" as e %}{{ e.nope() }}"#.into(),
     );
     let env = env_with_map(m);
-    let msg = env.render_template("main.html", json!({})).unwrap_err().to_string();
+    let msg = env
+        .render_template("main.html", json!({}))
+        .unwrap_err()
+        .to_string();
     assert!(msg.contains("macro") || msg.contains("only"), "{msg}");
 }
 
 #[test]
 fn dynamic_import_template_name_from_context() {
     let mut m = HashMap::new();
-    m.insert("macros.html".into(), r#"{% macro id() %}ok{% endmacro %}"#.into());
+    m.insert(
+        "macros.html".into(),
+        r#"{% macro id() %}ok{% endmacro %}"#.into(),
+    );
     m.insert(
         "main.html".into(),
         r#"{% import name as m %}{{ m.id() }}"#.into(),
     );
     let env = env_with_map(m);
     let out = env
-        .render_template(
-            "main.html",
-            json!({ "name": "macros.html" }),
-        )
+        .render_template("main.html", json!({ "name": "macros.html" }))
         .unwrap();
     assert_eq!(out, "ok");
 }
@@ -196,4 +205,88 @@ fn from_rejects_leading_underscore_name() {
     let tokens = tokenize(r#"{% from "x.html" import _hidden %}"#).unwrap();
     let err = parse(&tokens).unwrap_err();
     assert!(err.to_string().contains("underscore"));
+}
+
+#[test]
+fn import_exports_top_level_set() {
+    let mut m = HashMap::new();
+    m.insert("lib.html".into(), r#"{% set exported = 42 %}"#.into());
+    m.insert(
+        "main.html".into(),
+        r#"{% import "lib.html" as lib %}{{ lib.exported }}"#.into(),
+    );
+    let env = env_with_map(m);
+    assert_eq!(env.render_template("main.html", json!({})).unwrap(), "42");
+}
+
+#[test]
+fn import_with_context_macro_sees_parent_binding() {
+    let mut m = HashMap::new();
+    m.insert(
+        "lib.html".into(),
+        r#"{% set x = ctxval %}{% macro m() %}{{ x }}{% endmacro %}"#.into(),
+    );
+    m.insert(
+        "main.html".into(),
+        r#"{% import "lib.html" as lib with context %}{{ lib.m() }}"#.into(),
+    );
+    let env = env_with_map(m);
+    assert_eq!(
+        env.render_template("main.html", json!({ "ctxval": 42 }))
+            .unwrap(),
+        "42"
+    );
+}
+
+#[test]
+fn import_without_context_macro_does_not_see_parent_binding() {
+    let mut m = HashMap::new();
+    m.insert(
+        "lib.html".into(),
+        r#"{% set x = ctxval %}{% macro m() %}{{ x }}{% endmacro %}"#.into(),
+    );
+    m.insert(
+        "main.html".into(),
+        r#"{% import "lib.html" as lib %}{{ lib.m() }}"#.into(),
+    );
+    let env = env_with_map(m);
+    assert_eq!(
+        env.render_template("main.html", json!({ "ctxval": 42 }))
+            .unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn from_import_top_level_set_and_macro() {
+    let mut m = HashMap::new();
+    m.insert(
+        "lib.html".into(),
+        r#"{% set v = 99 %}{% macro m() %}M{% endmacro %}"#.into(),
+    );
+    m.insert(
+        "main.html".into(),
+        r#"{% from "lib.html" import v, m %}{{ v }}{{ m() }}"#.into(),
+    );
+    let env = env_with_map(m);
+    assert_eq!(env.render_template("main.html", json!({})).unwrap(), "99M");
+}
+
+#[test]
+fn import_with_context_modifier_parses_like_without_for_macros_only() {
+    let mut m = HashMap::new();
+    m.insert(
+        "lib.html".into(),
+        r#"{% macro x() %}X{% endmacro %}"#.into(),
+    );
+    m.insert(
+        "main.html".into(),
+        r#"{% import "lib.html" as lib with context %}{{ lib.x() }}"#.into(),
+    );
+    let env = env_with_map(m);
+    assert_eq!(
+        env.render_template("main.html", json!({ "foo": 1 }))
+            .unwrap(),
+        "X"
+    );
 }

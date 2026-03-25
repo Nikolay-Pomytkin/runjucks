@@ -82,9 +82,7 @@ fn filter_chain_right_associative_nesting() {
 #[test]
 fn neg_three_filter_abs_template() {
     let env = Environment::default();
-    let out = env
-        .render_string("{{ -3|abs }}".into(), json!({}))
-        .unwrap();
+    let out = env.render_string("{{ -3|abs }}".into(), json!({})).unwrap();
     assert_eq!(out, "3");
 }
 
@@ -119,7 +117,10 @@ fn equalto_is_test() {
 fn sameas_distinct_empty_objects() {
     let env = Environment::default();
     let out = env
-        .render_string("{{ obj1 is sameas(obj2) }}".into(), json!({"obj1": {}, "obj2": {}}))
+        .render_string(
+            "{{ obj1 is sameas(obj2) }}".into(),
+            json!({"obj1": {}, "obj2": {}}),
+        )
         .unwrap();
     assert_eq!(out, "false");
 }

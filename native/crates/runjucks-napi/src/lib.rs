@@ -1,7 +1,7 @@
 #![deny(clippy::all)]
 
-use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
 use napi::bindgen_prelude::ToNapiValue;
+use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
 use runjucks_core::value::value_to_string;
@@ -105,10 +105,7 @@ fn json_value_is_truthy(v: &serde_json::Value) -> bool {
     match v {
         serde_json::Value::Null | serde_json::Value::Bool(false) => false,
         serde_json::Value::Bool(true) => true,
-        serde_json::Value::Number(n) => n
-            .as_f64()
-            .map(|x| x != 0.0 && !x.is_nan())
-            .unwrap_or(true),
+        serde_json::Value::Number(n) => n.as_f64().map(|x| x != 0.0 && !x.is_nan()).unwrap_or(true),
         serde_json::Value::String(s) => !s.is_empty(),
         serde_json::Value::Array(a) => !a.is_empty(),
         serde_json::Value::Object(o) => {
@@ -123,9 +120,7 @@ fn json_value_is_truthy(v: &serde_json::Value) -> bool {
 fn napi_custom_test(js: Arc<JsFnRef>) -> CustomTest {
     Arc::new(move |value, args| {
         let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
-            RunjucksError::new(
-                "custom test invoked without an active Node N-API render context",
-            )
+            RunjucksError::new("custom test invoked without an active Node N-API render context")
         })?;
         if active != js.env {
             return Err(RunjucksError::new(
@@ -172,9 +167,7 @@ fn napi_extension_process(js: Arc<JsFnRef>) -> runjucks_core::extension::CustomE
 fn napi_custom_filter(js: Arc<JsFnRef>) -> CustomFilter {
     Arc::new(move |input, args| {
         let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
-            RunjucksError::new(
-                "custom filter invoked without an active Node N-API render context",
-            )
+            RunjucksError::new("custom filter invoked without an active Node N-API render context")
         })?;
         if active != js.env {
             return Err(RunjucksError::new(
@@ -323,7 +316,9 @@ impl JsTemplate {
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         if let Some(src) = &self.src {
-            return with_render_napi_env(env.raw(), || render_with_env(&inner, src.clone(), context));
+            return with_render_napi_env(env.raw(), || {
+                render_with_env(&inner, src.clone(), context)
+            });
         }
         if let Some(name) = &self.name {
             return with_render_napi_env(env.raw(), || {
@@ -457,6 +452,26 @@ impl JsEnvironment {
             .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
     }
 
+    /// Returns whether a custom extension with this name is registered (Nunjucks `hasExtension`).
+    #[napi(js_name = "hasExtension")]
+    pub fn has_extension(&self, name: String) -> Result<bool> {
+        let env = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(env.has_extension(&name))
+    }
+
+    /// Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed.
+    #[napi(js_name = "removeExtension")]
+    pub fn remove_extension(&self, name: String) -> Result<bool> {
+        let mut env = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(env.remove_extension(&name))
+    }
+
     /// JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc).
     #[napi(js_name = "addGlobal")]
     pub fn add_global(&self, name: String, value: serde_json::Value) -> Result<()> {
@@ -541,9 +556,7 @@ impl JsEnvironment {
 pub fn configure_default(opts: Option<ConfigureOptions>) -> Result<JsEnvironment> {
     let env = Arc::new(Mutex::new(Environment::default()));
     if let Some(o) = opts {
-        let mut inner = env
-            .lock()
-            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let mut inner = env.lock().map_err(|e| Error::from_reason(e.to_string()))?;
         apply_configure_opts(&mut inner, &o);
     }
     set_global_env(env.clone());
@@ -564,11 +577,7 @@ pub fn compile(
 
 /// Top-level `render(name, ctx)` using the environment from [`configure_default`].
 #[napi(js_name = "render")]
-pub fn render_named_template(
-    name: String,
-    context: serde_json::Value,
-    env: Env,
-) -> Result<String> {
+pub fn render_named_template(name: String, context: serde_json::Value, env: Env) -> Result<String> {
     let env_arc = global_env();
     let inner = env_arc
         .lock()

@@ -35,7 +35,8 @@ fn cycler_wraps_and_joiner_alternates() {
     let env = Environment::default();
     let out = env
         .render_string(
-            "{% set c = cycler(1,2,3) %}{{ c.next() }}{{ c.next() }}{{ c.next() }}{{ c.next() }}".into(),
+            "{% set c = cycler(1,2,3) %}{{ c.next() }}{{ c.next() }}{{ c.next() }}{{ c.next() }}"
+                .into(),
             json!({}),
         )
         .unwrap();

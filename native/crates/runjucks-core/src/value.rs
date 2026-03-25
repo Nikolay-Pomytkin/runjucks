@@ -13,6 +13,9 @@ pub const RJ_SAFE: &str = "__runjucks_safe";
 /// in context or globals, and for `default` filter two-argument semantics.
 pub const RJ_UNDEFINED: &str = "__runjucks_undefined";
 
+/// Object marker for `r/…/…` regex literals (`.test(string)` in [`crate::renderer`]).
+pub const RJ_REGEXP: &str = "__runjucks_regexp";
+
 /// `true` if `v` is a [`mark_safe`] wrapper.
 pub fn is_marked_safe(v: &Value) -> bool {
     matches!(
@@ -27,6 +30,27 @@ pub fn is_undefined_value(v: &Value) -> bool {
         v,
         Value::Object(o) if o.get(RJ_UNDEFINED) == Some(&Value::Bool(true))
     )
+}
+
+/// `true` if `v` is a regex literal value (`r/…/…`).
+pub fn is_regexp_value(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Object(o) if o.get(RJ_REGEXP).and_then(|x| x.as_bool()) == Some(true)
+    )
+}
+
+/// Pattern and flags strings for [`is_regexp_value`] objects.
+pub fn regexp_pattern_flags(v: &Value) -> Option<(String, String)> {
+    let Value::Object(o) = v else {
+        return None;
+    };
+    if o.get(RJ_REGEXP).and_then(|x| x.as_bool()) != Some(true) {
+        return None;
+    }
+    let p = o.get("pattern").and_then(|x| x.as_str())?;
+    let f = o.get("flags").and_then(|x| x.as_str()).unwrap_or("");
+    Some((p.to_string(), f.to_string()))
 }
 
 /// Nunjucks `undefined`-like value for unbound names.

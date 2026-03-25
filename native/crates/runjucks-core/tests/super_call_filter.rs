@@ -16,10 +16,7 @@ fn env_map(templates: HashMap<String, String>) -> Environment {
 #[test]
 fn super_two_level_prefix_order() {
     let mut m = HashMap::new();
-    m.insert(
-        "base.html".into(),
-        r#"{% block b %}P{% endblock %}"#.into(),
-    );
+    m.insert("base.html".into(), r#"{% block b %}P{% endblock %}"#.into());
     m.insert(
         "child.html".into(),
         r#"{% extends "base.html" %}{% block b %}C{{ super() }}{% endblock %}"#.into(),

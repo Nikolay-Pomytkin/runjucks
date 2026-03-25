@@ -14,6 +14,10 @@ export declare class Environment {
   addTest(name: string, func: unknown): void
   /** Custom tag extension (Nunjucks `addExtension`): `tags`, optional `blocks` map (opening tag → end tag name), and `process(context, args, body)` — `body` is `null` for simple tags. */
   addExtension(extensionName: string, tags: Array<string>, blocks: Record<string, string> | undefined | null, process: unknown): void
+  /** Returns whether a custom extension with this name is registered (Nunjucks `hasExtension`). */
+  hasExtension(name: string): boolean
+  /** Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed. */
+  removeExtension(name: string): boolean
   /** JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc). */
   addGlobal(name: string, value: any): void
   /** Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */

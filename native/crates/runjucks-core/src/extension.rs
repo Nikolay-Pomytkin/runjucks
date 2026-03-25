@@ -93,3 +93,16 @@ pub(crate) fn register_extension_inner(
     rebuild_extension_closing_tags(extension_tags, extension_closing);
     Ok(())
 }
+
+/// Removes a registered extension by name. Returns `true` if an extension handler was removed.
+pub fn remove_extension_inner(
+    extension_tags: &mut HashMap<String, ExtensionTagMeta>,
+    extension_closing: &mut HashSet<String>,
+    custom_extensions: &mut HashMap<String, CustomExtensionHandler>,
+    extension_name: &str,
+) -> bool {
+    let removed = custom_extensions.remove(extension_name).is_some();
+    extension_tags.retain(|_, v| v.extension_name != extension_name);
+    rebuild_extension_closing_tags(extension_tags, extension_closing);
+    removed
+}

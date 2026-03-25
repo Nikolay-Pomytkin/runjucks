@@ -3,10 +3,10 @@
 #![allow(clippy::manual_contains)]
 
 use crate::ast::{Expr, ForVars, IfBranch, MacroDef, MacroParam, Node, SwitchCase};
-use crate::extension::ExtensionTagMeta;
-use crate::parser::expr::parse_macro_param_segment;
 use crate::errors::{Result, RunjucksError};
+use crate::extension::ExtensionTagMeta;
 use crate::lexer::Token;
+use crate::parser::expr::parse_macro_param_segment;
 use crate::parser::parse_expr;
 use crate::parser::split::split_top_level_commas;
 use std::collections::{HashMap, HashSet};
@@ -42,7 +42,8 @@ const TAG_KEYWORDS: &[&str] = &[
 
 /// Built-in tag names that cannot be used as custom extension tags.
 pub(crate) fn is_reserved_tag_keyword(s: &str) -> bool {
-    TAG_KEYWORDS.iter().any(|&k| k == s) || matches!(s, "raw" | "verbatim" | "endraw" | "endverbatim")
+    TAG_KEYWORDS.iter().any(|&k| k == s)
+        || matches!(s, "raw" | "verbatim" | "endraw" | "endverbatim")
 }
 
 pub(crate) struct ParseCtx<'a> {
@@ -102,10 +103,7 @@ fn first_tag_keyword(body: &str) -> String {
             return (*kw).to_string();
         }
     }
-    s.split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string()
+    s.split_whitespace().next().unwrap_or("").to_string()
 }
 
 fn strip_keyword_prefix<'a>(body: &'a str, kws: &[&str]) -> Result<&'a str> {
@@ -178,10 +176,7 @@ fn parse_for_header(rest: &str) -> Result<(ForVars, Expr)> {
         return Err(RunjucksError::new("`for` requires at least one variable"));
     }
     for n in &names {
-        if !n
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(RunjucksError::new("invalid `for` variable name"));
         }
     }
@@ -237,10 +232,7 @@ fn parse_set_targets(lhs: &str) -> Result<Vec<String>> {
         if name.is_empty() {
             continue;
         }
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(RunjucksError::new("`set` target must be an identifier"));
         }
         out.push(name.to_string());
@@ -427,7 +419,9 @@ fn parse_from_import_name_segment(seg: &str) -> Result<(String, Option<String>, 
     }
     let (name, tail) = parse_simple_ident(core)?;
     if !tail.trim().is_empty() {
-        return Err(RunjucksError::new("unexpected tokens in `from` import list"));
+        return Err(RunjucksError::new(
+            "unexpected tokens in `from` import list",
+        ));
     }
     if name.starts_with('_') {
         return Err(RunjucksError::new(
@@ -442,9 +436,8 @@ fn parse_import_stmt(tokens: &[Token], i: &mut usize, _ctx: &ParseCtx<'_>) -> Re
         return Err(RunjucksError::new("internal: expected `import` tag"));
     };
     let rest = strip_keyword_prefix(body, &["import"])?;
-    let idx = find_keyword_outside_quotes(rest, " as ").ok_or_else(|| {
-        RunjucksError::new("expected `{% import <expr> as <name> %}`")
-    })?;
+    let idx = find_keyword_outside_quotes(rest, " as ")
+        .ok_or_else(|| RunjucksError::new("expected `{% import <expr> as <name> %}`"))?;
     let template_part = rest[..idx].trim();
     let after_as = rest[idx + 4..].trim();
     let template = parse_expr(template_part)?;
@@ -463,9 +456,8 @@ fn parse_from_stmt(tokens: &[Token], i: &mut usize, _ctx: &ParseCtx<'_>) -> Resu
         return Err(RunjucksError::new("internal: expected `from` tag"));
     };
     let rest = strip_keyword_prefix(body, &["from"])?;
-    let idx = find_keyword_outside_quotes(rest, " import ").ok_or_else(|| {
-        RunjucksError::new("expected `{% from <expr> import <names> %}`")
-    })?;
+    let idx = find_keyword_outside_quotes(rest, " import ")
+        .ok_or_else(|| RunjucksError::new("expected `{% from <expr> import <names> %}`"))?;
     let template_part = rest[..idx].trim();
     let list_part = rest[idx + " import ".len()..].trim();
     if list_part.is_empty() {
@@ -505,10 +497,7 @@ fn parse_block_name(rest: &str) -> Result<String> {
     let name = it
         .next()
         .ok_or_else(|| RunjucksError::new("`block` requires a name"))?;
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(RunjucksError::new("invalid `block` name"));
     }
     if it.next().is_some() {
@@ -524,11 +513,7 @@ fn parse_filter_tag_header(rest: &str) -> Result<(String, Vec<Expr>)> {
     }
     if let Some(open_paren) = s.find('(') {
         let name = s[..open_paren].trim();
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(RunjucksError::new("invalid filter name"));
         }
         let after = &s[open_paren + 1..];
@@ -544,8 +529,7 @@ fn parse_filter_tag_header(rest: &str) -> Result<(String, Vec<Expr>)> {
         let args: Vec<Expr> = if segs.len() == 1 && segs[0].is_empty() {
             vec![]
         } else {
-            segs
-                .into_iter()
+            segs.into_iter()
                 .map(|t| parse_expr(t))
                 .collect::<Result<_>>()?
         };
@@ -949,11 +933,9 @@ fn parse_node(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Nod
                 "verbatim" => parse_raw_block(tokens, i, &["endverbatim"]),
                 "elif" | "elseif" | "else" | "endif" | "endfor" | "endblock" | "endmacro"
                 | "endfilter" | "endcall" | "case" | "default" | "endswitch" | "endset"
-                | "endraw" | "endverbatim" => {
-                    Err(RunjucksError::new(format!(
-                        "unexpected `{{%{body}%}}` (no matching opening tag)"
-                    )))
-                }
+                | "endraw" | "endverbatim" => Err(RunjucksError::new(format!(
+                    "unexpected `{{%{body}%}}` (no matching opening tag)"
+                ))),
                 _ => {
                     if ctx.ext_closing.contains(kw.as_str()) {
                         return Err(RunjucksError::new(format!(

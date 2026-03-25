@@ -26,10 +26,11 @@
 
 pub mod ast;
 pub mod environment;
-pub mod extension;
 pub mod errors;
+pub mod extension;
 pub mod filters;
 pub mod globals;
+mod js_regex;
 pub mod lexer;
 pub mod loader;
 pub mod parser;
@@ -38,7 +39,7 @@ pub mod tag_lex;
 pub mod value;
 
 pub use environment::{CustomFilter, CustomTest, Environment};
-pub use extension::{CustomExtensionHandler, ExtensionTagMeta};
 pub use errors::RunjucksError;
+pub use extension::{CustomExtensionHandler, ExtensionTagMeta};
 pub use lexer::{LexerOptions, Tags};
 pub use loader::{map_loader, FnLoader, TemplateLoader};

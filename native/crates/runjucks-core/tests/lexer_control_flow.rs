@@ -15,12 +15,7 @@ fn if_elif_else_endif_chain() {
     let tokens = tokenize("{% if a %}{% elif b %}{% else %}{% endif %}").unwrap();
     assert_eq!(
         tokens,
-        vec![
-            tag("if a"),
-            tag("elif b"),
-            tag("else"),
-            tag("endif"),
-        ]
+        vec![tag("if a"), tag("elif b"), tag("else"), tag("endif"),]
     );
 }
 
@@ -41,17 +36,18 @@ fn for_in_endfor() {
     let tokens = tokenize("{% for item in items %}x{% endfor %}").unwrap();
     assert_eq!(
         tokens,
-        vec![tag("for item in items"), Token::Text("x".into()), tag("endfor")]
+        vec![
+            tag("for item in items"),
+            Token::Text("x".into()),
+            tag("endfor")
+        ]
     );
 }
 
 #[test]
 fn for_else_endfor() {
     let tokens = tokenize("{% for x in y %}{% else %}{% endfor %}").unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("for x in y"), tag("else"), tag("endfor")]
-    );
+    assert_eq!(tokens, vec![tag("for x in y"), tag("else"), tag("endfor")]);
 }
 
 #[test]
@@ -120,10 +116,7 @@ fn import_statement() {
 #[test]
 fn from_import() {
     let tokens = tokenize("{% from \"helpers.html\" import foo, bar %}").unwrap();
-    assert_eq!(
-        tokens,
-        vec![tag("from \"helpers.html\" import foo, bar")]
-    );
+    assert_eq!(tokens, vec![tag("from \"helpers.html\" import foo, bar")]);
 }
 
 #[test]
@@ -137,20 +130,13 @@ fn set_block_endset_tokens() {
     let tokens = tokenize("{% set x %}c{% endset %}").unwrap();
     assert_eq!(
         tokens,
-        vec![
-            tag("set x"),
-            Token::Text("c".into()),
-            tag("endset"),
-        ]
+        vec![tag("set x"), Token::Text("c".into()), tag("endset"),]
     );
 }
 
 #[test]
 fn switch_case_default_endswitch() {
-    let tokens = tokenize(
-        "{% switch x %}{% case \"a\" %}a{% default %}d{% endswitch %}",
-    )
-    .unwrap();
+    let tokens = tokenize("{% switch x %}{% case \"a\" %}a{% default %}d{% endswitch %}").unwrap();
     assert_eq!(
         tokens,
         vec![

@@ -137,11 +137,7 @@ fn find_matching_block_close(
     while pos < rest.len() {
         let slice = &rest[pos..];
         if !slice.starts_with(bs.as_str()) && !slice.starts_with(bs_trim.as_str()) {
-            let adv = slice
-                .chars()
-                .next()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
+            let adv = slice.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
             pos += adv;
             continue;
         }
@@ -149,20 +145,12 @@ fn find_matching_block_close(
         let (body, total, _) = match parse_tag_prefix(slice, tags) {
             Ok(t) => t,
             Err(_) => {
-                pos += slice
-                    .chars()
-                    .next()
-                    .map(|c| c.len_utf8())
-                    .unwrap_or(1);
+                pos += slice.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
                 continue;
             }
         };
         if body.contains(bs.as_str()) {
-            pos += slice
-                .chars()
-                .next()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
+            pos += slice.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
             continue;
         }
         let is_open = body == open_name || body.starts_with(&open_prefix);
