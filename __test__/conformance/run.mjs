@@ -19,8 +19,13 @@ for (const c of loadAllConformanceCases()) {
         const env = new Environment()
         if (c.env.autoescape === false) env.setAutoescape(false)
         if (c.env.dev === true) env.setDev(true)
-        if (c.env.throwOnUndefined === true && typeof env.configure === 'function') {
-          env.configure({ throwOnUndefined: true })
+        if (typeof env.configure === 'function') {
+          const configOpts = {}
+          if (c.env.throwOnUndefined === true) configOpts.throwOnUndefined = true
+          if (c.env.trimBlocks === true) configOpts.trimBlocks = true
+          if (c.env.lstripBlocks === true) configOpts.lstripBlocks = true
+          if (c.env.tags) configOpts.tags = c.env.tags
+          if (Object.keys(configOpts).length > 0) env.configure(configOpts)
         }
         if (c.env.globals) {
           for (const [name, value] of Object.entries(c.env.globals)) {

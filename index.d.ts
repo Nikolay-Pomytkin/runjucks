@@ -14,7 +14,7 @@ export declare class Environment {
   addTest(name: string, func: unknown): void
   /** JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc). */
   addGlobal(name: string, value: any): void
-  /** Subset of Nunjucks `configure`: `autoescape`, `dev`, and `throwOnUndefined` are applied; other keys are not supported yet. */
+  /** Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */
   configure(opts: ConfigureOptions): void
   /** Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc. */
   setTemplateMap(map: Record<string, string>): void
@@ -27,6 +27,18 @@ export interface ConfigureOptions {
   autoescape?: boolean
   dev?: boolean
   throwOnUndefined?: boolean
+  trimBlocks?: boolean
+  lstripBlocks?: boolean
+  tags?: TagsOptions
 }
 
 export declare function renderString(template: string, context: any): string
+
+export interface TagsOptions {
+  blockStart?: string
+  blockEnd?: string
+  variableStart?: string
+  variableEnd?: string
+  commentStart?: string
+  commentEnd?: string
+}

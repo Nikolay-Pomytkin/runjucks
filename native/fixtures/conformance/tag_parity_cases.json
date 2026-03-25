@@ -106,5 +106,258 @@
       }
     },
     "expected": "LAYOUT:Hi:END"
+  },
+  {
+    "id": "tag_trim_blocks_if",
+    "source": "nunjucks trimBlocks",
+    "template": "{% if true %}\nhello{% endif %}",
+    "context": {},
+    "env": { "trimBlocks": true },
+    "expected": "hello"
+  },
+  {
+    "id": "tag_trim_blocks_for",
+    "source": "nunjucks trimBlocks",
+    "template": "{% for i in items %}\n{{ i }}\n{% endfor %}",
+    "context": { "items": ["a", "b"] },
+    "env": { "trimBlocks": true },
+    "expected": "a\nb\n"
+  },
+  {
+    "id": "tag_lstrip_blocks_if",
+    "source": "nunjucks lstripBlocks",
+    "template": "  {% if true %}hello  {% endif %}",
+    "context": {},
+    "env": { "lstripBlocks": true },
+    "expected": "hello  "
+  },
+  {
+    "id": "tag_trim_lstrip_combined",
+    "source": "nunjucks trimBlocks + lstripBlocks",
+    "template": "  {% if true %}\nhello\n  {% endif %}\n",
+    "context": {},
+    "env": { "trimBlocks": true, "lstripBlocks": true },
+    "expected": "hello\n"
+  },
+  {
+    "id": "tag_trim_blocks_for_loop_items",
+    "source": "nunjucks trimBlocks + lstripBlocks for loop",
+    "template": "{% for i in items %}\n  {{ i }}\n{% endfor %}\n",
+    "context": { "items": ["a", "b"] },
+    "env": { "trimBlocks": true, "lstripBlocks": true },
+    "expected": "  a\n  b\n"
+  },
+  {
+    "id": "tag_trim_blocks_no_var_strip",
+    "source": "nunjucks trimBlocks does not affect {{ }}",
+    "template": "{{ x }}\nafter",
+    "context": { "x": "hi" },
+    "env": { "trimBlocks": true },
+    "expected": "hi\nafter"
+  },
+  {
+    "id": "tag_custom_delimiters_var",
+    "source": "nunjucks custom tags",
+    "template": "Hello <$ name $>!",
+    "context": { "name": "World" },
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "Hello World!"
+  },
+  {
+    "id": "tag_custom_delimiters_block",
+    "source": "nunjucks custom tags",
+    "template": "<% if ok %>yes<% else %>no<% endif %>",
+    "context": { "ok": true },
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "yes"
+  },
+  {
+    "id": "tag_custom_delimiters_for",
+    "source": "nunjucks custom tags for loop",
+    "template": "<% for i in items %><$ i $><% endfor %>",
+    "context": { "items": ["a", "b", "c"] },
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "abc"
+  },
+  {
+    "id": "tag_custom_delimiters_comment",
+    "source": "nunjucks custom tags comment",
+    "template": "a<# comment #>b",
+    "context": {},
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "ab"
+  },
+  {
+    "id": "tag_for_else_empty",
+    "source": "nunjucks for/else on empty array",
+    "template": "{% for i in items %}{{ i }}{% else %}none{% endfor %}",
+    "context": { "items": [] },
+    "expected": "none"
+  },
+  {
+    "id": "tag_for_tuple_unpack",
+    "source": "nunjucks for tuple unpack",
+    "template": "{% for a, b in pairs %}{{ a }}={{ b }};{% endfor %}",
+    "context": { "pairs": [["x", 1], ["y", 2]] },
+    "expected": "x=1;y=2;"
+  },
+  {
+    "id": "tag_for_loop_length",
+    "source": "nunjucks loop.length",
+    "template": "{% for i in items %}{{ loop.length }}{% endfor %}",
+    "context": { "items": [10, 20, 30] },
+    "expected": "333"
+  },
+  {
+    "id": "tag_for_loop_revindex",
+    "source": "nunjucks loop.revindex",
+    "template": "{% for i in items %}{{ loop.revindex }}{% endfor %}",
+    "context": { "items": ["a", "b", "c"] },
+    "expected": "321"
+  },
+  {
+    "id": "tag_for_loop_last",
+    "source": "nunjucks loop.last",
+    "template": "{% for i in items %}{% if loop.last %}{{ i }}{% endif %}{% endfor %}",
+    "context": { "items": ["a", "b", "c"] },
+    "expected": "c"
+  },
+  {
+    "id": "tag_set_frame_scoping",
+    "source": "nunjucks set frame scoping",
+    "template": "{% set x = 1 %}{% for i in [2] %}{% set x = i %}{% endfor %}{{ x }}",
+    "context": {},
+    "expected": "2"
+  },
+  {
+    "id": "tag_nested_if",
+    "source": "nunjucks nested if",
+    "template": "{% if a %}{% if b %}both{% else %}a-only{% endif %}{% else %}none{% endif %}",
+    "context": { "a": true, "b": false },
+    "expected": "a-only"
+  },
+  {
+    "id": "tag_include_ignore_missing",
+    "source": "nunjucks include ignore missing",
+    "template": "{% include \"missing.njk\" ignore missing %}ok",
+    "context": {},
+    "env": {
+      "templateMap": {}
+    },
+    "expected": "ok"
+  },
+  {
+    "id": "tag_extends_super",
+    "source": "nunjucks extends with super()",
+    "template": "{% extends \"base.njk\" %}{% block m %}child+{{ super() }}{% endblock %}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "base.njk": "{% block m %}base{% endblock %}"
+      }
+    },
+    "expected": "child+base"
+  },
+  {
+    "id": "tag_macro_default_args",
+    "source": "nunjucks macro default args",
+    "template": "{% macro say(msg, loud=false) %}{% if loud %}{{ msg | upper }}{% else %}{{ msg }}{% endif %}{% endmacro %}{{ say(\"hi\") }},{{ say(\"hi\", loud=true) }}",
+    "context": {},
+    "expected": "hi,HI"
+  },
+  {
+    "id": "tag_import_macro_ns",
+    "source": "nunjucks import as namespace",
+    "template": "{% import \"macros.njk\" as m %}{{ m.greet(\"A\") }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "macros.njk": "{% macro greet(name) %}Hello {{ name }}{% endmacro %}"
+      }
+    },
+    "expected": "Hello A"
+  },
+  {
+    "id": "tag_from_import_macro",
+    "source": "nunjucks from import",
+    "template": "{% from \"macros.njk\" import greet %}{{ greet(\"B\") }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "macros.njk": "{% macro greet(name) %}Hi {{ name }}{% endmacro %}"
+      }
+    },
+    "expected": "Hi B"
+  },
+  {
+    "id": "tag_filter_block_lower",
+    "source": "nunjucks filter block lower",
+    "template": "{% filter lower %}HELLO WORLD{% endfilter %}",
+    "context": {},
+    "expected": "hello world"
+  },
+  {
+    "id": "tag_inline_if_expr",
+    "source": "nunjucks inline if expression",
+    "template": "{{ 'yes' if ok else 'no' }}",
+    "context": { "ok": true },
+    "expected": "yes"
+  },
+  {
+    "id": "tag_inline_if_false",
+    "source": "nunjucks inline if expression false",
+    "template": "{{ 'yes' if ok else 'no' }}",
+    "context": { "ok": false },
+    "expected": "no"
+  },
+  {
+    "id": "tag_whitespace_trim_open_close",
+    "source": "nunjucks whitespace control",
+    "template": "  {{- x -}}  ",
+    "context": { "x": "hi" },
+    "expected": "hi"
+  },
+  {
+    "id": "tag_comment_removed",
+    "source": "nunjucks comments",
+    "template": "a{# this is a comment #}b",
+    "context": {},
+    "expected": "ab"
   }
 ]
