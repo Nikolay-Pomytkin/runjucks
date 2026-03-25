@@ -331,17 +331,37 @@ fn filter_truncate(input: &Value, args: &[Value]) -> Value {
     Value::String(format!("{out}{end}"))
 }
 
+/// Matches Nunjucks `filters.js` `striptags` (including `preserveLinebreaks`).
 fn filter_striptags(input: &Value, args: &[Value]) -> Value {
     let s = value_to_string_raw(input);
-    let trimmed = striptags_re().replace_all(&s, "");
+    let stripped = striptags_re().replace_all(&s, "");
+    let trimmed_input = stripped.trim();
     let preserve = args.first().map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
     let res = if preserve {
-        let lines: Vec<&str> = trimmed.lines().map(|l| l.trim()).collect();
-        lines.join("\n")
+        striptags_preserve_linebreaks_nunjucks(trimmed_input)
     } else {
-        trimmed.split_whitespace().collect::<Vec<_>>().join(" ")
+        striptags_collapse_whitespace_nunjucks(trimmed_input)
     };
     Value::String(res)
+}
+
+fn striptags_collapse_whitespace_nunjucks(s: &str) -> String {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"\s+").unwrap());
+    re.replace_all(s, " ").into_owned()
+}
+
+fn striptags_preserve_linebreaks_nunjucks(s: &str) -> String {
+    static RE_LINE_EDGES: OnceLock<Regex> = OnceLock::new();
+    static RE_SPACES: OnceLock<Regex> = OnceLock::new();
+    static RE_EXTRA_NEWLINES: OnceLock<Regex> = OnceLock::new();
+    let re_line = RE_LINE_EDGES.get_or_init(|| Regex::new(r"(?m)^ +| +$").unwrap());
+    let re_spaces = RE_SPACES.get_or_init(|| Regex::new(r" +").unwrap());
+    let re_nl = RE_EXTRA_NEWLINES.get_or_init(|| Regex::new(r"\n\n\n+").unwrap());
+    let mut res = re_line.replace_all(s, "").into_owned();
+    res = re_spaces.replace_all(&res, " ").into_owned();
+    res = res.replace("\r\n", "\n");
+    re_nl.replace_all(&res, "\n\n").into_owned()
 }
 
 fn filter_urlencode(input: &Value, _args: &[Value]) -> Value {

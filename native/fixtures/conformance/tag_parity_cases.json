@@ -82,5 +82,29 @@
     "template": "{% macro m(a, b=1) %}{{ a }},{{ b }}{% endmacro %}{{ m(2) }},{{ m(2, b=3) }}",
     "context": {},
     "expected": "2,1,2,3"
+  },
+  {
+    "id": "tag_include_from_map",
+    "source": "nunjucks include + template map",
+    "template": "{% include \"part.njk\" %}",
+    "context": { "x": "y" },
+    "env": {
+      "templateMap": {
+        "part.njk": "Hello {{ x }}"
+      }
+    },
+    "expected": "Hello y"
+  },
+  {
+    "id": "tag_extends_layout_map",
+    "source": "nunjucks extends + template map",
+    "template": "{% extends \"layout.njk\" %}{% block main %}Hi{% endblock %}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "layout.njk": "LAYOUT:{% block main %}{% endblock %}:END"
+      }
+    },
+    "expected": "LAYOUT:Hi:END"
   }
 ]

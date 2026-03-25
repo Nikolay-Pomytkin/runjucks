@@ -125,5 +125,30 @@
     "template": "{{ [99] | random }}",
     "context": {},
     "expected": "99"
+  },
+  {
+    "id": "filters_abs_negative_int",
+    "source": "nunjucks/tests/filters.js abs",
+    "template": "{{ -3 | abs }}",
+    "context": {},
+    "expected": "3"
+  },
+  {
+    "id": "filters_striptags_upstream_preserve",
+    "source": "nunjucks/tests/filters.js striptags(true)",
+    "template": "{{ html | striptags(true) }}",
+    "context": {
+      "html": "<div>\n  row1\nrow2  \n  <strong>row3</strong>\n</div>\n\n HEADER \n\n<ul>\n  <li>option  1</li>\n<li>option  2</li>\n</ul>"
+    },
+    "expected": "row1\nrow2\nrow3\n\nHEADER\n\noption 1\noption 2"
+  },
+  {
+    "id": "filters_striptags_upstream_flat",
+    "source": "nunjucks/tests/filters.js striptags",
+    "template": "{{ html | striptags }}",
+    "context": {
+      "html": "  <p>an  \n <a href=\"#\">example</a> link</p>\n<p>to a webpage</p> <!-- <p>and some comments</p> -->"
+    },
+    "expected": "an example link to a webpage"
   }
 ]
