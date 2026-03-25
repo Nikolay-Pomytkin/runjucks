@@ -102,7 +102,7 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 ### Partial
 
 - **`length`:** no ECMAScript `Map`/`Set` size.
-- **`striptags`:** `preserveLinebreaks` branch is simplified vs Nunjucks.
+- **`striptags`:** `preserveLinebreaks` matches Nunjucks `filters.js` (line-edge space trim per line, squash runs of spaces, CRLF → LF, cap runs of more than two newlines).
 - **Filter safeness chaining:** Nunjucks `copySafeness` across many filters is only partially mirrored (`string` / `escape` / `safe` paths).
 
 ### Not yet implemented
@@ -151,15 +151,16 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 ### Current state
 
-- **66** JSON vectors: `render_cases.json` (40) + `filter_cases.json` (15) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (11).
+- **76** JSON vectors: `render_cases.json` (41) + `filter_cases.json` (21) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (14).
 - **Filter / set coverage** — `tests_js_filter_default_undefined`, `tests_js_for_batch`, and `tests_js_set_and_output` are exercised by the Rust conformance suite (no `"skip"` flags in JSON); they are also on the perf parity allowlist when comparing to the `nunjucks` npm package.
-- **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) compares runjucks vs the `nunjucks` npm package for every ID in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (non-skipped fixtures + tag parity subset).
+- **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) compares runjucks vs the `nunjucks` npm package for every ID in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (non-skipped fixtures + tag parity subset). Fixture `env.globals`, `env.throwOnUndefined`, `env.templateMap`, and `env.randomSeed` are applied on both sides (see [`__test__/conformance/run.mjs`](__test__/conformance/run.mjs)).
 - **Perf allowlist** — grows with green cases; includes `render_cases`, `filter_cases`, and `tag_parity_cases` keys (see file).
 
 ### Next steps
 
 - [x] **Default + batch + set/escape goldens** — covered by conformance + allowlist (see `tests_js_filter_default_undefined`, `tests_js_for_batch`, `tests_js_set_and_output`).
-- [ ] **Grow `tag_parity_cases.json`** — **P1**: add vectors for composition-only cases (`include`/`extends` with loader — often covered in Rust + Node integration tests), more edge cases from upstream.
+- [x] **Loader-backed `include` / `extends` in `tag_parity_cases.json`** — **P1** (shipped): `tag_include_from_map`, `tag_extends_layout_map` with `env.templateMap` (parity + Node conformance + Rust `tag_parity.rs`).
+- [ ] **More composition edge cases** — optional: nested `extends`, `include` with `ignore missing`, additional upstream vectors.
 - [ ] **Expand perf allowlist** — **P2**: as new conformance cases go green, append IDs under the right key and run `npm run perf`.
 
 ---

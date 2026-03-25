@@ -302,3 +302,23 @@ fn forceescape_is_safe_wrapped() {
     let v = apply_builtin(&env, &mut rng, "forceescape", &json!("<"), &[]).unwrap();
     assert!(is_marked_safe(&v));
 }
+
+#[test]
+fn striptags_matches_nunjucks_preserve_and_flat() {
+    let env = Environment::default();
+    let mut rng = test_rng();
+    let html_flat = "  <p>an  \n <a href=\"#\">example</a> link</p>\n<p>to a webpage</p> <!-- <p>and some comments</p> -->";
+    assert_eq!(
+        apply_builtin(&env, &mut rng, "striptags", &json!(html_flat), &[]).unwrap(),
+        json!("an example link to a webpage")
+    );
+    let html_preserve = concat!(
+        "<div>\n  row1\nrow2  \n  <strong>row3</strong>\n</div>\n\n",
+        " HEADER \n\n<ul>\n  <li>option  1</li>\n<li>option  2</li>\n</ul>"
+    );
+    assert_eq!(
+        apply_builtin(&env, &mut rng, "striptags", &json!(html_preserve), &[json!(true)])
+            .unwrap(),
+        json!("row1\nrow2\nrow3\n\nHEADER\n\noption 1\noption 2")
+    );
+}

@@ -19,6 +19,9 @@ for (const c of loadAllConformanceCases()) {
         const env = new Environment()
         if (c.env.autoescape === false) env.setAutoescape(false)
         if (c.env.dev === true) env.setDev(true)
+        if (c.env.throwOnUndefined === true && typeof env.configure === 'function') {
+          env.configure({ throwOnUndefined: true })
+        }
         if (c.env.globals) {
           for (const [name, value] of Object.entries(c.env.globals)) {
             env.addGlobal(name, value)
@@ -26,6 +29,9 @@ for (const c of loadAllConformanceCases()) {
         }
         if (c.env.randomSeed != null && typeof env.setRandomSeed === 'function') {
           env.setRandomSeed(Number(c.env.randomSeed))
+        }
+        if (c.env.templateMap && typeof env.setTemplateMap === 'function') {
+          env.setTemplateMap(c.env.templateMap)
         }
         out = env.renderString(c.template, c.context ?? {})
       } else {

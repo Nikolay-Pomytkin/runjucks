@@ -22,21 +22,79 @@ const allowlist = JSON.parse(
   readFileSync(join(pkgRoot, 'perf/conformance-allowlist.json'), 'utf8'),
 )
 
-function makeRunjucksEnv(case_) {
-  const env = new runjucks.Environment()
-  const ae = case_.env?.autoescape
+function applyRunjucksEnvOptions(env, envOpts) {
+  if (!envOpts) return
+  const ae = envOpts.autoescape
   env.setAutoescape(ae !== false)
-  if (case_.env?.dev === true) env.setDev(true)
-  if (case_.env?.randomSeed != null && typeof env.setRandomSeed === 'function') {
-    env.setRandomSeed(Number(case_.env.randomSeed))
+  if (envOpts.dev === true) env.setDev(true)
+  if (envOpts.randomSeed != null && typeof env.setRandomSeed === 'function') {
+    env.setRandomSeed(Number(envOpts.randomSeed))
+  }
+  if (typeof env.configure === 'function' && envOpts.throwOnUndefined === true) {
+    env.configure({ throwOnUndefined: true })
+  }
+  if (envOpts.globals) {
+    for (const [name, value] of Object.entries(envOpts.globals)) {
+      env.addGlobal(name, value)
+    }
+  }
+  if (envOpts.templateMap && typeof env.setTemplateMap === 'function') {
+    env.setTemplateMap(envOpts.templateMap)
+  }
+}
+
+/** Nunjucks has no JSON marker for `is callable`; map runjucks marker objects to a no-op function. */
+function valueForNunjucksGlobal(value) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    value.__runjucks_callable === true
+  ) {
+    return () => {}
+  }
+  return value
+}
+
+function makeNunjucksLoaderFromTemplateMap(map) {
+  const TemplateMapLoader = nunjucks.Loader.extend({
+    getSource(name) {
+      const src = map[name]
+      if (src === undefined) {
+        return null
+      }
+      return { src, path: name, noCache: false }
+    },
+  })
+  return new TemplateMapLoader()
+}
+
+function makeNunjucksEnv(case_) {
+  const e = case_.env
+  const autoescape = e?.autoescape !== false
+  const dev = e?.dev === true
+  const throwOnUndefined = e?.throwOnUndefined === true
+  const loader =
+    e?.templateMap != null
+      ? makeNunjucksLoaderFromTemplateMap(e.templateMap)
+      : null
+  const env = new nunjucks.Environment(loader, {
+    autoescape,
+    dev,
+    throwOnUndefined,
+  })
+  if (e?.globals) {
+    for (const [name, value] of Object.entries(e.globals)) {
+      env.addGlobal(name, valueForNunjucksGlobal(value))
+    }
   }
   return env
 }
 
-function makeNunjucksEnv(case_) {
-  const autoescape = case_.env?.autoescape !== false
-  const dev = case_.env?.dev === true
-  return new nunjucks.Environment(null, { autoescape, dev })
+function makeRunjucksEnv(case_) {
+  const env = new runjucks.Environment()
+  applyRunjucksEnvOptions(env, case_.env)
+  return env
 }
 
 function cloneCtx(ctx) {

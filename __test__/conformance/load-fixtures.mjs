@@ -15,7 +15,7 @@ export const FIXTURES_ROOT = join(__dirname, '../../native/fixtures/conformance'
  * @property {string} [source]
  * @property {string} template
  * @property {Record<string, unknown>} [context]
- * @property {{ autoescape?: boolean, dev?: boolean, jinjaCompat?: boolean, randomSeed?: number, globals?: Record<string, unknown> }} [env]
+ * @property {{ autoescape?: boolean, dev?: boolean, jinjaCompat?: boolean, randomSeed?: number, throwOnUndefined?: boolean, globals?: Record<string, unknown>, templateMap?: Record<string, string> }} [env]
  * @property {string} expected
  * @property {boolean} [skip] — when true, Rust and Node skip until implemented
  */
