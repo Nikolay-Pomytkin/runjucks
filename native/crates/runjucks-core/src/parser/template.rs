@@ -3,11 +3,13 @@
 #![allow(clippy::manual_contains)]
 
 use crate::ast::{Expr, ForVars, IfBranch, MacroDef, MacroParam, Node, SwitchCase};
+use crate::extension::ExtensionTagMeta;
 use crate::parser::expr::parse_macro_param_segment;
 use crate::errors::{Result, RunjucksError};
 use crate::lexer::Token;
 use crate::parser::parse_expr;
 use crate::parser::split::split_top_level_commas;
+use std::collections::{HashMap, HashSet};
 
 /// Longer keywords first so `elseif` does not match as `else`, `endblock` before `block`, etc.
 const TAG_KEYWORDS: &[&str] = &[
@@ -38,8 +40,63 @@ const TAG_KEYWORDS: &[&str] = &[
     "else",
 ];
 
+/// Built-in tag names that cannot be used as custom extension tags.
+pub(crate) fn is_reserved_tag_keyword(s: &str) -> bool {
+    TAG_KEYWORDS.iter().any(|&k| k == s) || matches!(s, "raw" | "verbatim" | "endraw" | "endverbatim")
+}
+
+pub(crate) struct ParseCtx<'a> {
+    pub ext_tags: &'a HashMap<String, ExtensionTagMeta>,
+    pub ext_closing: &'a HashSet<String>,
+}
+
+fn strip_first_tag_word<'a>(body: &'a str, tag: &str) -> Result<&'a str> {
+    let s = body.trim();
+    if s == tag {
+        return Ok("");
+    }
+    let prefix = format!("{tag} ");
+    if s.starts_with(&prefix) {
+        return Ok(s[prefix.len()..].trim_start());
+    }
+    Err(RunjucksError::new(format!(
+        "malformed extension tag: expected `{tag}` or `{tag} …`"
+    )))
+}
+
+fn parse_extension_stmt(
+    tokens: &[Token],
+    i: &mut usize,
+    meta: &ExtensionTagMeta,
+    tag_kw: &str,
+    ctx: &ParseCtx<'_>,
+) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected extension tag"));
+    };
+    let rest = strip_first_tag_word(body, tag_kw)?;
+    *i += 1;
+    let body_nodes = if let Some(ref end) = meta.end_tag {
+        let nodes = parse_until_tags(tokens, i, &[end.as_str()], ctx)?;
+        expect_tag(tokens, i, &[end.as_str()])?;
+        Some(nodes)
+    } else {
+        None
+    };
+    Ok(Node::ExtensionTag {
+        extension_name: meta.extension_name.clone(),
+        tag: tag_kw.to_string(),
+        args: rest.trim().to_string(),
+        body: body_nodes,
+    })
+}
+
 fn first_tag_keyword(body: &str) -> String {
     let s = body.trim();
+    // Nunjucks allows `{% call(item) macro %}` with no space before `(`.
+    if s.starts_with("call(") {
+        return "call".to_string();
+    }
     for kw in TAG_KEYWORDS {
         if s == *kw || s.starts_with(&format!("{kw} ")) {
             return (*kw).to_string();
@@ -64,6 +121,23 @@ fn strip_keyword_prefix<'a>(body: &'a str, kws: &[&str]) -> Result<&'a str> {
     }
     Err(RunjucksError::new(format!(
         "expected tag starting with one of {kws:?}, got {body:?}"
+    )))
+}
+
+/// Strips the `call` keyword from `{% call … %}`, allowing `call ` or `call(` (no space before `(`).
+fn strip_call_prefix<'a>(body: &'a str) -> Result<&'a str> {
+    let s = body.trim();
+    if s == "call" {
+        return Ok("");
+    }
+    if s.starts_with("call ") {
+        return Ok(s[5..].trim_start());
+    }
+    if s.starts_with("call(") {
+        return Ok(&s[4..]);
+    }
+    Err(RunjucksError::new(format!(
+        "expected tag starting with `call`, got {body:?}"
     )))
 }
 
@@ -363,7 +437,7 @@ fn parse_from_import_name_segment(seg: &str) -> Result<(String, Option<String>, 
     Ok((name, None, wc_seg))
 }
 
-fn parse_import_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_import_stmt(tokens: &[Token], i: &mut usize, _ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `import` tag"));
     };
@@ -384,7 +458,7 @@ fn parse_import_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     })
 }
 
-fn parse_from_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_from_stmt(tokens: &[Token], i: &mut usize, _ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `from` tag"));
     };
@@ -517,7 +591,12 @@ fn parse_macro_header(rest: &str) -> Result<(String, Vec<MacroParam>)> {
 }
 
 /// Parses a sequence of nodes until a tag whose first keyword is in `stop` (tag not consumed).
-fn parse_until_tags(tokens: &[Token], i: &mut usize, stop: &[&str]) -> Result<Vec<Node>> {
+fn parse_until_tags(
+    tokens: &[Token],
+    i: &mut usize,
+    stop: &[&str],
+    ctx: &ParseCtx<'_>,
+) -> Result<Vec<Node>> {
     let mut out = Vec::new();
     while *i < tokens.len() {
         if let Some(kw) = peek_tag_keyword(tokens, *i) {
@@ -525,12 +604,12 @@ fn parse_until_tags(tokens: &[Token], i: &mut usize, stop: &[&str]) -> Result<Ve
                 break;
             }
         }
-        out.push(parse_node(tokens, i)?);
+        out.push(parse_node(tokens, i, ctx)?);
     }
     Ok(out)
 }
 
-fn parse_if_chain(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_if_chain(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `if` tag"));
     };
@@ -539,7 +618,7 @@ fn parse_if_chain(tokens: &[Token], i: &mut usize) -> Result<Node> {
     *i += 1;
     let mut branches = vec![IfBranch {
         cond: Some(cond),
-        body: parse_until_tags(tokens, i, &["elif", "elseif", "else", "endif"])?,
+        body: parse_until_tags(tokens, i, &["elif", "elseif", "else", "endif"], ctx)?,
     }];
     loop {
         if *i >= tokens.len() {
@@ -558,12 +637,12 @@ fn parse_if_chain(tokens: &[Token], i: &mut usize) -> Result<Node> {
                 *i += 1;
                 branches.push(IfBranch {
                     cond: Some(c),
-                    body: parse_until_tags(tokens, i, &["elif", "elseif", "else", "endif"])?,
+                    body: parse_until_tags(tokens, i, &["elif", "elseif", "else", "endif"], ctx)?,
                 });
             }
             "else" => {
                 *i += 1;
-                let body = parse_until_tags(tokens, i, &["endif"])?;
+                let body = parse_until_tags(tokens, i, &["endif"], ctx)?;
                 branches.push(IfBranch { cond: None, body });
                 expect_tag(tokens, i, &["endif"])?;
                 return Ok(Node::If { branches });
@@ -581,17 +660,17 @@ fn parse_if_chain(tokens: &[Token], i: &mut usize) -> Result<Node> {
     }
 }
 
-fn parse_for_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_for_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `for` tag"));
     };
     let rest = strip_keyword_prefix(body, &["for"])?;
     let (vars, iter) = parse_for_header(rest)?;
     *i += 1;
-    let body = parse_until_tags(tokens, i, &["else", "endfor"])?;
+    let body = parse_until_tags(tokens, i, &["else", "endfor"], ctx)?;
     let else_body = if peek_tag_keyword(tokens, *i).as_deref() == Some("else") {
         *i += 1;
-        Some(parse_until_tags(tokens, i, &["endfor"])?)
+        Some(parse_until_tags(tokens, i, &["endfor"], ctx)?)
     } else {
         None
     };
@@ -604,7 +683,7 @@ fn parse_for_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     })
 }
 
-fn parse_set_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_set_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `set` tag"));
     };
@@ -628,7 +707,7 @@ fn parse_set_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
         ));
     }
     *i += 1;
-    let body = parse_until_tags(tokens, i, &["endset"])?;
+    let body = parse_until_tags(tokens, i, &["endset"], ctx)?;
     expect_tag(tokens, i, &["endset"])?;
     Ok(Node::Set {
         targets,
@@ -637,7 +716,7 @@ fn parse_set_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     })
 }
 
-fn parse_include_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_include_stmt(tokens: &[Token], i: &mut usize, _ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `include` tag"));
     };
@@ -652,7 +731,7 @@ fn parse_include_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     })
 }
 
-fn parse_switch_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_switch_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `switch` tag"));
     };
@@ -677,12 +756,12 @@ fn parse_switch_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
                 let r = strip_keyword_prefix(b, &["case"])?;
                 let cond = parse_expr(r)?;
                 *i += 1;
-                let body = parse_until_tags(tokens, i, &["case", "default", "endswitch"])?;
+                let body = parse_until_tags(tokens, i, &["case", "default", "endswitch"], ctx)?;
                 cases.push(SwitchCase { cond, body });
             }
             "default" => {
                 *i += 1;
-                let body = parse_until_tags(tokens, i, &["endswitch"])?;
+                let body = parse_until_tags(tokens, i, &["endswitch"], ctx)?;
                 default_body = Some(body);
                 expect_tag(tokens, i, &["endswitch"])?;
                 return Ok(Node::Switch {
@@ -708,7 +787,7 @@ fn parse_switch_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     }
 }
 
-fn parse_extends_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_extends_stmt(tokens: &[Token], i: &mut usize, _ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `extends` tag"));
     };
@@ -718,14 +797,14 @@ fn parse_extends_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     Ok(Node::Extends { parent })
 }
 
-fn parse_block_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_block_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `block` tag"));
     };
     let rest = strip_keyword_prefix(body, &["block"])?;
     let block_name = parse_block_name(rest)?;
     *i += 1;
-    let body = parse_until_tags(tokens, i, &["endblock"])?;
+    let body = parse_until_tags(tokens, i, &["endblock"], ctx)?;
     let Token::Tag(eb) = &tokens[*i] else {
         return Err(RunjucksError::new("expected `{% endblock %}`"));
     };
@@ -743,38 +822,83 @@ fn parse_block_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
     })
 }
 
-fn parse_filter_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_filter_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `filter` tag"));
     };
     let rest = strip_keyword_prefix(body, &["filter"])?;
     let (name, args) = parse_filter_tag_header(rest)?;
     *i += 1;
-    let body = parse_until_tags(tokens, i, &["endfilter"])?;
+    let body = parse_until_tags(tokens, i, &["endfilter"], ctx)?;
     expect_tag(tokens, i, &["endfilter"])?;
     Ok(Node::FilterBlock { name, args, body })
 }
 
-fn parse_call_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+/// After `call`, optional `(a, b, …)` is the caller-signature; the rest must be a macro call expression.
+fn split_call_caller_prefix(rest: &str) -> Result<(Vec<MacroParam>, String)> {
+    let rest = rest.trim();
+    if !rest.starts_with('(') {
+        return Ok((vec![], rest.to_string()));
+    }
+    let mut depth = 0i32;
+    let mut end = None;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end.ok_or_else(|| RunjucksError::new("unclosed `(` in `{% call`"))?;
+    let inner = rest[1..end].trim();
+    let params: Vec<MacroParam> = if inner.is_empty() {
+        vec![]
+    } else {
+        split_top_level_commas(inner)
+            .into_iter()
+            .map(parse_macro_param_segment)
+            .collect::<Result<_>>()?
+    };
+    let tail = rest[end + 1..].trim();
+    if tail.is_empty() {
+        return Err(RunjucksError::new(
+            "`{% call %}` requires a macro call after the caller signature",
+        ));
+    }
+    Ok((params, tail.to_string()))
+}
+
+fn parse_call_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `call` tag"));
     };
-    let rest = strip_keyword_prefix(body, &["call"])?;
-    let callee = parse_expr(rest)?;
+    let rest = strip_call_prefix(body)?;
+    let (caller_params, callee_src) = split_call_caller_prefix(rest)?;
+    let callee = parse_expr(&callee_src)?;
     *i += 1;
-    let body = parse_until_tags(tokens, i, &["endcall"])?;
+    let body = parse_until_tags(tokens, i, &["endcall"], ctx)?;
     expect_tag(tokens, i, &["endcall"])?;
-    Ok(Node::CallBlock { callee, body })
+    Ok(Node::CallBlock {
+        caller_params,
+        callee,
+        body,
+    })
 }
 
-fn parse_macro_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_macro_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     let Token::Tag(body) = &tokens[*i] else {
         return Err(RunjucksError::new("internal: expected `macro` tag"));
     };
     let rest = strip_keyword_prefix(body, &["macro"])?;
     let (name, params) = parse_macro_header(rest)?;
     *i += 1;
-    let body = parse_until_tags(tokens, i, &["endmacro"])?;
+    let body = parse_until_tags(tokens, i, &["endmacro"], ctx)?;
     expect_tag(tokens, i, &["endmacro"])?;
     Ok(Node::MacroDef(MacroDef { name, params, body }))
 }
@@ -795,7 +919,7 @@ fn parse_raw_block(tokens: &[Token], i: &mut usize, close_tags: &[&str]) -> Resu
     Ok(Node::Text(content))
 }
 
-fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
+fn parse_node(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     match &tokens[*i] {
         Token::Text(s) => {
             *i += 1;
@@ -809,18 +933,18 @@ fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
         Token::Tag(body) => {
             let kw = first_tag_keyword(body);
             match kw.as_str() {
-                "if" => parse_if_chain(tokens, i),
-                "for" => parse_for_stmt(tokens, i),
-                "switch" => parse_switch_stmt(tokens, i),
-                "set" => parse_set_stmt(tokens, i),
-                "include" => parse_include_stmt(tokens, i),
-                "import" => parse_import_stmt(tokens, i),
-                "from" => parse_from_stmt(tokens, i),
-                "extends" => parse_extends_stmt(tokens, i),
-                "block" => parse_block_stmt(tokens, i),
-                "filter" => parse_filter_stmt(tokens, i),
-                "call" => parse_call_stmt(tokens, i),
-                "macro" => parse_macro_stmt(tokens, i),
+                "if" => parse_if_chain(tokens, i, ctx),
+                "for" => parse_for_stmt(tokens, i, ctx),
+                "switch" => parse_switch_stmt(tokens, i, ctx),
+                "set" => parse_set_stmt(tokens, i, ctx),
+                "include" => parse_include_stmt(tokens, i, ctx),
+                "import" => parse_import_stmt(tokens, i, ctx),
+                "from" => parse_from_stmt(tokens, i, ctx),
+                "extends" => parse_extends_stmt(tokens, i, ctx),
+                "block" => parse_block_stmt(tokens, i, ctx),
+                "filter" => parse_filter_stmt(tokens, i, ctx),
+                "call" => parse_call_stmt(tokens, i, ctx),
+                "macro" => parse_macro_stmt(tokens, i, ctx),
                 "raw" => parse_raw_block(tokens, i, &["endraw"]),
                 "verbatim" => parse_raw_block(tokens, i, &["endverbatim"]),
                 "elif" | "elseif" | "else" | "endif" | "endfor" | "endblock" | "endmacro"
@@ -830,19 +954,37 @@ fn parse_node(tokens: &[Token], i: &mut usize) -> Result<Node> {
                         "unexpected `{{%{body}%}}` (no matching opening tag)"
                     )))
                 }
-                _ => Err(RunjucksError::new(format!(
-                    "unsupported tag keyword `{kw}`"
-                ))),
+                _ => {
+                    if ctx.ext_closing.contains(kw.as_str()) {
+                        return Err(RunjucksError::new(format!(
+                            "unexpected `{{%{body}%}}` (extension end tag `{kw}` without matching opening tag)"
+                        )));
+                    }
+                    if let Some(meta) = ctx.ext_tags.get(kw.as_str()) {
+                        return parse_extension_stmt(tokens, i, meta, kw.as_str(), ctx);
+                    }
+                    Err(RunjucksError::new(format!(
+                        "unsupported tag keyword `{kw}`"
+                    )))
+                }
             }
         }
     }
 }
 
-pub fn parse_template_tokens(tokens: &[Token]) -> Result<Node> {
+pub(crate) fn parse_template_tokens(
+    tokens: &[Token],
+    ext_tags: &HashMap<String, ExtensionTagMeta>,
+    ext_closing: &HashSet<String>,
+) -> Result<Node> {
+    let ctx = ParseCtx {
+        ext_tags,
+        ext_closing,
+    };
     let mut i = 0usize;
     let mut nodes = Vec::new();
     while i < tokens.len() {
-        nodes.push(parse_node(tokens, &mut i)?);
+        nodes.push(parse_node(tokens, &mut i, &ctx)?);
     }
     Ok(Node::Root(nodes))
 }

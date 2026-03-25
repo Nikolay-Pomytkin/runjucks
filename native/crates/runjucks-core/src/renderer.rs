@@ -1,6 +1,6 @@
 //! Walks [`crate::ast::Node`] trees and produces output strings using an [`crate::Environment`] and JSON context.
 
-use crate::ast::{BinOp, CompareOp, Expr, ForVars, MacroDef, Node, SwitchCase, UnaryOp};
+use crate::ast::{BinOp, CompareOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
 use rand::rngs::SmallRng;
@@ -81,6 +81,13 @@ impl CtxStack {
     }
 }
 
+/// One active `{% call %}`: body to render for `caller()` / `caller(args…)`, plus optional formal parameters.
+#[derive(Clone)]
+pub struct CallerFrame {
+    pub body: Vec<Node>,
+    pub params: Vec<MacroParam>,
+}
+
 /// Per-render state: optional loader, include cycle stack, macro scopes, and block inheritance for `extends`.
 pub struct RenderState<'a> {
     pub loader: Option<&'a (dyn TemplateLoader + Send + Sync)>,
@@ -92,8 +99,8 @@ pub struct RenderState<'a> {
     pub block_chains: Option<HashMap<String, Vec<Vec<Node>>>>,
     /// When rendering a block layer, `Some((block_name, layer_index))` for `super()` resolution.
     pub super_context: Option<(String, usize)>,
-    /// Bodies from innermost `{% call %}` for `caller()` inside macro execution.
-    pub caller_stack: Vec<Vec<Node>>,
+    /// Innermost `{% call %}` frame for `caller()` / `caller(args…)` inside macro execution.
+    pub caller_stack: Vec<CallerFrame>,
     /// Stateful `cycler(...)` instances (index matches handle object).
     pub cyclers: Vec<CyclerState>,
     /// Stateful `joiner(...)` instances.
@@ -272,7 +279,11 @@ fn build_block_chains(
                 )?);
                 let src = loader.load(&gp_name)?;
                 let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-                let gp_ast = parser::parse(&tokens)?;
+                let gp_ast = parser::parse_with_env(
+                    &tokens,
+                    &env.extension_tags,
+                    &env.extension_closing_tag_names,
+                )?;
                 build_block_chains(
                     &gp_name,
                     &gp_ast,
@@ -330,7 +341,11 @@ fn render_extends(
         .ok_or_else(|| RunjucksError::new("`extends` requires a template loader"))?;
     let src = loader.load(parent_name)?;
     let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-    let parent_ast = parser::parse(&tokens)?;
+    let parent_ast = parser::parse_with_env(
+        &tokens,
+        &env.extension_tags,
+        &env.extension_closing_tag_names,
+    )?;
     state.push_template(parent_name)?;
     let mut visited = HashSet::new();
     let chains = build_block_chains(
@@ -396,7 +411,11 @@ fn scan_literal_import_graph(
         state.push_template(path)?;
         let src = loader.load(path)?;
         let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-        let nested = parser::parse(&tokens)?;
+        let nested = parser::parse_with_env(
+            &tokens,
+            &env.extension_tags,
+            &env.extension_closing_tag_names,
+        )?;
         scan_literal_import_graph(env, state, &nested, loader)?;
         state.pop_template();
     }
@@ -491,7 +510,11 @@ fn render_node(
                 Err(e) => return Err(e),
             };
             let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-            let included = parser::parse(&tokens)?;
+            let included = parser::parse_with_env(
+                &tokens,
+                &env.extension_tags,
+                &env.extension_closing_tag_names,
+            )?;
             state.push_template(&name)?;
             let out = if matches!(with_context, Some(false)) {
                 let mut isolated = CtxStack::from_root(Map::new());
@@ -513,7 +536,11 @@ fn render_node(
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let src = loader.load(&name)?;
             let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-            let imported = parser::parse(&tokens)?;
+            let imported = parser::parse_with_env(
+                &tokens,
+                &env.extension_tags,
+                &env.extension_closing_tag_names,
+            )?;
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, &imported, loader)?;
             let defs = collect_top_level_macros(&imported);
@@ -532,7 +559,11 @@ fn render_node(
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let src = loader.load(&name)?;
             let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-            let imported = parser::parse(&tokens)?;
+            let imported = parser::parse_with_env(
+                &tokens,
+                &env.extension_tags,
+                &env.extension_closing_tag_names,
+            )?;
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, &imported, loader)?;
             let defs = collect_top_level_macros(&imported);
@@ -586,7 +617,11 @@ fn render_node(
                 Ok(out)
             }
         }
-        Node::CallBlock { callee, body } => {
+        Node::CallBlock {
+            caller_params,
+            callee,
+            body,
+        } => {
             let Expr::Call {
                 callee: macro_target,
                 args,
@@ -628,10 +663,36 @@ fn render_node(
                     "`{% call %}` only supports simple macro or `namespace.macro()` calls",
                 ));
             };
-            state.caller_stack.push(body.clone());
+            let frame = CallerFrame {
+                body: body.clone(),
+                params: caller_params.clone(),
+            };
+            state.caller_stack.push(frame);
             let res = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack);
             state.caller_stack.pop();
             res
+        }
+        Node::ExtensionTag {
+            extension_name,
+            args,
+            body,
+            ..
+        } => {
+            let handler = env.custom_extensions.get(extension_name).ok_or_else(|| {
+                RunjucksError::new(format!("unknown extension `{extension_name}`"))
+            })?;
+            let ctx_val = Value::Object(stack.flatten());
+            let body_s = if let Some(nodes) = body {
+                Some(render_children(env, state, nodes, stack)?)
+            } else {
+                None
+            };
+            let out = handler(&ctx_val, args.as_str(), body_s)?;
+            Ok(if env.autoescape {
+                crate::filters::escape_html(&out)
+            } else {
+                out
+            })
         }
         Node::MacroDef(_) => Ok(String::new()),
     }
@@ -1118,6 +1179,45 @@ fn render_macro_body(
     render_children(env, state, &m.body, &mut stack)
 }
 
+/// Renders the `{% call %}` body for `caller()` / `caller(args…)` (Nunjucks `Caller` node).
+fn render_caller_invocation(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    frame: &CallerFrame,
+    positional: &[Value],
+    kwargs: &[(String, Value)],
+    stack: &mut CtxStack,
+) -> Result<String> {
+    if frame.params.is_empty() {
+        if !positional.is_empty() || !kwargs.is_empty() {
+            return Err(RunjucksError::new("`caller()` takes no arguments"));
+        }
+        return render_children(env, state, &frame.body, stack);
+    }
+    stack.push_frame();
+    for p in &frame.params {
+        let val = if let Some(ref d) = p.default {
+            eval_to_value(env, state, d, stack)?
+        } else {
+            Value::Null
+        };
+        stack.set_local(&p.name, val);
+    }
+    for (i, p) in frame.params.iter().enumerate() {
+        if let Some(v) = positional.get(i) {
+            stack.set_local(&p.name, v.clone());
+        }
+    }
+    for (k, v) in kwargs {
+        if frame.params.iter().any(|p| p.name == *k) {
+            stack.set_local(k, v.clone());
+        }
+    }
+    let out = render_children(env, state, &frame.body, stack)?;
+    stack.pop_frame();
+    Ok(out)
+}
+
 fn eval_to_value(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -1352,17 +1452,17 @@ fn eval_to_value(
                     return Ok(Value::String(s));
                 }
                 if name == "caller" {
-                    if !args.is_empty() || !kw_vals.is_empty() {
-                        return Err(RunjucksError::new("`caller()` takes no arguments"));
-                    }
-                    let body = state
+                    let frame = state
                         .caller_stack
                         .last()
                         .cloned()
                         .ok_or_else(|| {
-                            RunjucksError::new("`caller()` is only valid inside a macro invoked from `{% call %}`")
+                            RunjucksError::new(
+                                "`caller()` is only valid inside a macro invoked from `{% call %}`",
+                            )
                         })?;
-                    let s = render_children(env, state, &body, stack)?;
+                    let s =
+                        render_caller_invocation(env, state, &frame, &arg_vals, &kw_vals, stack)?;
                     return Ok(Value::String(s));
                 }
                 if let Some(mdef) = state.lookup_macro(name).cloned() {

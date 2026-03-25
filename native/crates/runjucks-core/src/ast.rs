@@ -113,9 +113,21 @@ pub enum Node {
         body: Vec<Node>,
     },
     /// `{% call macro(args) %}…{% endcall %}` — macro may invoke `caller()` to render this body.
+    /// Optional `{% call(a, b) m() %}` — `caller(x, y)` passes arguments into the call body scope.
     CallBlock {
+        caller_params: Vec<MacroParam>,
         callee: Expr,
         body: Vec<Node>,
+    },
+    /// Custom extension tag (`addExtension` / [`Environment::register_extension`](crate::environment::Environment::register_extension)).
+    ExtensionTag {
+        extension_name: String,
+        /// Opening tag name (e.g. `echo`).
+        tag: String,
+        /// Raw source after the tag name until `%}` (trimmed).
+        args: String,
+        /// Block body when the extension declares an end tag.
+        body: Option<Vec<Node>>,
     },
 }
 

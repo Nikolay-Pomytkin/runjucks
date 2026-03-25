@@ -20,7 +20,7 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 | **Tags** | — | — | — | `asyncEach`, `asyncAll`, `ifAsync` |
 | **Expressions** | — | — | — | |
 | **Filters** | — | — | — | |
-| **Node API** | — | — | `compile`, `getTemplate`, `render(name)`, filesystem loader, Express | async `render`, `addExtension`, precompile, browser build |
+| **Node API** | — | — | `compile`, `getTemplate`, `render(name)`, `addExtension`, filesystem loader, Express | async `render`, precompile, browser build |
 | **Conformance** | — | — | optional perf CI artifact | |
 
 ---
@@ -43,7 +43,7 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
   Per-block body chains built in [`renderer.rs` `build_block_chains`](native/crates/runjucks-core/src/renderer.rs); `RenderState::super_context` + `Expr::Call` `super()` render the next layer. Intermediate layout roots skip `{% extends %}` during render so multi-level inheritance works. Ref: [`super_call_filter.rs`](native/crates/runjucks-core/tests/super_call_filter.rs).
 
 - [x] **`{% call %}…{% endcall %}` / `caller`** — **P1** (shipped)
-  [`Node::CallBlock`](native/crates/runjucks-core/src/ast.rs); macro invocation parsed as `Expr::Call`; `caller_stack` + `caller()` in [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs). **Partial:** Nunjucks `{% call(a, b) macro(x) %}` caller parameters are not supported (phase 2).
+  [`Node::CallBlock`](native/crates/runjucks-core/src/ast.rs); macro invocation parsed as `Expr::Call`; `caller_stack` + `caller()` / `caller(args…)` in [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs). Optional caller signature: `{% call %}` / `{% call (a) %}` / `{% call(a) %}` (no space before `(`) before the macro callee, matching Nunjucks `parseCall`.
 
 - [x] **`{% filter name %}…{% endfilter %}`** — **P1** (shipped)
   [`Node::FilterBlock`](native/crates/runjucks-core/src/ast.rs); body rendered to string then [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.rs) like `Expr::Filter`. Filter name plus optional parenthesized arguments in the opening tag.
@@ -116,7 +116,7 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 ### Implemented
 
-`renderString` (top-level + `Environment`), `Environment` class (`setAutoescape`, `setDev`, `setRandomSeed`, `setTemplateMap`, `renderTemplate`).
+`renderString` (top-level + `Environment`), `Environment` class (`setAutoescape`, `setDev`, `setRandomSeed`, `setTemplateMap`, `renderTemplate`, `getTemplate`), module-level `configure` / `render` / `reset`, `compile`, and `Template` (`.render(ctx)`).
 
 - [x] **`addFilter(name, fn)`** — JS `(input, ...args) => any` registered on [`Environment::add_filter`](native/crates/runjucks-core/src/environment.rs); overrides built-ins with the same name. Invoked synchronously during render via a persistent [`napi_ref`](https://nodejs.org/api/n-api.html#napi_create_reference) (main-thread / sync render only).
 
@@ -124,7 +124,7 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 - [x] **`addTest(name, fn)`** — JS `(value, ...args) => boolean` (truthy ok); see [`JsEnvironment::add_test`](native/crates/runjucks-napi/src/lib.rs). Rust: [`Environment::add_test`](native/crates/runjucks-core/src/environment.rs). Built-in test names still use the built-in implementation.
 
-- [x] **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — maps to `Environment` flags; `trimBlocks`, `lstripBlocks`, and `tags` (custom delimiters) are fully supported in the lexer and threaded through `Environment` and NAPI. Matches Nunjucks: `trimBlocks` applies only to `{% %}` block tags (not `{# #}` comments); closing `{% endraw %}` / `{% endverbatim %}` do not trigger the post-tag newline strip (same as upstream). Literal-import cycle detection uses the same lexer options as render (including custom `tags`).
+- [x] **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — **instance** `env.configure(opts)` maps to `Environment` flags; **module** `configure(opts?)` also exists (Nunjucks-style default env for top-level `render(name, ctx)`). `trimBlocks`, `lstripBlocks`, and `tags` (custom delimiters) are fully supported in the lexer and threaded through `Environment` and NAPI. Matches Nunjucks: `trimBlocks` applies only to `{% %}` block tags (not `{# #}` comments); closing `{% endraw %}` / `{% endverbatim %}` do not trigger the post-tag newline strip (same as upstream). Literal-import cycle detection uses the same lexer options as render (including custom `tags`).
 
 ### Not yet implemented
 
@@ -132,14 +132,14 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 - [ ] **`addGlobal` with live JS functions** — invoke user callbacks from templates (beyond JSON + `__runjucks_callable` markers).
 
 **P2:**
-- [ ] **`compile(src)` / `getTemplate(name)`** — return a compiled template object with `.render(ctx)` for caching.
-- [ ] **`render(name, ctx)`** — top-level name-based render (sugar over `getTemplate` + `.render`).
+- [x] **`compile(src)` / `getTemplate(name)`** — **shipped** (NAPI): [`Template`](native/crates/runjucks-napi/src/lib.rs) holds inline source or a loader-backed name; `compile(src, env?, path?, eagerCompile?)` and `env.getTemplate(name, eagerCompile?)`. Parsing runs at render time unless `eagerCompile` validates up front. **Partial:** unlike Nunjucks, there is no JS bytecode cache—repeated `.render()` re-parses (Rust is fast); `path` is stored for API parity only.
+- [x] **`render(name, ctx)`** — **shipped**: module-level [`configure`](native/crates/runjucks-napi/src/lib.rs) sets the default [`Environment`] for [`render(name, ctx)`](native/crates/runjucks-napi/src/lib.rs) (same idea as Nunjucks `index.js`). Use `setTemplateMap` on the env returned by `configure()`. **`reset()`** clears the module default (for tests).
 - [ ] **Filesystem loader** — `FileSystemLoader` or equivalent; today only `setTemplateMap` (in-memory).
 - [ ] **Express integration** — `env.express(app)` / `app.set('view engine', 'njk')`.
 
 **P3:**
 - [ ] **Async render** — callback / promise-based `render`, `renderString`.
-- [ ] **`addExtension`** — custom tag extensions.
+- [x] **`addExtension`** — **shipped**: [`Environment.addExtension`](native/crates/runjucks-napi/src/lib.rs) registers tag names, optional `blocks` (opening → closing), and `process(context, args, body)`. Parsing is in Rust; unlike Nunjucks there is no JS `parse(parser, nodes)` hook. Tests: [`tests/extensions.rs`](native/crates/runjucks-core/tests/extensions.rs), [`__test__/extensions.test.mjs`](__test__/extensions.test.mjs).
 - [ ] **`precompile` / `precompileString`** — ahead-of-time compilation.
 - [ ] **Browser build** — UMD / ESM bundle for browser use.
 - [ ] **`installJinjaCompat()`** — Jinja2 compatibility shim as a Nunjucks-style JS API (runjucks already parses slices natively; this would mirror `nunjucks.installJinjaCompat` for drop-in migration only).
@@ -150,7 +150,7 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 ### Current state
 
-- **105** JSON vectors: `render_cases.json` (41) + `filter_cases.json` (21) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (43).
+- **106** JSON vectors: `render_cases.json` (41) + `filter_cases.json` (21) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (44).
 - **Filter / set coverage** — `tests_js_filter_default_undefined`, `tests_js_for_batch`, and `tests_js_set_and_output` are exercised by the Rust conformance suite (no `"skip"` flags in JSON); they are also on the perf parity allowlist when comparing to the `nunjucks` npm package.
 - **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) compares runjucks vs the `nunjucks` npm package for every ID in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (non-skipped fixtures + tag parity subset). Fixture `env.globals`, `env.throwOnUndefined`, `env.templateMap`, `env.randomSeed`, `env.trimBlocks`, `env.lstripBlocks`, and `env.tags` are applied on both sides (see [`__test__/conformance/run.mjs`](__test__/conformance/run.mjs)).
 - **Perf allowlist** — grows with green cases; includes `render_cases`, `filter_cases`, and `tag_parity_cases` keys (see file).

@@ -26,6 +26,7 @@
 
 pub mod ast;
 pub mod environment;
+pub mod extension;
 pub mod errors;
 pub mod filters;
 pub mod globals;
@@ -37,6 +38,7 @@ pub mod tag_lex;
 pub mod value;
 
 pub use environment::{CustomFilter, CustomTest, Environment};
+pub use extension::{CustomExtensionHandler, ExtensionTagMeta};
 pub use errors::RunjucksError;
 pub use lexer::{LexerOptions, Tags};
 pub use loader::{map_loader, FnLoader, TemplateLoader};

@@ -165,6 +165,33 @@ fn call_caller_invoked_twice() {
     assert_eq!(out, "z|z");
 }
 
+/// Matches Nunjucks `compiler.js` caller-args test: `{% call(item) list([...]) %}` with no space before `(`.
+#[test]
+fn call_caller_passes_args_to_body() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{% macro list(items) %}<ul>{% for i in items %}<li>{{ caller(i) }}</li>{% endfor %}</ul>{% endmacro %}{% call(item) list(["a","b"]) %}{{ item }}{% endcall %}"#
+                .into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "<ul><li>a</li><li>b</li></ul>");
+}
+
+#[test]
+fn call_caller_no_args_when_no_signature_errors() {
+    let env = Environment::default();
+    let err = env
+        .render_string(
+            r#"{% macro wrap() %}<div>{{ caller(1) }}</div>{% endmacro %}{% call wrap() %}in{% endcall %}"#
+                .into(),
+            json!({}),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("caller()"));
+}
+
 #[test]
 fn call_namespaced_macro() {
     let mut m = HashMap::new();

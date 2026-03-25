@@ -4,11 +4,12 @@ use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
 use napi::bindgen_prelude::ToNapiValue;
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
+use runjucks_core::value::value_to_string;
 use runjucks_core::{map_loader, CustomFilter, CustomTest, Environment, RunjucksError, Tags};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 thread_local! {
     static RENDER_NAPI_ENV: Cell<Option<sys::napi_env>> = const { Cell::new(None) };
@@ -141,6 +142,33 @@ fn napi_custom_test(js: Arc<JsFnRef>) -> CustomTest {
     })
 }
 
+fn napi_extension_process(js: Arc<JsFnRef>) -> runjucks_core::extension::CustomExtensionHandler {
+    Arc::new(move |ctx, args, body| {
+        let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
+            RunjucksError::new(
+                "extension process invoked without an active Node N-API render context",
+            )
+        })?;
+        if active != js.env {
+            return Err(RunjucksError::new(
+                "N-API environment mismatch during extension process call",
+            ));
+        }
+        let call_args = vec![
+            ctx.clone(),
+            serde_json::Value::String(args.to_string()),
+            match body {
+                Some(s) => serde_json::Value::String(s),
+                None => serde_json::Value::Null,
+            },
+        ];
+        let out = js
+            .call(&call_args)
+            .map_err(|e: Error| RunjucksError::new(e.to_string()))?;
+        Ok(value_to_string(&out))
+    })
+}
+
 fn napi_custom_filter(js: Arc<JsFnRef>) -> CustomFilter {
     Arc::new(move |input, args| {
         let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
@@ -195,6 +223,123 @@ pub struct ConfigureOptions {
     pub trim_blocks: Option<bool>,
     pub lstrip_blocks: Option<bool>,
     pub tags: Option<TagsOptions>,
+}
+
+fn validate_parse(env: &Environment, src: &str) -> std::result::Result<(), RunjucksError> {
+    env.validate_lex_parse(src)
+}
+
+fn apply_configure_opts(env: &mut Environment, opts: &ConfigureOptions) {
+    if let Some(a) = opts.autoescape {
+        env.autoescape = a;
+    }
+    if let Some(d) = opts.dev {
+        env.dev = d;
+    }
+    if let Some(t) = opts.throw_on_undefined {
+        env.throw_on_undefined = t;
+    }
+    if let Some(t) = opts.trim_blocks {
+        env.trim_blocks = t;
+    }
+    if let Some(l) = opts.lstrip_blocks {
+        env.lstrip_blocks = l;
+    }
+    if let Some(t) = &opts.tags {
+        let defaults = Tags::default();
+        env.tags = Some(Tags {
+            block_start: t.block_start.clone().unwrap_or(defaults.block_start),
+            block_end: t.block_end.clone().unwrap_or(defaults.block_end),
+            variable_start: t.variable_start.clone().unwrap_or(defaults.variable_start),
+            variable_end: t.variable_end.clone().unwrap_or(defaults.variable_end),
+            comment_start: t.comment_start.clone().unwrap_or(defaults.comment_start),
+            comment_end: t.comment_end.clone().unwrap_or(defaults.comment_end),
+        });
+    }
+}
+
+/// Module-level default environment for Nunjucks-style [`configure`] / [`render`].
+static GLOBAL_ENV: OnceLock<Mutex<Option<Arc<Mutex<Environment>>>>> = OnceLock::new();
+
+fn global_env_mutex() -> &'static Mutex<Option<Arc<Mutex<Environment>>>> {
+    GLOBAL_ENV.get_or_init(|| Mutex::new(None))
+}
+
+fn global_env() -> Arc<Mutex<Environment>> {
+    let mut g = global_env_mutex().lock().unwrap();
+    if g.is_none() {
+        *g = Some(Arc::new(Mutex::new(Environment::default())));
+    }
+    g.as_ref().unwrap().clone()
+}
+
+fn set_global_env(env: Arc<Mutex<Environment>>) {
+    *global_env_mutex().lock().unwrap() = Some(env);
+}
+
+/// Nunjucks-compatible compiled template: inline source or a named template from the environment loader.
+#[napi(js_name = "Template")]
+pub struct JsTemplate {
+    env: Arc<Mutex<Environment>>,
+    src: Option<String>,
+    name: Option<String>,
+    path: Option<String>,
+}
+
+#[napi]
+impl JsTemplate {
+    /// `new Template(src, env?, path?, eagerCompile?)` — mirror [`compile`].
+    #[napi(constructor)]
+    pub fn new(
+        src: String,
+        env: Option<&JsEnvironment>,
+        path: Option<String>,
+        eager_compile: Option<bool>,
+    ) -> Result<Self> {
+        let _ = global_env();
+        let env_arc = if let Some(e) = env {
+            e.inner.clone()
+        } else {
+            Arc::new(Mutex::new(Environment::default()))
+        };
+        if eager_compile.unwrap_or(false) {
+            let lock = env_arc
+                .lock()
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            validate_parse(&lock, &src).map_err(|e| Error::from_reason(e.to_string()))?;
+        }
+        Ok(Self {
+            env: env_arc,
+            src: Some(src),
+            name: None,
+            path,
+        })
+    }
+
+    #[napi]
+    pub fn render(&self, env: Env, context: serde_json::Value) -> Result<String> {
+        let inner = self
+            .env
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        if let Some(src) = &self.src {
+            return with_render_napi_env(env.raw(), || render_with_env(&inner, src.clone(), context));
+        }
+        if let Some(name) = &self.name {
+            return with_render_napi_env(env.raw(), || {
+                inner
+                    .render_template(name, context)
+                    .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
+            });
+        }
+        Err(Error::from_reason("invalid Template (no source or name)"))
+    }
+
+    /// Optional path for this template (Nunjucks uses it for errors; inline [`compile`] / `new Template` only).
+    #[napi(getter, js_name = "path")]
+    pub fn get_path(&self) -> Option<String> {
+        self.path.clone()
+    }
 }
 
 #[napi(js_name = "Environment")]
@@ -282,6 +427,36 @@ impl JsEnvironment {
         Ok(())
     }
 
+    /// Custom tag extension (Nunjucks `addExtension`): `tags`, optional `blocks` map (opening tag → end tag name), and `process(context, args, body)` — `body` is `null` for simple tags.
+    #[napi(js_name = "addExtension")]
+    pub fn add_extension(
+        &self,
+        env: Env,
+        extension_name: String,
+        tags: Vec<String>,
+        blocks: Option<HashMap<String, String>>,
+        process: Unknown,
+    ) -> Result<()> {
+        if tags.is_empty() {
+            return Err(Error::from_reason(
+                "addExtension: `tags` must list at least one tag name",
+            ));
+        }
+        let js = Arc::new(JsFnRef::new(&env, &process)?);
+        let mut tag_specs: Vec<(String, Option<String>)> = Vec::new();
+        for t in &tags {
+            let end = blocks.as_ref().and_then(|b| b.get(t).cloned());
+            tag_specs.push((t.clone(), end));
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        inner
+            .register_extension(extension_name, tag_specs, napi_extension_process(js))
+            .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
+    }
+
     /// JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc).
     #[napi(js_name = "addGlobal")]
     pub fn add_global(&self, name: String, value: serde_json::Value) -> Result<()> {
@@ -300,33 +475,34 @@ impl JsEnvironment {
             .inner
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        if let Some(a) = opts.autoescape {
-            env.autoescape = a;
-        }
-        if let Some(d) = opts.dev {
-            env.dev = d;
-        }
-        if let Some(t) = opts.throw_on_undefined {
-            env.throw_on_undefined = t;
-        }
-        if let Some(t) = opts.trim_blocks {
-            env.trim_blocks = t;
-        }
-        if let Some(l) = opts.lstrip_blocks {
-            env.lstrip_blocks = l;
-        }
-        if let Some(t) = opts.tags {
-            let defaults = Tags::default();
-            env.tags = Some(Tags {
-                block_start: t.block_start.unwrap_or(defaults.block_start),
-                block_end: t.block_end.unwrap_or(defaults.block_end),
-                variable_start: t.variable_start.unwrap_or(defaults.variable_start),
-                variable_end: t.variable_end.unwrap_or(defaults.variable_end),
-                comment_start: t.comment_start.unwrap_or(defaults.comment_start),
-                comment_end: t.comment_end.unwrap_or(defaults.comment_end),
-            });
-        }
+        apply_configure_opts(&mut env, &opts);
         Ok(())
+    }
+
+    /// Loads a named template from this environment’s loader (same idea as Nunjucks `getTemplate`).
+    #[napi(js_name = "getTemplate")]
+    pub fn get_template(&self, name: String, eager_compile: Option<bool>) -> Result<JsTemplate> {
+        let _ = global_env();
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let loader = inner.loader.as_ref().ok_or_else(|| {
+            Error::from_reason("no template loader configured (use setTemplateMap first)")
+        })?;
+        if eager_compile.unwrap_or(false) {
+            let src = loader
+                .load(&name)
+                .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))?;
+            validate_parse(&inner, &src).map_err(|e| Error::from_reason(e.to_string()))?;
+        }
+        drop(inner);
+        Ok(JsTemplate {
+            env: self.inner.clone(),
+            src: None,
+            name: Some(name),
+            path: None,
+        })
     }
 
     /// Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc.
@@ -358,4 +534,54 @@ impl JsEnvironment {
                 .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
         })
     }
+}
+
+/// Nunjucks-style module `configure(opts?)` — sets the default environment used by [`render`].
+#[napi(js_name = "configure")]
+pub fn configure_default(opts: Option<ConfigureOptions>) -> Result<JsEnvironment> {
+    let env = Arc::new(Mutex::new(Environment::default()));
+    if let Some(o) = opts {
+        let mut inner = env
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        apply_configure_opts(&mut inner, &o);
+    }
+    set_global_env(env.clone());
+    Ok(JsEnvironment { inner: env })
+}
+
+/// `compile(src, env?, path?, eagerCompile?)` — Nunjucks-compatible factory for [`Template`].
+#[napi]
+pub fn compile(
+    src: String,
+    env: Option<&JsEnvironment>,
+    path: Option<String>,
+    eager_compile: Option<bool>,
+) -> Result<JsTemplate> {
+    let _ = global_env();
+    JsTemplate::new(src, env, path, eager_compile)
+}
+
+/// Top-level `render(name, ctx)` using the environment from [`configure_default`].
+#[napi(js_name = "render")]
+pub fn render_named_template(
+    name: String,
+    context: serde_json::Value,
+    env: Env,
+) -> Result<String> {
+    let env_arc = global_env();
+    let inner = env_arc
+        .lock()
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+    with_render_napi_env(env.raw(), || {
+        inner
+            .render_template(&name, context)
+            .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
+    })
+}
+
+/// Clears the module-level default environment (for tests; matches Nunjucks `reset`).
+#[napi]
+pub fn reset() {
+    *global_env_mutex().lock().unwrap() = None;
 }

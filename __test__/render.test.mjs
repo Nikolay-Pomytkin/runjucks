@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { renderString, Environment } from '../index.js'
+import {
+  compile,
+  configure,
+  Environment,
+  render,
+  renderString,
+  reset,
+  Template,
+} from '../index.js'
 
 test('renderString: empty template', () => {
   assert.equal(renderString('', {}), '')
@@ -68,4 +76,46 @@ test('addTest: custom is test', () => {
   env.addTest('multiple_of_three', (v, n) => Number(n) !== 0 && Number(v) % Number(n) === 0)
   assert.equal(env.renderString('{{ 9 is multiple_of_three(3) }}', {}), 'true')
   assert.equal(env.renderString('{{ 10 is multiple_of_three(3) }}', {}), 'false')
+})
+
+test('compile: returns Template with render()', () => {
+  const env = new Environment()
+  env.configure({ autoescape: false })
+  const tmpl = compile('Hello {{ name }}', env)
+  assert.equal(tmpl.render({ name: 'Ada' }), 'Hello Ada')
+})
+
+test('Template constructor matches compile()', () => {
+  const env = new Environment()
+  env.configure({ autoescape: false })
+  const a = new Template('x{{ n }}', env)
+  const b = compile('x{{ n }}', env)
+  assert.equal(a.render({ n: 2 }), b.render({ n: 2 }))
+})
+
+test('configure + setTemplateMap + render(name, ctx)', () => {
+  reset()
+  const env = configure()
+  env.setTemplateMap({ 'page.njk': 'Title: {{ t }}' })
+  assert.equal(render('page.njk', { t: 'ok' }), 'Title: ok')
+  reset()
+})
+
+test('getTemplate then render', () => {
+  const env = new Environment()
+  env.setTemplateMap({ 'x.njk': '{{ v }}' })
+  const tmpl = env.getTemplate('x.njk')
+  assert.equal(tmpl.render({ v: 7 }), '7')
+})
+
+test('getTemplate without loader throws', () => {
+  const env = new Environment()
+  assert.throws(() => env.getTemplate('nope.njk'), /loader/)
+})
+
+test('eagerCompile rejects invalid template source', () => {
+  assert.throws(
+    () => compile('{%', undefined, undefined, true),
+    /unclosed|parse|expected/i,
+  )
 })

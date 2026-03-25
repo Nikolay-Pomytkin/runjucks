@@ -10,7 +10,9 @@ mod template;
 
 use crate::ast::{Expr, Node};
 use crate::errors::Result;
+use crate::extension::ExtensionTagMeta;
 use crate::lexer::Token;
+use std::collections::{HashMap, HashSet};
 
 /// Parses a token stream into a single [`Node::Root`] containing child nodes.
 ///
@@ -28,8 +30,19 @@ use crate::lexer::Token;
 /// let root = parse(&tokens).unwrap();
 /// ```
 pub fn parse(tokens: &[Token]) -> Result<Node> {
-    template::parse_template_tokens(tokens)
+    template::parse_template_tokens(tokens, &HashMap::new(), &HashSet::new())
 }
+
+/// Parse with custom extension tags registered on the [`crate::Environment`].
+pub fn parse_with_env(
+    tokens: &[Token],
+    extension_tags: &HashMap<String, ExtensionTagMeta>,
+    extension_closing: &HashSet<String>,
+) -> Result<Node> {
+    template::parse_template_tokens(tokens, extension_tags, extension_closing)
+}
+
+pub(crate) use template::is_reserved_tag_keyword;
 
 /// Parses the inside of a `{{` … `}}` region into an [`Expr`].
 ///

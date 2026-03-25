@@ -77,6 +77,13 @@
     "expected": "<div>in</div>"
   },
   {
+    "id": "tag_call_caller_positional_args",
+    "source": "nunjucks compiler.js caller() with call(item) signature",
+    "template": "{% macro list(items) %}<ul>{% for i in items %}<li>{{ caller(i) }}</li>{% endfor %}</ul>{% endmacro %}{% call(item) list([\"a\",\"b\"]) %}{{ item }}{% endcall %}",
+    "context": {},
+    "expected": "<ul><li>a</li><li>b</li></ul>"
+  },
+  {
     "id": "tag_macro_defaults_kwargs",
     "source": "nunjucks macro default + keyword args",
     "template": "{% macro m(a, b=1) %}{{ a }},{{ b }}{% endmacro %}{{ m(2) }},{{ m(2, b=3) }}",

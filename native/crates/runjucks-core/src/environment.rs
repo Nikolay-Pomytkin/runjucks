@@ -3,13 +3,15 @@
 //! It ties together [`crate::lexer::tokenize`], [`crate::parser::parse`], and [`crate::renderer::render`].
 
 use crate::errors::{Result, RunjucksError};
+use crate::extension::{register_extension_inner, CustomExtensionHandler, ExtensionTagMeta};
 use crate::globals::{default_globals_map, value_is_callable};
 use crate::lexer::{LexerOptions, Tags};
 use crate::loader::TemplateLoader;
+use crate::parser::is_reserved_tag_keyword;
 use crate::value::{is_undefined_value, undefined_value, value_to_string};
 use crate::{lexer, parser, renderer};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// User-registered filter (Nunjucks `addFilter`). Invoked as `(input, extra_args…)`.
@@ -67,6 +69,10 @@ pub struct Environment {
     pub tags: Option<Tags>,
     pub(crate) custom_filters: HashMap<String, CustomFilter>,
     pub(crate) custom_tests: HashMap<String, CustomTest>,
+    /// Custom tag names → extension metadata (see [`Environment::register_extension`]).
+    pub(crate) extension_tags: HashMap<String, ExtensionTagMeta>,
+    pub(crate) extension_closing_tag_names: HashSet<String>,
+    pub(crate) custom_extensions: HashMap<String, CustomExtensionHandler>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -78,6 +84,7 @@ impl std::fmt::Debug for Environment {
             .field("globals_len", &self.globals.len())
             .field("custom_filters_len", &self.custom_filters.len())
             .field("custom_tests_len", &self.custom_tests.len())
+            .field("extension_tags_len", &self.extension_tags.len())
             .field("throw_on_undefined", &self.throw_on_undefined)
             .field("random_seed", &self.random_seed)
             .finish()
@@ -121,6 +128,9 @@ impl Default for Environment {
             tags: None,
             custom_filters: HashMap::new(),
             custom_tests: HashMap::new(),
+            extension_tags: HashMap::new(),
+            extension_closing_tag_names: HashSet::new(),
+            custom_extensions: HashMap::new(),
         }
     }
 }
@@ -142,6 +152,36 @@ impl Environment {
     pub fn add_test(&mut self, name: impl Into<String>, test: CustomTest) -> &mut Self {
         self.custom_tests.insert(name.into(), test);
         self
+    }
+
+    /// Registers a custom tag extension (Nunjucks `addExtension`): `tag_specs` lists `(opening_tag, optional_end_tag)`.
+    pub fn register_extension(
+        &mut self,
+        extension_name: impl Into<String>,
+        tag_specs: Vec<(String, Option<String>)>,
+        handler: CustomExtensionHandler,
+    ) -> Result<()> {
+        let extension_name = extension_name.into();
+        register_extension_inner(
+            &mut self.extension_tags,
+            &mut self.extension_closing_tag_names,
+            &mut self.custom_extensions,
+            extension_name,
+            tag_specs,
+            handler,
+            |s| is_reserved_tag_keyword(s),
+        )
+    }
+
+    /// Lexes and parses `src` with this environment’s extension tags (for eager-compile validation).
+    pub fn validate_lex_parse(&self, src: &str) -> Result<()> {
+        let tokens = lexer::tokenize_with_options(src, self.lexer_options())?;
+        let _ = parser::parse_with_env(
+            &tokens,
+            &self.extension_tags,
+            &self.extension_closing_tag_names,
+        )?;
+        Ok(())
     }
 
     pub(crate) fn eval_user_is_test(
@@ -264,7 +304,11 @@ impl Environment {
     /// ```
     pub fn render_string(&self, template: String, context: Value) -> Result<String> {
         let tokens = lexer::tokenize_with_options(&template, self.lexer_options())?;
-        let ast = parser::parse(&tokens)?;
+        let ast = parser::parse_with_env(
+            &tokens,
+            &self.extension_tags,
+            &self.extension_closing_tag_names,
+        )?;
         let root = match context {
             Value::Object(m) => m,
             _ => Map::new(),
@@ -284,7 +328,11 @@ impl Environment {
             .ok_or_else(|| RunjucksError::new("no template loader configured"))?;
         let src = loader.load(name)?;
         let tokens = lexer::tokenize_with_options(&src, self.lexer_options())?;
-        let ast = parser::parse(&tokens)?;
+        let ast = parser::parse_with_env(
+            &tokens,
+            &self.extension_tags,
+            &self.extension_closing_tag_names,
+        )?;
         let root = match context {
             Value::Object(m) => m,
             _ => Map::new(),

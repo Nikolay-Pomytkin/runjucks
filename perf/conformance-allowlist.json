@@ -71,6 +71,7 @@
     "tag_switch_case1_only",
     "tag_for_loop_builtins",
     "tag_call_macro_caller",
+    "tag_call_caller_positional_args",
     "tag_include_from_map",
     "tag_extends_layout_map",
     "tag_trim_blocks_if",

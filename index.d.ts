@@ -12,16 +12,36 @@ export declare class Environment {
   addFilter(name: string, func: unknown): void
   /** Registers `(value, ...args) => boolean` (truthy return) for `is` tests and for `select` / `reject`. Built-in tests (`odd`, `even`, …) take precedence over the same name. */
   addTest(name: string, func: unknown): void
+  /** Custom tag extension (Nunjucks `addExtension`): `tags`, optional `blocks` map (opening tag → end tag name), and `process(context, args, body)` — `body` is `null` for simple tags. */
+  addExtension(extensionName: string, tags: Array<string>, blocks: Record<string, string> | undefined | null, process: unknown): void
   /** JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc). */
   addGlobal(name: string, value: any): void
   /** Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */
   configure(opts: ConfigureOptions): void
+  /** Loads a named template from this environment’s loader (same idea as Nunjucks `getTemplate`). */
+  getTemplate(name: string, eagerCompile?: boolean | undefined | null): Template
   /** Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc. */
   setTemplateMap(map: Record<string, string>): void
   /** Renders a named template from the map set via [`set_template_map`]. */
   renderTemplate(name: string, context: any): string
 }
 export type JsEnvironment = Environment
+
+/** Nunjucks-compatible compiled template: inline source or a named template from the environment loader. */
+export declare class Template {
+  /** `new Template(src, env?, path?, eagerCompile?)` — mirror [`compile`]. */
+  constructor(src: string, env?: JsEnvironment | undefined | null, path?: string | undefined | null, eagerCompile?: boolean | undefined | null)
+  render(context: any): string
+  /** Optional path for this template (Nunjucks uses it for errors; inline [`compile`] / `new Template` only). */
+  get path(): string | null
+}
+export type JsTemplate = Template
+
+/** `compile(src, env?, path?, eagerCompile?)` — Nunjucks-compatible factory for [`Template`]. */
+export declare function compile(src: string, env?: Environment | undefined | null, path?: string | undefined | null, eagerCompile?: boolean | undefined | null): Template
+
+/** Nunjucks-style module `configure(opts?)` — sets the default environment used by [`render`]. */
+export declare function configure(opts?: ConfigureOptions | undefined | null): Environment
 
 export interface ConfigureOptions {
   autoescape?: boolean
@@ -32,7 +52,13 @@ export interface ConfigureOptions {
   tags?: TagsOptions
 }
 
+/** Top-level `render(name, ctx)` using the environment from [`configure_default`]. */
+export declare function render(name: string, context: any): string
+
 export declare function renderString(template: string, context: any): string
+
+/** Clears the module-level default environment (for tests; matches Nunjucks `reset`). */
+export declare function reset(): void
 
 export interface TagsOptions {
   blockStart?: string
