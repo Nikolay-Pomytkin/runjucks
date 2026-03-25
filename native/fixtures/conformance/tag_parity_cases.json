@@ -106,5 +106,53 @@
       }
     },
     "expected": "LAYOUT:Hi:END"
+  },
+  {
+    "id": "tag_trim_blocks_if",
+    "source": "nunjucks trimBlocks",
+    "template": "{% if true %}\nhello{% endif %}",
+    "context": {},
+    "env": { "trimBlocks": true },
+    "expected": "hello"
+  },
+  {
+    "id": "tag_trim_blocks_for",
+    "source": "nunjucks trimBlocks",
+    "template": "{% for i in items %}\n{{ i }}\n{% endfor %}",
+    "context": { "items": ["a", "b"] },
+    "env": { "trimBlocks": true },
+    "expected": "a\nb\n"
+  },
+  {
+    "id": "tag_lstrip_blocks_if",
+    "source": "nunjucks lstripBlocks",
+    "template": "  {% if true %}hello  {% endif %}",
+    "context": {},
+    "env": { "lstripBlocks": true },
+    "expected": "hello  "
+  },
+  {
+    "id": "tag_trim_lstrip_combined",
+    "source": "nunjucks trimBlocks + lstripBlocks",
+    "template": "  {% if true %}\nhello\n  {% endif %}\n",
+    "context": {},
+    "env": { "trimBlocks": true, "lstripBlocks": true },
+    "expected": "hello\n"
+  },
+  {
+    "id": "tag_trim_blocks_for_loop_items",
+    "source": "nunjucks trimBlocks + lstripBlocks for loop",
+    "template": "{% for i in items %}\n  {{ i }}\n{% endfor %}\n",
+    "context": { "items": ["a", "b"] },
+    "env": { "trimBlocks": true, "lstripBlocks": true },
+    "expected": "  a\n  b\n"
+  },
+  {
+    "id": "tag_trim_blocks_no_var_strip",
+    "source": "nunjucks trimBlocks does not affect {{ }}",
+    "template": "{{ x }}\nafter",
+    "context": { "x": "hi" },
+    "env": { "trimBlocks": true },
+    "expected": "hi\nafter"
   }
 ]

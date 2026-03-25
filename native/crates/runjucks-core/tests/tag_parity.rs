@@ -10,6 +10,10 @@ use std::collections::HashMap;
 struct CaseEnv {
     #[serde(default, rename = "templateMap")]
     template_map: Option<HashMap<String, String>>,
+    #[serde(default, rename = "trimBlocks")]
+    trim_blocks: Option<bool>,
+    #[serde(default, rename = "lstripBlocks")]
+    lstrip_blocks: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,6 +45,12 @@ fn tag_parity_cases_match_expected() {
         if let Some(e) = &case.env {
             if let Some(map) = &e.template_map {
                 env.loader = Some(map_loader(map.clone()));
+            }
+            if let Some(true) = e.trim_blocks {
+                env.trim_blocks = true;
+            }
+            if let Some(true) = e.lstrip_blocks {
+                env.lstrip_blocks = true;
             }
         }
         let out = env

@@ -30,8 +30,12 @@ function applyRunjucksEnvOptions(env, envOpts) {
   if (envOpts.randomSeed != null && typeof env.setRandomSeed === 'function') {
     env.setRandomSeed(Number(envOpts.randomSeed))
   }
-  if (typeof env.configure === 'function' && envOpts.throwOnUndefined === true) {
-    env.configure({ throwOnUndefined: true })
+  if (typeof env.configure === 'function') {
+    const configOpts = {}
+    if (envOpts.throwOnUndefined === true) configOpts.throwOnUndefined = true
+    if (envOpts.trimBlocks === true) configOpts.trimBlocks = true
+    if (envOpts.lstripBlocks === true) configOpts.lstripBlocks = true
+    if (Object.keys(configOpts).length > 0) env.configure(configOpts)
   }
   if (envOpts.globals) {
     for (const [name, value] of Object.entries(envOpts.globals)) {
@@ -74,6 +78,8 @@ function makeNunjucksEnv(case_) {
   const autoescape = e?.autoescape !== false
   const dev = e?.dev === true
   const throwOnUndefined = e?.throwOnUndefined === true
+  const trimBlocks = e?.trimBlocks === true
+  const lstripBlocks = e?.lstripBlocks === true
   const loader =
     e?.templateMap != null
       ? makeNunjucksLoaderFromTemplateMap(e.templateMap)
@@ -82,6 +88,8 @@ function makeNunjucksEnv(case_) {
     autoescape,
     dev,
     throwOnUndefined,
+    trimBlocks,
+    lstripBlocks,
   })
   if (e?.globals) {
     for (const [name, value] of Object.entries(e.globals)) {
