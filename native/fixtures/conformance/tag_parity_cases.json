@@ -359,5 +359,21 @@
     "template": "a{# this is a comment #}b",
     "context": {},
     "expected": "ab"
+  },
+  {
+    "id": "tag_trim_blocks_comment_preserves_newline",
+    "source": "nunjucks trimBlocks applies to block tags only",
+    "template": "before{# x #}\nafter",
+    "context": {},
+    "env": { "trimBlocks": true },
+    "expected": "before\nafter"
+  },
+  {
+    "id": "tag_trim_blocks_endraw_preserves_newline",
+    "source": "nunjucks trimBlocks not after endraw",
+    "template": "{% raw %}x{% endraw %}\nafter",
+    "context": {},
+    "env": { "trimBlocks": true },
+    "expected": "x\nafter"
   }
 ]

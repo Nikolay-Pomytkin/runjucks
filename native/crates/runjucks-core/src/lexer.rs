@@ -430,7 +430,10 @@ impl<'a> Lexer<'a> {
         let end_name = Self::end_tag_name(mode);
         let rest = self.rest();
         let idx = find_matching_block_close(rest, open_name, end_name, &self.tags)?;
-        let literal = rest[..idx].to_string();
+        let mut literal = rest[..idx].to_string();
+        // Consume `trimBlocks` from the opening `{% raw %}` / `{% verbatim %}` tag so it does not
+        // apply to text that follows `{% endraw %}` / `{% endverbatim %}` (matches Nunjucks).
+        self.apply_leading_strip(&mut literal);
         self.position += idx;
         let rest2 = self.rest();
         let (body, total, trim_close) = parse_tag_prefix(rest2, &self.tags)?;
@@ -501,9 +504,6 @@ impl<'a> Lexer<'a> {
                 }
                 Some((0, OpenKind::Comment)) => {
                     self.skip_comment()?;
-                    if self.opts.trim_blocks {
-                        self.trim_block_newline = true;
-                    }
                     continue;
                 }
                 Some((0, OpenKind::Tag { .. })) => {

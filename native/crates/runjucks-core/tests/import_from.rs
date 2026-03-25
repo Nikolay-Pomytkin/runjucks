@@ -1,6 +1,7 @@
 //! `{% import %}` / `{% from %}` macro loading (Nunjucks-style).
 
 use runjucks_core::lexer::tokenize;
+use runjucks_core::lexer::Tags;
 use runjucks_core::loader::map_loader;
 use runjucks_core::parser::parse;
 use runjucks_core::Environment;
@@ -11,6 +12,17 @@ fn env_with_map(templates: HashMap<String, String>) -> Environment {
     let mut env = Environment::default();
     env.loader = Some(map_loader(templates));
     env
+}
+
+fn custom_angle_tags() -> Tags {
+    Tags {
+        block_start: "<%".into(),
+        block_end: "%>".into(),
+        variable_start: "<$".into(),
+        variable_end: "$>".into(),
+        comment_start: "<#".into(),
+        comment_end: "#>".into(),
+    }
 }
 
 #[test]
@@ -108,6 +120,20 @@ fn import_cycle_errors() {
     m.insert("a.html".into(), r#"{% import "b.html" as b %}"#.into());
     m.insert("b.html".into(), r#"{% import "a.html" as a %}"#.into());
     let env = env_with_map(m);
+    let msg = env
+        .render_template("a.html", json!({}))
+        .unwrap_err()
+        .to_string();
+    assert!(msg.contains("circular"), "{msg}");
+}
+
+#[test]
+fn import_cycle_errors_with_custom_tags() {
+    let mut m = HashMap::new();
+    m.insert("a.html".into(), r#"<% import "b.html" as b %>"#.into());
+    m.insert("b.html".into(), r#"<% import "a.html" as a %>"#.into());
+    let mut env = env_with_map(m);
+    env.tags = Some(custom_angle_tags());
     let msg = env
         .render_template("a.html", json!({}))
         .unwrap_err()

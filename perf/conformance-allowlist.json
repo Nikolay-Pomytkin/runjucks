@@ -99,6 +99,8 @@
     "tag_inline_if_expr",
     "tag_inline_if_false",
     "tag_whitespace_trim_open_close",
-    "tag_comment_removed"
+    "tag_comment_removed",
+    "tag_trim_blocks_comment_preserves_newline",
+    "tag_trim_blocks_endraw_preserves_newline"
   ]
 }

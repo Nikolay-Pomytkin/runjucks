@@ -124,7 +124,7 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 - [x] **`addTest(name, fn)`** — JS `(value, ...args) => boolean` (truthy ok); see [`JsEnvironment::add_test`](native/crates/runjucks-napi/src/lib.rs). Rust: [`Environment::add_test`](native/crates/runjucks-core/src/environment.rs). Built-in test names still use the built-in implementation.
 
-- [x] **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — maps to `Environment` flags; `trimBlocks`, `lstripBlocks`, and `tags` (custom delimiters) are fully supported in the lexer and threaded through `Environment` and NAPI.
+- [x] **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — maps to `Environment` flags; `trimBlocks`, `lstripBlocks`, and `tags` (custom delimiters) are fully supported in the lexer and threaded through `Environment` and NAPI. Matches Nunjucks: `trimBlocks` applies only to `{% %}` block tags (not `{# #}` comments); closing `{% endraw %}` / `{% endverbatim %}` do not trigger the post-tag newline strip (same as upstream). Literal-import cycle detection uses the same lexer options as render (including custom `tags`).
 
 ### Not yet implemented
 
@@ -150,7 +150,7 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 ### Current state
 
-- **103** JSON vectors: `render_cases.json` (41) + `filter_cases.json` (21) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (41).
+- **105** JSON vectors: `render_cases.json` (41) + `filter_cases.json` (21) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (43).
 - **Filter / set coverage** — `tests_js_filter_default_undefined`, `tests_js_for_batch`, and `tests_js_set_and_output` are exercised by the Rust conformance suite (no `"skip"` flags in JSON); they are also on the perf parity allowlist when comparing to the `nunjucks` npm package.
 - **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) compares runjucks vs the `nunjucks` npm package for every ID in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (non-skipped fixtures + tag parity subset). Fixture `env.globals`, `env.throwOnUndefined`, `env.templateMap`, `env.randomSeed`, `env.trimBlocks`, `env.lstripBlocks`, and `env.tags` are applied on both sides (see [`__test__/conformance/run.mjs`](__test__/conformance/run.mjs)).
 - **Perf allowlist** — grows with green cases; includes `render_cases`, `filter_cases`, and `tag_parity_cases` keys (see file).

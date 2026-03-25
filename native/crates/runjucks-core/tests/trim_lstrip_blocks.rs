@@ -82,6 +82,21 @@ fn trim_blocks_explicit_minus_overrides() {
 }
 
 #[test]
+fn trim_blocks_preserves_newline_after_endraw_like_nunjucks() {
+    let tokens =
+        tokenize_with_options("{% raw %}x{% endraw %}\nafter", opts_trim()).unwrap();
+    assert_eq!(
+        tokens,
+        vec![
+            tag("raw"),
+            Token::Text("x".into()),
+            tag("endraw"),
+            Token::Text("\nafter".into()),
+        ]
+    );
+}
+
+#[test]
 fn trim_blocks_no_newline_after_tag_no_strip() {
     let tokens = tokenize_with_options("{% if true %}content", opts_trim()).unwrap();
     assert_eq!(
@@ -225,7 +240,7 @@ fn env_trim_blocks_for_loop() {
 }
 
 #[test]
-fn env_trim_blocks_comment_strips_newline() {
+fn env_trim_blocks_does_not_strip_newline_after_comment() {
     let mut env = Environment::default();
     env.trim_blocks = true;
     env.autoescape = false;
@@ -235,5 +250,20 @@ fn env_trim_blocks_comment_strips_newline() {
             json!({}),
         )
         .unwrap();
-    assert_eq!(out, "beforeafter");
+    // Nunjucks `trimBlocks` applies to `{% %}` only, not `{# #}`.
+    assert_eq!(out, "before\nafter");
+}
+
+#[test]
+fn env_trim_blocks_does_not_strip_newline_after_endraw_matches_nunjucks() {
+    let mut env = Environment::default();
+    env.trim_blocks = true;
+    env.autoescape = false;
+    let out = env
+        .render_string(
+            "{% raw %}x{% endraw %}\nafter".into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "x\nafter");
 }

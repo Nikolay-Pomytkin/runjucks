@@ -377,6 +377,7 @@ fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
 /// Detects `{% import "x" %}` / `{% from "x" %}` cycles using **string-literal** paths only (matches
 /// typical macro libraries; dynamic names are not traced here).
 fn scan_literal_import_graph(
+    env: &Environment,
     state: &mut RenderState<'_>,
     root: &Node,
     loader: &(dyn TemplateLoader + Send + Sync),
@@ -394,8 +395,9 @@ fn scan_literal_import_graph(
         };
         state.push_template(path)?;
         let src = loader.load(path)?;
-        let nested = parser::parse(&lexer::tokenize(&src)?)?;
-        scan_literal_import_graph(state, &nested, loader)?;
+        let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
+        let nested = parser::parse(&tokens)?;
+        scan_literal_import_graph(env, state, &nested, loader)?;
         state.pop_template();
     }
     Ok(())
@@ -513,7 +515,7 @@ fn render_node(
             let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
             let imported = parser::parse(&tokens)?;
             state.push_template(&name)?;
-            scan_literal_import_graph(state, &imported, loader)?;
+            scan_literal_import_graph(env, state, &imported, loader)?;
             let defs = collect_top_level_macros(&imported);
             state.pop_template();
             state.macro_namespaces.insert(alias.clone(), defs);
@@ -532,7 +534,7 @@ fn render_node(
             let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
             let imported = parser::parse(&tokens)?;
             state.push_template(&name)?;
-            scan_literal_import_graph(state, &imported, loader)?;
+            scan_literal_import_graph(env, state, &imported, loader)?;
             let defs = collect_top_level_macros(&imported);
             state.pop_template();
             let mut scope = HashMap::new();
