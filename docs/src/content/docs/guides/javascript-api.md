@@ -21,9 +21,9 @@ Create with `new Environment()` or use the instance returned by `configure()`.
 
 ### Rendering
 
-- **`renderString(template, context)`** — Render inline source. Context is a plain object; values should be JSON-serializable for predictable behavior.
-- **`setTemplateMap({ name: source, … })`** — Provide in-memory templates for `{% include %}`, `{% extends %}`, `{% import %}`, `{% from %}`, `renderTemplate`, and `getTemplate`. There is **no** built-in filesystem loader yet — see [Limitations](./limitations/).
-- **`renderTemplate(name, context)`** — Render a template from the map.
+- **`renderString(template, context)`** — Render inline source. Context is a plain object; values should be JSON-serializable for predictable behavior. The environment **caches parsed templates** when the same source string is rendered again with unchanged lexer/parser settings (custom delimiters, `trimBlocks`, registered extensions, etc.).
+- **`setTemplateMap({ name: source, … })`** — Provide in-memory templates for `{% include %}`, `{% extends %}`, `{% import %}`, `{% from %}`, `renderTemplate`, and `getTemplate`. There is **no** built-in filesystem loader yet — see [Limitations](./limitations/). Replacing the map clears the named-template parse cache for that environment.
+- **`renderTemplate(name, context)`** — Render a template from the map. Named templates are cached by name when the loader is stable (the default in-memory map); repeated calls reuse the parsed AST if the source and parse settings are unchanged.
 - **`getTemplate(name, eagerCompile?)`** — Obtain a `Template` instance; with `eagerCompile`, invalid source fails early.
 
 ### Options
@@ -55,7 +55,7 @@ Tag **parsing** is fixed in the engine; your callback only **produces output** f
 
 ## `Template`
 
-`new Template(src, env?, path?, eagerCompile?)` or `compile(…)` returns an object with **`render(context)`**. Parsing typically happens when you render unless you use **`eagerCompile`** to validate up front. Repeated renders re-parse each time (there is no separate bytecode cache in JS).
+`new Template(src, env?, path?, eagerCompile?)` or `compile(…)` returns an object with **`render(context)`**. The Rust engine **parses once per `Template` instance** (lazy on first `render`, or immediately when **`eagerCompile`** is true) and reuses the parsed AST on later renders — there is no separate JavaScript bytecode cache, but inline templates do not re-lex/re-parse on every `.render()` call. **Runtime options** such as **`setAutoescape`** still apply on each render.
 
 ## Context and `throwOnUndefined`
 

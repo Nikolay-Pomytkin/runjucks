@@ -4,6 +4,7 @@ use napi::bindgen_prelude::ToNapiValue;
 use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
+use runjucks_core::ast::Node;
 use runjucks_core::value::value_to_string;
 use runjucks_core::{
     map_loader, CustomFilter, CustomGlobalFn, CustomTest, Environment, RunjucksError, Tags,
@@ -299,6 +300,8 @@ pub struct JsTemplate {
     src: Option<String>,
     name: Option<String>,
     path: Option<String>,
+    /// Parsed AST for inline `compile()` templates; filled on first render or by eager compile.
+    cached_ast: Mutex<Option<Arc<Node>>>,
 }
 
 #[napi]
@@ -317,17 +320,23 @@ impl JsTemplate {
         } else {
             Arc::new(Mutex::new(Environment::default()))
         };
-        if eager_compile.unwrap_or(false) {
+        let cached_ast = Mutex::new(if eager_compile.unwrap_or(false) {
             let lock = env_arc
                 .lock()
                 .map_err(|e| Error::from_reason(e.to_string()))?;
-            validate_parse(&lock, &src).map_err(|e| Error::from_reason(e.to_string()))?;
-        }
+            Some(
+                lock.parse_or_cached_inline(&src)
+                    .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))?,
+            )
+        } else {
+            None
+        });
         Ok(Self {
             env: env_arc,
             src: Some(src),
             name: None,
             path,
+            cached_ast,
         })
     }
 
@@ -338,8 +347,25 @@ impl JsTemplate {
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         if let Some(src) = &self.src {
+            let ast = {
+                let mut g = self
+                    .cached_ast
+                    .lock()
+                    .map_err(|e| Error::from_reason(e.to_string()))?;
+                if let Some(ref a) = *g {
+                    Arc::clone(a)
+                } else {
+                    let a = inner
+                        .parse_or_cached_inline(src)
+                        .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))?;
+                    *g = Some(Arc::clone(&a));
+                    a
+                }
+            };
             return with_render_napi_env(env.raw(), || {
-                render_with_env(&inner, src.clone(), context)
+                inner
+                    .render_parsed(ast.as_ref(), context)
+                    .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
             });
         }
         if let Some(name) = &self.name {
@@ -547,6 +573,7 @@ impl JsEnvironment {
             src: None,
             name: Some(name),
             path: None,
+            cached_ast: Mutex::new(None),
         })
     }
 
@@ -558,6 +585,7 @@ impl JsEnvironment {
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         env.loader = Some(map_loader(map));
+        env.clear_named_parse_cache();
         Ok(())
     }
 

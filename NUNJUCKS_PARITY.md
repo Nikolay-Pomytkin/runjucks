@@ -92,7 +92,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 | **Node API** | **`precompile` / `precompileString`**, **browser bundle** | **P3** — different product shape; runjucks is Node-native. |
 | **Node API** | **`installJinjaCompat()`**-style shim | **P3** — slices already native; shim would be migration sugar only. |
 | **Extensions** | Nunjucks **`parse(parser, nodes)`** extension API | Not planned; Runjucks uses **declarative** `addExtension` + `process(…)` (shipped). |
-| **Conformance** | Expand **perf parity allowlist** | **P2** — as more cases go green. |
+| **Conformance** | Expand **perf parity allowlist** | **P2** — as more cases go green; local perf harness uses a **warm** environment (parsed-template cache), comparable to Nunjucks’ compiled-template reuse. |
 
 ---
 
@@ -105,13 +105,13 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 | `configure(path?, opts?)` / `new Environment(loaders?, opts)` | `configure(opts)` / `new Environment()`; templates via **`setTemplateMap`** (name → source), not filesystem paths by default. |
 | Loaders (`FileSystemLoader`, `WebLoader`, `PrecompiledLoader`, …) | **Not exposed** — use in-memory map or wrap your own loader that fills the map. |
 | `render` / `renderString` (sync + **callback**) | **Sync only** in NAPI; no promise/callback render path. |
-| `compile` / `Template` / `getTemplate(name, eagerCompile?, …)` | **Shipped** — parse-at-render; no JS bytecode cache. |
+| `compile` / `Template` / `getTemplate(name, eagerCompile?, …)` | **Shipped** — Rust **AST** is cached (per `Template` for inline source; per environment for named templates from the map). No Nunjucks-style **JavaScript** bytecode cache. |
 | `addFilter` / `addTest` / `addGlobal` | **Shipped** — `addGlobal` JSON values + **P1: JS functions** (see **Roadmap → P1 spec**). |
 | `addExtension` — JS object with **`parse`** | **Shipped** — different model: tag names + optional block ends + **`process(context, args, body)`**. |
 | `hasExtension` / `removeExtension` | **Shipped** (Rust: [`Environment::has_extension`](native/crates/runjucks-core/src/environment.rs) / [`remove_extension`](native/crates/runjucks-core/src/environment.rs); NAPI: [`hasExtension`](native/crates/runjucks-napi/src/lib.rs) / [`removeExtension`](native/crates/runjucks-napi/src/lib.rs)). |
 | `getExtension` | **Not exposed** — Nunjucks returns the registered extension object; runjucks keeps Rust-side handlers only. |
 | `express(app)` | **Not implemented**. |
-| `invalidateCache` | N/A — no loader cache in the same form. |
+| `invalidateCache` | **Not exposed** — parse entries are invalidated when lexer/parser-related settings change; **`setTemplateMap`** clears the named-template parse cache. |
 | `precompile` / precompiled loader | **Not implemented**. |
 | `installJinjaCompat()` | **Not implemented** as an API; slice syntax works without it. |
 

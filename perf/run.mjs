@@ -2,42 +2,29 @@
  * Local perf harness: runjucks (NAPI) vs nunjucks npm.
  * Run from package root: `npm run build && npm run perf`
  * Optional: `node perf/run.mjs --json` for machine-readable output.
+ * Optional: `node perf/run.mjs --cold` — Runjucks uses a fresh Environment each iteration (cold parse); default reuses one env (warm parsed-template cache).
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
 import { Bench } from 'tinybench'
 import { syntheticCases } from './synthetic.mjs'
 import { conformanceCasesById } from '../__test__/conformance/load-fixtures.mjs'
+import {
+  makeRunjucksEnv,
+  makeNunjucksEnv,
+  nunjucks,
+} from './harness-env.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const pkgRoot = join(__dirname, '..')
-const require = createRequire(import.meta.url)
-
-const runjucks = require(join(pkgRoot, 'index.js'))
-const nunjucks = require('nunjucks')
 
 const allowlist = JSON.parse(
   readFileSync(join(__dirname, 'conformance-allowlist.json'), 'utf8'),
 )
 
 const jsonOut = process.argv.includes('--json')
-
-function makeRunjucksEnv(case_) {
-  const env = new runjucks.Environment()
-  const ae = case_.env?.autoescape
-  env.setAutoescape(ae !== false)
-  if (case_.env?.dev === true) env.setDev(true)
-  return env
-}
-
-function makeNunjucksEnv(case_) {
-  const autoescape = case_.env?.autoescape !== false
-  const dev = case_.env?.dev === true
-  return new nunjucks.Environment(null, { autoescape, dev })
-}
+const coldRunjucks = process.argv.includes('--cold')
 
 function cloneCtx(ctx) {
   return structuredClone(ctx)
@@ -72,46 +59,56 @@ async function benchCase(case_) {
     }
   }
 
-  const rjEnv = makeRunjucksEnv(case_)
-  const njEnv = makeNunjucksEnv(case_)
+  let uninstallJinja = null
+  if (case_.env?.jinjaCompat === true) {
+    uninstallJinja = nunjucks.installJinjaCompat()
+  }
 
-  let rOut
-  let nOut
   try {
-    rOut = rjEnv.renderString(tpl, cloneCtx(ctx))
-    nOut = njEnv.renderString(tpl, cloneCtx(ctx))
-  } catch (e) {
-    return {
-      name,
-      skip: true,
-      reason: `render error: ${e.message}`,
-    }
-  }
-  if (rOut !== nOut) {
-    return {
-      name,
-      skip: true,
-      reason: 'parity mismatch runjucks vs nunjucks',
-    }
-  }
-  if (expected !== undefined && rOut !== expected) {
-    return {
-      name,
-      skip: true,
-      reason: 'output differs from fixture expected (update allowlist or engine)',
-    }
-  }
+    const rjEnv = makeRunjucksEnv(case_)
+    const njEnv = makeNunjucksEnv(case_)
 
-  const rjMs = await measureMeanMs(`rj:${name}`, () => {
-    rjEnv.renderString(tpl, cloneCtx(ctx))
-  })
+    let rOut
+    let nOut
+    try {
+      rOut = rjEnv.renderString(tpl, cloneCtx(ctx))
+      nOut = njEnv.renderString(tpl, cloneCtx(ctx))
+    } catch (e) {
+      return {
+        name,
+        skip: true,
+        reason: `render error: ${e.message}`,
+      }
+    }
+    if (rOut !== nOut) {
+      return {
+        name,
+        skip: true,
+        reason: 'parity mismatch runjucks vs nunjucks',
+      }
+    }
+    if (expected !== undefined && rOut !== expected) {
+      return {
+        name,
+        skip: true,
+        reason: 'output differs from fixture expected (update allowlist or engine)',
+      }
+    }
 
-  const njMs = await measureMeanMs(`nj:${name}`, () => {
-    njEnv.renderString(tpl, cloneCtx(ctx))
-  })
+    const rjMs = await measureMeanMs(`rj:${name}`, () => {
+      const env = coldRunjucks ? makeRunjucksEnv(case_) : rjEnv
+      env.renderString(tpl, cloneCtx(ctx))
+    })
 
-  const speedup = njMs / rjMs
-  return { name, rjMs, njMs, speedup, skip: false }
+    const njMs = await measureMeanMs(`nj:${name}`, () => {
+      njEnv.renderString(tpl, cloneCtx(ctx))
+    })
+
+    const speedup = njMs / rjMs
+    return { name, rjMs, njMs, speedup, skip: false }
+  } finally {
+    if (uninstallJinja) uninstallJinja()
+  }
 }
 
 function pad(s, n) {
@@ -151,7 +148,13 @@ function collectAllowlistedCases(conformanceById) {
 async function main() {
   if (!jsonOut) {
     console.log('runjucks perf vs nunjucks (local only; noisy across machines)\n')
-    console.log(`Node ${process.version} | nunjucks 3.2.4\n`)
+    console.log(`Node ${process.version} | nunjucks 3.2.4`)
+    if (coldRunjucks) {
+      console.log('Runjucks: --cold (fresh Environment each iteration)')
+    } else {
+      console.log('Runjucks: warm (one Environment per case; parsed templates cached)')
+    }
+    console.log('')
   }
 
   const conformanceById = conformanceCasesById()

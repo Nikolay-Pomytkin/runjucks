@@ -99,6 +99,40 @@ test('compile: returns Template with render()', () => {
   assert.equal(tmpl.render({ name: 'Ada' }), 'Hello Ada')
 })
 
+test('compile: repeated .render() calls produce consistent output', () => {
+  const env = new Environment()
+  env.configure({ autoescape: false })
+  const tmpl = compile('{{ n }}', env)
+  assert.equal(tmpl.render({ n: 1 }), '1')
+  assert.equal(tmpl.render({ n: 1 }), '1')
+})
+
+test('compile: autoescape can be toggled after compile and affects output', () => {
+  const env = new Environment()
+  env.configure({ autoescape: true })
+  const tmpl = compile('{{ s }}', env)
+  assert.equal(tmpl.render({ s: '<b>' }), '&lt;b&gt;')
+  env.setAutoescape(false)
+  assert.equal(tmpl.render({ s: '<b>' }), '<b>')
+})
+
+test('setTemplateMap: getTemplate sees updated sources after replacement', () => {
+  const env = new Environment()
+  env.setTemplateMap({ 'x.njk': 'v1' })
+  assert.equal(env.getTemplate('x.njk').render({}), 'v1')
+  env.setTemplateMap({ 'x.njk': 'v2' })
+  assert.equal(env.getTemplate('x.njk').render({}), 'v2')
+})
+
+test('addGlobal: callable global works after template parse cache is warm', () => {
+  const env = new Environment()
+  env.configure({ autoescape: false })
+  const tmpl = compile('{{ h is callable }}', env)
+  assert.equal(tmpl.render({}), 'false')
+  env.addGlobal('h', () => 0)
+  assert.equal(tmpl.render({}), 'true')
+})
+
 test('Template constructor matches compile()', () => {
   const env = new Environment()
   env.configure({ autoescape: false })

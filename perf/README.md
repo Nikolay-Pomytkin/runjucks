@@ -28,11 +28,16 @@ Each case:
 
 Interpretation: **nj/rj > 1** means Nunjucks is slower on average for that case (Runjucks faster). Values **&lt; 1** mean Runjucks was slower.
 
+**Warm environment:** The harness builds **one** `runjucks.Environment` per case and reuses it for the timed loop (same as Nunjucks’ reuse of compiled templates). That exercises the **cached parse** path for repeated `renderString` — the intended steady-state for hot paths.
+
+**Cold parse (optional):** Pass **`--cold`** to measure Runjucks with a **fresh** `Environment` each iteration (full lex+parse every time). Nunjucks is unchanged. Use this to see parse overhead in isolation; headline numbers without `--cold` are “warm cache” semantics.
+
 **`npm run perf:json`** writes [`last-run.json`](last-run.json) (gitignored) with per-case latencies and skip reasons; useful for comparing runs on one machine, not for CI gates.
 
 ## Fairness notes
 
-- Nunjucks uses `new nunjucks.Environment(null, { autoescape })` aligned to each case’s `env.autoescape` when present (default **on**, matching Runjucks).
+- **Environment options match conformance fixtures:** [`run.mjs`](run.mjs) builds each engine with [`harness-env.mjs`](harness-env.mjs) — the same logic as [`__test__/parity.test.mjs`](../__test__/parity.test.mjs): `trimBlocks` / `lstripBlocks`, custom `tags`, `templateMap` loaders, `globals`, `randomSeed`, and (for Jinja-style slice cases) `nunjucks.installJinjaCompat()` while measuring. Older versions of the harness only toggled `autoescape`, which **skipped** most tag-parity cases and skewed numbers.
+- Nunjucks uses `new nunjucks.Environment(loader?, opts)` with the same flags and optional template-map loader as Runjucks’ `setTemplateMap`.
 - Context is **cloned** every iteration so neither engine can rely on in-place mutation across calls.
 
 ## Not in CI

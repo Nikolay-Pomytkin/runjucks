@@ -2,6 +2,7 @@
 //!
 //! It ties together [`crate::lexer::tokenize`], [`crate::parser::parse`], and [`crate::renderer::render`].
 
+use crate::ast::Node;
 use crate::errors::{Result, RunjucksError};
 use crate::extension::{
     register_extension_inner, remove_extension_inner, CustomExtensionHandler, ExtensionTagMeta,
@@ -14,7 +15,31 @@ use crate::value::{is_undefined_value, undefined_value, value_to_string};
 use crate::{lexer, parser, renderer};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ParseSignature {
+    trim_blocks: bool,
+    lstrip_blocks: bool,
+    tags: Option<Tags>,
+    extension_tag_keys: Vec<String>,
+    extension_closing_names: Vec<String>,
+}
+
+struct CachedParse {
+    sig: ParseSignature,
+    ast: Arc<Node>,
+    /// Full source at parse time (validates hash collisions for inline cache; detects loader changes for named cache).
+    source: Option<String>,
+}
+
+fn hash_source(s: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    let mut h = DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
 
 /// User-registered filter (Nunjucks `addFilter`). Invoked as `(input, extra_args…)`.
 ///
@@ -83,6 +108,8 @@ pub struct Environment {
     pub(crate) extension_tags: HashMap<String, ExtensionTagMeta>,
     pub(crate) extension_closing_tag_names: HashSet<String>,
     pub(crate) custom_extensions: HashMap<String, CustomExtensionHandler>,
+    inline_parse_cache: Arc<Mutex<HashMap<u64, CachedParse>>>,
+    named_parse_cache: Arc<Mutex<HashMap<String, CachedParse>>>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -140,11 +167,122 @@ impl Default for Environment {
             extension_tags: HashMap::new(),
             extension_closing_tag_names: HashSet::new(),
             custom_extensions: HashMap::new(),
+            inline_parse_cache: Arc::new(Mutex::new(HashMap::new())),
+            named_parse_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
 
 impl Environment {
+    fn current_parse_signature(&self) -> ParseSignature {
+        let mut keys: Vec<_> = self.extension_tags.keys().cloned().collect();
+        keys.sort();
+        let mut closing: Vec<_> = self.extension_closing_tag_names.iter().cloned().collect();
+        closing.sort();
+        ParseSignature {
+            trim_blocks: self.trim_blocks,
+            lstrip_blocks: self.lstrip_blocks,
+            tags: self.tags.clone(),
+            extension_tag_keys: keys,
+            extension_closing_names: closing,
+        }
+    }
+
+    fn parse_source_to_ast(&self, src: &str) -> Result<Node> {
+        let tokens = lexer::tokenize_with_options(src, self.lexer_options())?;
+        parser::parse_with_env(
+            &tokens,
+            &self.extension_tags,
+            &self.extension_closing_tag_names,
+        )
+    }
+
+    /// Parses template source using the inline parse cache (hash of source + parse signature).
+    pub fn parse_or_cached_inline(&self, src: &str) -> Result<Arc<Node>> {
+        let sig = self.current_parse_signature();
+        let key = hash_source(src);
+        {
+            let cache = self.inline_parse_cache.lock().unwrap();
+            if let Some(c) = cache.get(&key) {
+                if c.sig == sig && c.source.as_deref() == Some(src) {
+                    return Ok(Arc::clone(&c.ast));
+                }
+            }
+        }
+        let node = self.parse_source_to_ast(src)?;
+        let arc = Arc::new(node);
+        let mut cache = self.inline_parse_cache.lock().unwrap();
+        cache.insert(
+            key,
+            CachedParse {
+                sig,
+                ast: Arc::clone(&arc),
+                source: Some(src.to_string()),
+            },
+        );
+        Ok(arc)
+    }
+
+    /// Loads a template by name and returns a parsed AST, using the named parse cache when the loader supplies a [`TemplateLoader::cache_key`].
+    pub(crate) fn load_and_parse_named(
+        &self,
+        name: &str,
+        loader: &(dyn TemplateLoader + Send + Sync),
+    ) -> Result<Arc<Node>> {
+        let src = loader.load(name)?;
+        self.parse_with_named_cache(name, loader, &src)
+    }
+
+    fn parse_with_named_cache(
+        &self,
+        name: &str,
+        loader: &(dyn TemplateLoader + Send + Sync),
+        src: &str,
+    ) -> Result<Arc<Node>> {
+        let sig = self.current_parse_signature();
+        if let Some(ref key) = loader.cache_key(name) {
+            {
+                let cache = self.named_parse_cache.lock().unwrap();
+                if let Some(c) = cache.get(key) {
+                    if c.sig == sig && c.source.as_deref() == Some(src) {
+                        return Ok(Arc::clone(&c.ast));
+                    }
+                }
+            }
+            let node = self.parse_source_to_ast(src)?;
+            let arc = Arc::new(node);
+            let mut cache = self.named_parse_cache.lock().unwrap();
+            cache.insert(
+                key.clone(),
+                CachedParse {
+                    sig,
+                    ast: Arc::clone(&arc),
+                    source: Some(src.to_string()),
+                },
+            );
+            Ok(arc)
+        } else {
+            let node = self.parse_source_to_ast(src)?;
+            Ok(Arc::new(node))
+        }
+    }
+
+    /// Clears the named-template parse cache (e.g. after replacing the template loader).
+    pub fn clear_named_parse_cache(&self) {
+        self.named_parse_cache.lock().unwrap().clear();
+    }
+
+    /// Renders a parsed AST without lexing/parsing (caller must use the same environment configuration as when the AST was produced).
+    pub fn render_parsed(&self, ast: &Node, context: Value) -> Result<String> {
+        let root = match context {
+            Value::Object(m) => m,
+            _ => Map::new(),
+        };
+        let mut stack = renderer::CtxStack::from_root(root);
+        let loader = self.loader.as_ref().map(|arc| arc.as_ref());
+        renderer::render(self, loader, ast, &mut stack)
+    }
+
     /// Registers or replaces a global value (Nunjucks `addGlobal`). Names still lose to template context keys with the same name.
     ///
     /// Replacing a global with a JSON value clears any registered [`Environment::add_global_callable`] for that name.
@@ -347,19 +485,8 @@ impl Environment {
     /// assert_eq!(html, "&lt;ok&gt;");
     /// ```
     pub fn render_string(&self, template: String, context: Value) -> Result<String> {
-        let tokens = lexer::tokenize_with_options(&template, self.lexer_options())?;
-        let ast = parser::parse_with_env(
-            &tokens,
-            &self.extension_tags,
-            &self.extension_closing_tag_names,
-        )?;
-        let root = match context {
-            Value::Object(m) => m,
-            _ => Map::new(),
-        };
-        let mut stack = renderer::CtxStack::from_root(root);
-        let loader = self.loader.as_ref().map(|arc| arc.as_ref());
-        renderer::render(self, loader, &ast, &mut stack)
+        let ast = self.parse_or_cached_inline(&template)?;
+        self.render_parsed(ast.as_ref(), context)
     }
 
     /// Renders a named template using the configured [`TemplateLoader`].
@@ -370,13 +497,7 @@ impl Environment {
             .loader
             .as_ref()
             .ok_or_else(|| RunjucksError::new("no template loader configured"))?;
-        let src = loader.load(name)?;
-        let tokens = lexer::tokenize_with_options(&src, self.lexer_options())?;
-        let ast = parser::parse_with_env(
-            &tokens,
-            &self.extension_tags,
-            &self.extension_closing_tag_names,
-        )?;
+        let ast = self.load_and_parse_named(name, loader.as_ref())?;
         let root = match context {
             Value::Object(m) => m,
             _ => Map::new(),
@@ -384,7 +505,7 @@ impl Environment {
         let mut stack = renderer::CtxStack::from_root(root);
         let mut state = renderer::RenderState::new(Some(loader.as_ref()), self.random_seed);
         state.push_template(name)?;
-        let out = renderer::render_entry(self, &mut state, &ast, &mut stack)?;
+        let out = renderer::render_entry(self, &mut state, ast.as_ref(), &mut stack)?;
         state.pop_template();
         Ok(out)
     }

@@ -11,7 +11,6 @@ use crate::globals::{
 };
 use crate::loader::TemplateLoader;
 use crate::value::{is_undefined_value, undefined_value};
-use crate::{lexer, parser};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use serde_json::{json, Map, Value};
@@ -293,16 +292,10 @@ fn build_block_chains(
             if let Some(gp_expr) = extends_parent_expr(parent_ast) {
                 let gp_name =
                     crate::value::value_to_string(&eval_to_value(env, state, gp_expr, ctx_stack)?);
-                let src = loader.load(&gp_name)?;
-                let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-                let gp_ast = parser::parse_with_env(
-                    &tokens,
-                    &env.extension_tags,
-                    &env.extension_closing_tag_names,
-                )?;
+                let gp_ast = env.load_and_parse_named(&gp_name, loader)?;
                 build_block_chains(
                     &gp_name,
-                    &gp_ast,
+                    gp_ast.as_ref(),
                     &local_blocks,
                     loader,
                     visited,
@@ -350,18 +343,12 @@ fn render_extends(
     let loader = state
         .loader
         .ok_or_else(|| RunjucksError::new("`extends` requires a template loader"))?;
-    let src = loader.load(parent_name)?;
-    let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-    let parent_ast = parser::parse_with_env(
-        &tokens,
-        &env.extension_tags,
-        &env.extension_closing_tag_names,
-    )?;
+    let parent_ast = env.load_and_parse_named(parent_name, loader)?;
     state.push_template(parent_name)?;
     let mut visited = HashSet::new();
     let chains = build_block_chains(
         parent_name,
-        &parent_ast,
+        parent_ast.as_ref(),
         &blocks,
         loader,
         &mut visited,
@@ -371,7 +358,7 @@ fn render_extends(
     )?;
     let prev_chains = state.block_chains.take();
     state.block_chains = Some(chains);
-    let out = render_with_state(env, state, &parent_ast, ctx_stack)?;
+    let out = render_with_state(env, state, parent_ast.as_ref(), ctx_stack)?;
     state.block_chains = prev_chains;
     state.pop_template();
     Ok(out)
@@ -465,14 +452,8 @@ fn scan_literal_import_graph(
             continue;
         };
         state.push_template(path)?;
-        let src = loader.load(path)?;
-        let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-        let nested = parser::parse_with_env(
-            &tokens,
-            &env.extension_tags,
-            &env.extension_closing_tag_names,
-        )?;
-        scan_literal_import_graph(env, state, &nested, loader)?;
+        let nested = env.load_and_parse_named(path, loader)?;
+        scan_literal_import_graph(env, state, nested.as_ref(), loader)?;
         state.pop_template();
     }
     Ok(())
@@ -560,23 +541,17 @@ fn render_node(
                 .loader
                 .ok_or_else(|| RunjucksError::new("`include` requires a template loader"))?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
-            let src = match loader.load(&name) {
-                Ok(s) => s,
+            let included = match env.load_and_parse_named(&name, loader) {
+                Ok(ast) => ast,
                 Err(_) if *ignore_missing => return Ok(String::new()),
                 Err(e) => return Err(e),
             };
-            let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-            let included = parser::parse_with_env(
-                &tokens,
-                &env.extension_tags,
-                &env.extension_closing_tag_names,
-            )?;
             state.push_template(&name)?;
             let out = if matches!(with_context, Some(false)) {
                 let mut isolated = CtxStack::from_root(Map::new());
-                render_entry(env, state, &included, &mut isolated)?
+                render_entry(env, state, included.as_ref(), &mut isolated)?
             } else {
-                render_entry(env, state, &included, stack)?
+                render_entry(env, state, included.as_ref(), stack)?
             };
             state.pop_template();
             Ok(out)
@@ -590,18 +565,12 @@ fn render_node(
                 .loader
                 .ok_or_else(|| RunjucksError::new("`import` requires a template loader"))?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
-            let src = loader.load(&name)?;
-            let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-            let imported = parser::parse_with_env(
-                &tokens,
-                &env.extension_tags,
-                &env.extension_closing_tag_names,
-            )?;
+            let imported = env.load_and_parse_named(&name, loader)?;
             state.push_template(&name)?;
-            scan_literal_import_graph(env, state, &imported, loader)?;
-            let defs = collect_top_level_macros(&imported);
+            scan_literal_import_graph(env, state, imported.as_ref(), loader)?;
+            let defs = collect_top_level_macros(imported.as_ref());
             let exported_sets =
-                eval_exported_top_level_sets(env, state, &imported, stack, *with_context)?;
+                eval_exported_top_level_sets(env, state, imported.as_ref(), stack, *with_context)?;
             state.pop_template();
             state.macro_namespaces.insert(alias.clone(), defs);
             state
@@ -618,18 +587,12 @@ fn render_node(
                 .loader
                 .ok_or_else(|| RunjucksError::new("`from` requires a template loader"))?;
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
-            let src = loader.load(&name)?;
-            let tokens = lexer::tokenize_with_options(&src, env.lexer_options())?;
-            let imported = parser::parse_with_env(
-                &tokens,
-                &env.extension_tags,
-                &env.extension_closing_tag_names,
-            )?;
+            let imported = env.load_and_parse_named(&name, loader)?;
             state.push_template(&name)?;
-            scan_literal_import_graph(env, state, &imported, loader)?;
-            let defs = collect_top_level_macros(&imported);
+            scan_literal_import_graph(env, state, imported.as_ref(), loader)?;
+            let defs = collect_top_level_macros(imported.as_ref());
             let exported_sets =
-                eval_exported_top_level_sets(env, state, &imported, stack, *with_context)?;
+                eval_exported_top_level_sets(env, state, imported.as_ref(), stack, *with_context)?;
             state.pop_template();
             let mut scope = HashMap::new();
             for (export_name, alias_opt) in names {

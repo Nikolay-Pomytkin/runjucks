@@ -9,6 +9,13 @@ use std::sync::Arc;
 /// Implement for in-memory maps, filesystem reads, or embedders that fetch from a CDN.
 pub trait TemplateLoader: Send + Sync {
     fn load(&self, name: &str) -> Result<String>;
+
+    /// When `Some`, parsed templates for this name may be cached in [`crate::Environment`].
+    /// Return `None` for loaders whose sources are not stable by name (e.g. dynamic closures).
+    fn cache_key(&self, name: &str) -> Option<String> {
+        let _ = name;
+        None
+    }
 }
 
 impl TemplateLoader for HashMap<String, String> {
@@ -16,6 +23,11 @@ impl TemplateLoader for HashMap<String, String> {
         self.get(name)
             .cloned()
             .ok_or_else(|| RunjucksError::new(format!("template not found: {name}")))
+    }
+
+    fn cache_key(&self, name: &str) -> Option<String> {
+        let _ = self;
+        Some(name.to_string())
     }
 }
 

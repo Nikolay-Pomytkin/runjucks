@@ -57,6 +57,7 @@
     "docs:build": "npm run build --prefix docs",
     "docs:preview": "npm run preview --prefix docs",
     "perf": "node perf/run.mjs",
+    "perf:cold": "node perf/run.mjs --cold",
     "perf:json": "node perf/run.mjs --json"
   },
   "devDependencies": {
