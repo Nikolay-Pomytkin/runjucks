@@ -33,8 +33,26 @@ test('Environment: setDev does not throw', () => {
   env.setDev(false)
 })
 
-test('addFilter is a no-op stub', () => {
+test('addFilter: JS callback runs with (input, ...args)', () => {
   const env = new Environment()
-  env.addFilter('noop', () => 'should not run')
-  assert.equal(env.renderString('plain', {}), 'plain')
+  env.addFilter('double', (s) => String(s) + String(s))
+  assert.equal(env.renderString('{{ "a" | double }}', {}), 'aa')
+})
+
+test('addFilter: overrides built-in upper', () => {
+  const env = new Environment()
+  env.addFilter('upper', () => 'custom')
+  assert.equal(env.renderString('{{ "x" | upper }}', {}), 'custom')
+})
+
+test('addGlobal: exposes JSON value to templates', () => {
+  const env = new Environment()
+  env.addGlobal('greeting', 'Hello')
+  assert.equal(env.renderString('{{ greeting }}', {}), 'Hello')
+})
+
+test('configure: sets autoescape and dev', () => {
+  const env = new Environment()
+  env.configure({ autoescape: false, dev: true })
+  assert.equal(env.renderString('{{ "<b>" }}', {}), '<b>')
 })

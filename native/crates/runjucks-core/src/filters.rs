@@ -2,21 +2,14 @@
 
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
-use crate::value::value_to_string;
-use serde_json::{json, Value};
+use crate::value::{
+    is_marked_safe, is_undefined_value, mark_safe, value_to_string, value_to_string_raw,
+};
+use regex::Regex;
+use serde_json::{json, Map, Value};
+use std::sync::OnceLock;
 
 /// Escapes a string for safe insertion into HTML text.
-///
-/// Escapes `&`, `<`, `>`, `"`, and `'` as entities.
-///
-/// # Examples
-///
-/// ```
-/// use runjucks_core::filters::escape_html;
-///
-/// assert_eq!(escape_html("<a>"), "&lt;a&gt;");
-/// assert_eq!(escape_html("ok"), "ok");
-/// ```
 pub fn escape_html(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -32,9 +25,8 @@ pub fn escape_html(s: &str) -> String {
     out
 }
 
-/// Nunjucks-style `| escape`: HTML entities plus backslash as `&#92;`.
-pub fn escape_filter_value(v: &Value) -> Value {
-    let s = value_to_string(v);
+/// Same encoding as Nunjucks `| escape` filter (entities + backslash).
+fn escape_filter_body(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -47,7 +39,12 @@ pub fn escape_filter_value(v: &Value) -> Value {
             _ => out.push(c),
         }
     }
-    Value::String(out)
+    out
+}
+
+/// Nunjucks-style `| escape`: HTML entities plus backslash as `&#92;`.
+pub fn escape_filter_value(v: &Value) -> Value {
+    Value::String(escape_filter_body(&value_to_string_raw(v)))
 }
 
 fn js_style_round(x: f64, precision: i64) -> f64 {
@@ -63,13 +60,671 @@ fn js_style_round(x: f64, precision: i64) -> f64 {
     }
 }
 
-/// Applies a built-in filter (`name`) to `input` with extra `args` (Nunjucks-style).
+fn as_f64_arg(v: &Value) -> Option<f64> {
+    v.as_f64().or_else(|| value_to_string(v).parse().ok())
+}
+
+fn striptags_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)<\/?([a-z][a-z0-9]*)\b[^>]*>|<!--[\s\S]*?-->").unwrap()
+    })
+}
+
+fn word_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\w+").unwrap())
+}
+
+fn encode_uri_component(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        let mut buf = [0u8; 4];
+        for byte in c.encode_utf8(&mut buf).as_bytes() {
+            match *byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*'
+                | b'\'' | b'(' | b')' => out.push(char::from(*byte)),
+                _ => out.push_str(&format!("%{:02x}", byte)),
+            }
+        }
+    }
+    out
+}
+
+fn get_attr_value(v: &Value, attr: &str) -> Value {
+    if attr.is_empty() {
+        return v.clone();
+    }
+    let mut cur = v;
+    for part in attr.split('.') {
+        match cur {
+            Value::Object(o) => {
+                cur = o.get(part).unwrap_or(&Value::Null);
+            }
+            _ => return Value::Null,
+        }
+    }
+    cur.clone()
+}
+
+fn filter_default(input: &Value, args: &[Value]) -> Value {
+    let def = args.first().cloned().unwrap_or(Value::Null);
+    let use_or = args.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if use_or {
+        if is_undefined_value(input)
+            || input.is_null()
+            || matches!(input, Value::Bool(false))
+            || (matches!(input, Value::String(s) if s.is_empty()))
+            || input
+                .as_f64()
+                .is_some_and(|x| x == 0.0 && !x.is_nan())
+        {
+            def
+        } else {
+            input.clone()
+        }
+    } else if is_undefined_value(input) {
+        def
+    } else {
+        input.clone()
+    }
+}
+
+fn filter_batch(input: &Value, args: &[Value]) -> Result<Value> {
+    let Some(Value::Array(arr)) = Some(input) else {
+        return Ok(Value::Array(vec![]));
+    };
+    let linecount = args
+        .first()
+        .and_then(|a| {
+            a.as_u64()
+                .or_else(|| value_to_string(a).parse().ok().map(|n: u64| n))
+        })
+        .ok_or_else(|| RunjucksError::new("`batch` filter needs a positive chunk size"))?;
+    if linecount == 0 {
+        return Err(RunjucksError::new("`batch` chunk size must be positive"));
+    }
+    let linecount = linecount as usize;
+    let fill_with = args.get(1).cloned().filter(|v| !v.is_null() && !is_undefined_value(v));
+
+    let mut res: Vec<Value> = Vec::new();
+    let mut tmp: Vec<Value> = Vec::new();
+
+    for (i, item) in arr.iter().enumerate() {
+        if i % linecount == 0 && !tmp.is_empty() {
+            res.push(Value::Array(std::mem::take(&mut tmp)));
+        }
+        tmp.push(item.clone());
+    }
+
+    if !tmp.is_empty() {
+        if let Some(fill) = fill_with {
+            for _ in tmp.len()..linecount {
+                tmp.push(fill.clone());
+            }
+        }
+        res.push(Value::Array(tmp));
+    }
+
+    Ok(Value::Array(res))
+}
+
+fn filter_first(input: &Value) -> Value {
+    match input {
+        Value::Array(a) => a.first().cloned().unwrap_or(Value::Null),
+        _ => Value::Null,
+    }
+}
+
+fn filter_last(input: &Value) -> Value {
+    match input {
+        Value::Array(a) => a.last().cloned().unwrap_or(Value::Null),
+        _ => Value::Null,
+    }
+}
+
+fn filter_reverse(input: &Value) -> Value {
+    match input {
+        Value::String(s) => Value::String(s.chars().rev().collect()),
+        Value::Array(a) => {
+            let mut v = a.clone();
+            v.reverse();
+            Value::Array(v)
+        }
+        _ => input.clone(),
+    }
+}
+
+fn filter_trim(input: &Value) -> Value {
+    Value::String(
+        value_to_string_raw(input)
+            .trim_matches(|c: char| c.is_whitespace())
+            .to_string(),
+    )
+}
+
+fn filter_sum(input: &Value, args: &[Value]) -> Result<Value> {
+    let Value::Array(arr) = input else {
+        return Ok(json!(0));
+    };
+    let (attr_opt, start): (Option<String>, f64) = match args.len() {
+        0 => (None, 0.0),
+        1 => {
+            if let Some(f) = as_f64_arg(&args[0]) {
+                (None, f)
+            } else {
+                (Some(value_to_string(&args[0])), 0.0)
+            }
+        }
+        _ => (
+            Some(value_to_string(&args[0])),
+            as_f64_arg(&args[1]).unwrap_or(0.0),
+        ),
+    };
+
+    let mapped: Vec<Value> = if let Some(ref key) = attr_opt {
+        arr.iter().map(|v| get_attr_value(v, key)).collect()
+    } else {
+        arr.clone()
+    };
+
+    let sum: f64 = mapped.iter().filter_map(|v| as_f64_arg(v)).sum();
+    let total = start + sum;
+    Ok(if total.fract() == 0.0 && total >= i64::MIN as f64 && total <= i64::MAX as f64 {
+        json!(total as i64)
+    } else {
+        json!(total)
+    })
+}
+
+fn filter_wordcount(input: &Value) -> Value {
+    let s = value_to_string_raw(input);
+    let n = word_re().find_iter(&s).count();
+    json!(n)
+}
+
+fn filter_nl2br(input: &Value) -> Value {
+    let s = value_to_string_raw(input);
+    let out = Regex::new(r"\r\n|\n")
+        .unwrap()
+        .replace_all(&s, "<br />\n")
+        .to_string();
+    Value::String(out)
+}
+
+fn filter_indent(input: &Value, args: &[Value]) -> Value {
+    let s = value_to_string_raw(input);
+    if s.is_empty() {
+        return Value::String(String::new());
+    }
+    let width = args
+        .first()
+        .and_then(|a| a.as_u64().or_else(|| value_to_string(a).parse().ok()))
+        .unwrap_or(4) as usize;
+    let indent_first = args
+        .get(1)
+        .map(|v| v.as_bool().unwrap_or(!value_to_string(v).is_empty()))
+        .unwrap_or(false);
+
+    let sp = " ".repeat(width);
+    let lines: Vec<&str> = s.split('\n').collect();
+    let mut res = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            res.push('\n');
+        }
+        if i == 0 && !indent_first {
+            res.push_str(line);
+        } else {
+            res.push_str(&sp);
+            res.push_str(line);
+        }
+    }
+    Value::String(res)
+}
+
+fn capitalize_word(word: &str) -> String {
+    let mut it = word.chars();
+    match it.next() {
+        None => String::new(),
+        Some(c) => {
+            let head: String = c.to_uppercase().collect();
+            let tail: String = it.as_str().to_lowercase();
+            format!("{head}{tail}")
+        }
+    }
+}
+
+fn filter_title(input: &Value) -> Value {
+    let s = value_to_string_raw(input);
+    let out = s
+        .split(' ')
+        .map(capitalize_word)
+        .collect::<Vec<_>>()
+        .join(" ");
+    Value::String(out)
+}
+
+fn filter_truncate(input: &Value, args: &[Value]) -> Value {
+    let s = value_to_string_raw(input);
+    let length = args
+        .first()
+        .and_then(|a| a.as_u64().or_else(|| value_to_string(a).parse().ok()))
+        .unwrap_or(255) as usize;
+    if s.chars().count() <= length {
+        return Value::String(s.into_owned());
+    }
+    let killwords = args.get(1).map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let end = args.get(2).map(value_to_string).unwrap_or_else(|| "...".to_string());
+
+    let out: String = if killwords {
+        s.chars().take(length).collect()
+    } else {
+        let prefix: String = s.chars().take(length + 1).collect();
+        match prefix.rfind(' ') {
+            Some(i) if i > 0 => prefix.chars().take(i).collect(),
+            _ => s.chars().take(length).collect(),
+        }
+    };
+    Value::String(format!("{out}{end}"))
+}
+
+fn filter_striptags(input: &Value, args: &[Value]) -> Value {
+    let s = value_to_string_raw(input);
+    let trimmed = striptags_re().replace_all(&s, "");
+    let preserve = args.first().map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let res = if preserve {
+        let lines: Vec<&str> = trimmed.lines().map(|l| l.trim()).collect();
+        lines.join("\n")
+    } else {
+        trimmed.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    Value::String(res)
+}
+
+fn filter_urlencode(input: &Value, _args: &[Value]) -> Value {
+    match input {
+        Value::String(s) => Value::String(encode_uri_component(s)),
+        Value::Array(pairs) => {
+            let mut parts = Vec::new();
+            for p in pairs {
+                match p {
+                    Value::Array(kv) if kv.len() >= 2 => {
+                        let k = encode_uri_component(&value_to_string(&kv[0]));
+                        let v = encode_uri_component(&value_to_string(&kv[1]));
+                        parts.push(format!("{k}={v}"));
+                    }
+                    _ => {}
+                }
+            }
+            Value::String(parts.join("&"))
+        }
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            let parts: Vec<String> = keys
+                .into_iter()
+                .map(|k| {
+                    format!(
+                        "{}={}",
+                        encode_uri_component(k),
+                        encode_uri_component(&value_to_string(o.get(k).unwrap_or(&Value::Null)))
+                    )
+                })
+                .collect();
+            Value::String(parts.join("&"))
+        }
+        _ => Value::String(String::new()),
+    }
+}
+
+fn filter_string(input: &Value) -> Value {
+    if is_marked_safe(input) {
+        input.clone()
+    } else {
+        Value::String(value_to_string(input))
+    }
+}
+
+fn filter_float(input: &Value, args: &[Value]) -> Value {
+    let def = args.first().cloned().unwrap_or(Value::Null);
+    let s = value_to_string_raw(input);
+    let res: f64 = s.parse().unwrap_or(f64::NAN);
+    if res.is_nan() {
+        def
+    } else if res.fract() == 0.0 && res >= i64::MIN as f64 && res <= i64::MAX as f64 {
+        json!(res as i64)
+    } else {
+        json!(res)
+    }
+}
+
+fn filter_int(input: &Value, args: &[Value]) -> Value {
+    let default_val = args.first().cloned().unwrap_or(Value::Null);
+    let base = args
+        .get(1)
+        .and_then(|a| {
+            a.as_u64()
+                .or_else(|| value_to_string(a).parse().ok().map(|n: u64| n))
+        })
+        .unwrap_or(10) as u32;
+
+    let s = value_to_string_raw(input).trim().to_string();
+    let parsed = if base == 10 {
+        s.parse::<i64>().ok()
+    } else {
+        i64::from_str_radix(&s, base).ok()
+    };
+    match parsed {
+        Some(n) => json!(n),
+        None => default_val,
+    }
+}
+
+fn filter_sort(input: &Value, args: &[Value]) -> Result<Value> {
+    let Value::Array(arr) = input else {
+        return Ok(Value::Array(vec![]));
+    };
+    let reversed = args.first().map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let case_sensitive = args.get(1).map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let attr = args.get(2).map(value_to_string).unwrap_or_default();
+
+    let mut keys: Vec<Vec<Value>> = arr.iter().map(|item| {
+        let key = if attr.is_empty() {
+            item.clone()
+        } else {
+            get_attr_value(item, &attr)
+        };
+        vec![key, item.clone()]
+    }).collect();
+
+    keys.sort_by(|a, b| {
+        let x = &a[0];
+        let y = &b[0];
+        let mut ord = compare_sort_keys(x, y, case_sensitive);
+        if reversed {
+            ord = ord.reverse();
+        }
+        ord
+    });
+
+    Ok(Value::Array(keys.into_iter().map(|p| p[1].clone()).collect()))
+}
+
+fn compare_sort_keys(a: &Value, b: &Value, case_sensitive: bool) -> std::cmp::Ordering {
+    let (mut sa, mut sb) = (value_to_string(a), value_to_string(b));
+    if !case_sensitive {
+        sa = sa.to_lowercase();
+        sb = sb.to_lowercase();
+    }
+    partial_cmp_str(&sa, &sb)
+}
+
+fn partial_cmp_str(a: &str, b: &str) -> std::cmp::Ordering {
+    match (a.parse::<f64>(), b.parse::<f64>()) {
+        (Ok(x), Ok(y)) if !x.is_nan() && !y.is_nan() => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        _ => a.cmp(b),
+    }
+}
+
+fn filter_dictsort(input: &Value, args: &[Value]) -> Result<Value> {
+    let Value::Object(o) = input else {
+        return Ok(Value::Array(vec![]));
+    };
+    let case_sensitive = args.first().map(|v| v.as_bool().unwrap_or(false)).unwrap_or(false);
+    let by_value = args
+        .get(1)
+        .map(|v| value_to_string(v) == "value")
+        .unwrap_or(false);
+
+    let mut pairs: Vec<(String, Value)> = o.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+    pairs.sort_by(|(k1, v1), (k2, v2)| {
+        if by_value {
+            compare_sort_keys(v1, v2, case_sensitive)
+        } else {
+            let (mut a, mut b) = (k1.clone(), k2.clone());
+            if !case_sensitive {
+                a = a.to_lowercase();
+                b = b.to_lowercase();
+            }
+            a.cmp(&b)
+        }
+    });
+
+    let out: Vec<Value> = pairs
+        .into_iter()
+        .map(|(k, v)| Value::Array(vec![Value::String(k), v]))
+        .collect();
+    Ok(Value::Array(out))
+}
+
+fn filter_center(input: &Value, args: &[Value]) -> Value {
+    let s = value_to_string_raw(input);
+    let width = args
+        .first()
+        .and_then(|a| a.as_u64().or_else(|| value_to_string(a).parse().ok()))
+        .unwrap_or(80) as usize;
+    let len = s.chars().count();
+    if len >= width {
+        return Value::String(s.into_owned());
+    }
+    let spaces = width - len;
+    let pre = spaces / 2;
+    let post = spaces - pre;
+    let sp_pre = " ".repeat(pre);
+    let sp_post = " ".repeat(post);
+    Value::String(format!("{sp_pre}{s}{sp_post}"))
+}
+
+fn filter_dump(input: &Value, args: &[Value]) -> Value {
+    let spaces = args
+        .first()
+        .and_then(|a| a.as_u64().or_else(|| value_to_string(a).parse().ok()))
+        .unwrap_or(0) as usize;
+    let s = if spaces == 0 {
+        serde_json::to_string(input).unwrap_or_default()
+    } else {
+        serde_json::to_string_pretty(input).unwrap_or_default()
+    };
+    Value::String(s)
+}
+
+fn filter_list(input: &Value) -> Result<Value> {
+    match input {
+        Value::String(s) => Ok(Value::Array(
+            s.chars().map(|c| Value::String(c.to_string())).collect(),
+        )),
+        Value::Array(a) => Ok(Value::Array(a.clone())),
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            let out: Vec<Value> = keys
+                .into_iter()
+                .map(|k| {
+                    json!({
+                        "key": k,
+                        "value": o.get(k).cloned().unwrap_or(Value::Null)
+                    })
+                })
+                .collect();
+            Ok(Value::Array(out))
+        }
+        _ => Err(RunjucksError::new("`list` filter expects string, array, or object")),
+    }
+}
+
+fn filter_slice_(input: &Value, args: &[Value]) -> Result<Value> {
+    let Value::Array(arr) = input else {
+        return Ok(Value::Array(vec![]));
+    };
+    let slices = args
+        .first()
+        .and_then(|a| a.as_u64().or_else(|| value_to_string(a).parse().ok()))
+        .ok_or_else(|| RunjucksError::new("`slice` filter needs number of slices"))?;
+    if slices == 0 {
+        return Ok(Value::Array(vec![]));
+    }
+    let slices = slices as usize;
+    let n = arr.len();
+    let slice_length = n / slices;
+    let extra = n % slices;
+    let fill = args.get(1).cloned();
+
+    let mut res: Vec<Value> = Vec::new();
+    let mut offset = 0_usize;
+    for i in 0..slices {
+        let start = offset + i * slice_length;
+        if i < extra {
+            offset += 1;
+        }
+        let end = offset + (i + 1) * slice_length;
+        let mut cur: Vec<Value> = arr.get(start..end).unwrap_or(&[]).to_vec();
+        if fill.is_some() && i >= extra {
+            if let Some(ref f) = fill {
+                cur.push(f.clone());
+            }
+        }
+        res.push(Value::Array(cur));
+    }
+    Ok(Value::Array(res))
+}
+
+fn filter_selectattr(input: &Value, args: &[Value]) -> Value {
+    let attr = args
+        .first()
+        .map(value_to_string)
+        .unwrap_or_default();
+    let Value::Array(arr) = input else {
+        return Value::Array(vec![]);
+    };
+    let out: Vec<Value> = arr
+        .iter()
+        .filter(|item| is_truthy_filter(&get_attr_value(item, &attr)))
+        .cloned()
+        .collect();
+    Value::Array(out)
+}
+
+fn filter_rejectattr(input: &Value, args: &[Value]) -> Value {
+    let attr = args
+        .first()
+        .map(value_to_string)
+        .unwrap_or_default();
+    let Value::Array(arr) = input else {
+        return Value::Array(vec![]);
+    };
+    let out: Vec<Value> = arr
+        .iter()
+        .filter(|item| !is_truthy_filter(&get_attr_value(item, &attr)))
+        .cloned()
+        .collect();
+    Value::Array(out)
+}
+
+fn is_truthy_filter(v: &Value) -> bool {
+    !matches!(v, Value::Null | Value::Bool(false))
+        && !(matches!(v, Value::String(s) if s.is_empty()))
+        && !is_undefined_value(v)
+        && !v.as_f64().is_some_and(|x| x == 0.0 || x.is_nan())
+}
+
+fn filter_groupby(input: &Value, args: &[Value]) -> Result<Value> {
+    let attr = args
+        .first()
+        .map(value_to_string)
+        .ok_or_else(|| RunjucksError::new("`groupby` filter needs an attribute name"))?;
+    let Value::Array(arr) = input else {
+        return Ok(Value::Object(Map::new()));
+    };
+    let mut map: Map<String, Value> = Map::new();
+    for item in arr {
+        let key_v = get_attr_value(item, &attr);
+        let key = value_to_string(&key_v);
+        map.entry(key)
+            .and_modify(|e| {
+                if let Value::Array(a) = e {
+                    a.push(item.clone());
+                }
+            })
+            .or_insert_with(|| Value::Array(vec![item.clone()]));
+    }
+    Ok(Value::Object(map))
+}
+
+fn filter_urlize(input: &Value, args: &[Value]) -> Value {
+    let s = value_to_string_raw(input);
+    let len = args
+        .first()
+        .and_then(|a| {
+            if a.is_null() || is_undefined_value(a) {
+                None
+            } else {
+                a.as_u64().or_else(|| value_to_string(a).parse().ok())
+            }
+        })
+        .unwrap_or(u64::MAX) as usize;
+    let nofollow = args.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+    let nf = if nofollow { r#" rel="nofollow""# } else { "" };
+
+    let punc_re = Regex::new(r"^(?:\(|<|&lt;)?(.*?)(?:\.|,|\)|\n|&gt;)?$").unwrap();
+    let email_re = Regex::new(
+        r"^[\w.!#$%&'*+\-/=?\^`{|}~]+@[a-z\d\-]+(\.[a-z\d\-]+)+$",
+    )
+    .unwrap();
+    let http_re = Regex::new(r"^https?://.*$").unwrap();
+    let www_re = Regex::new(r"^www\.").unwrap();
+    let tld_re = Regex::new(r"\.(?:org|net|com)(?:\:|\/|$)").unwrap();
+
+    let tok_re = Regex::new(r"\S+|\s+").unwrap();
+    let mut out = String::new();
+    for m in tok_re.find_iter(&s) {
+        let word = m.as_str();
+        if word.chars().all(|c| c.is_whitespace()) {
+            out.push_str(word);
+            continue;
+        }
+        let mat = punc_re.captures(word);
+        let possible = mat
+            .as_ref()
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .unwrap_or(word);
+        let short: String = possible.chars().take(len).collect();
+
+        let linked = if http_re.is_match(possible) {
+            format!(r#"<a href="{possible}"{nf}>{short}</a>"#)
+        } else if www_re.is_match(possible) {
+            format!(
+                r#"<a href="http://{possible}"{nf}>{short}</a>"#
+            )
+        } else if email_re.is_match(possible) {
+            format!(r#"<a href="mailto:{possible}">{possible}</a>"#)
+        } else if tld_re.is_match(possible) {
+            format!(
+                r#"<a href="http://{possible}"{nf}>{short}</a>"#
+            )
+        } else {
+            word.to_string()
+        };
+        out.push_str(&linked);
+    }
+    Value::String(out)
+}
+
+/// Applies a filter (`name`) to `input` with extra `args` (Nunjucks-style).
+///
+/// Resolves user filters from [`Environment`] first; built-ins are used when no custom filter matches.
 pub fn apply_builtin(
-    _env: &Environment,
+    env: &Environment,
     name: &str,
     input: &Value,
     args: &[Value],
 ) -> Result<Value> {
+    if let Some(f) = env.custom_filters.get(name) {
+        return f(input, args);
+    }
     match name {
         "upper" => Ok(Value::String(value_to_string(input).to_uppercase())),
         "lower" => Ok(Value::String(value_to_string(input).to_lowercase())),
@@ -77,13 +732,15 @@ pub fn apply_builtin(
             Value::String(s) => Ok(json!(s.chars().count())),
             Value::Array(a) => Ok(json!(a.len())),
             Value::Object(o) => Ok(json!(o.len())),
+            _ if is_undefined_value(input) => Ok(json!(0)),
             _ => Ok(json!(0)),
         },
         "join" => {
             let sep = args
                 .first()
                 .map(value_to_string)
-                .unwrap_or_else(|| ",".to_string());
+                .unwrap_or_else(|| "".to_string());
+            let attr = args.get(1).map(value_to_string);
             let Value::Array(items) = input else {
                 return Ok(Value::String(String::new()));
             };
@@ -92,7 +749,12 @@ pub fn apply_builtin(
                 if i > 0 {
                     s.push_str(&sep);
                 }
-                s.push_str(&value_to_string(it));
+                let piece = if let Some(ref a) = attr {
+                    get_attr_value(it, a)
+                } else {
+                    it.clone()
+                };
+                s.push_str(&value_to_string(&piece));
             }
             Ok(Value::String(s))
         }
@@ -109,35 +771,65 @@ pub fn apply_builtin(
             Ok(Value::String(hay.replace(&from, &to)))
         }
         "round" => {
-            let n = input
-                .as_f64()
-                .or_else(|| value_to_string(input).parse().ok())
-                .ok_or_else(|| RunjucksError::new("round filter expects a number"))?;
+            let n = as_f64_arg(input).ok_or_else(|| RunjucksError::new("round filter expects a number"))?;
             let prec = args
                 .first()
                 .and_then(|a| a.as_i64().or_else(|| value_to_string(a).parse().ok()))
                 .unwrap_or(0_i64);
-            let r = js_style_round(n, prec);
+            let method = args.get(1).map(value_to_string).unwrap_or_default();
+            let factor = 10_f64.powi(prec as i32);
+            let r = match method.as_str() {
+                "ceil" => (n * factor).ceil() / factor,
+                "floor" => (n * factor).floor() / factor,
+                _ => js_style_round(n, prec),
+            };
             Ok(if r.fract() == 0.0 && r >= i64::MIN as f64 && r <= i64::MAX as f64 {
                 json!(r as i64)
             } else {
                 json!(r)
             })
         }
-        "escape" | "e" => Ok(escape_filter_value(input)),
-        "default" => {
-            let d = args.first().cloned().unwrap_or(Value::Null);
-            if input.is_null() {
-                Ok(d)
-            } else {
-                Ok(input.clone())
+        "escape" | "e" => {
+            if is_marked_safe(input) {
+                return Ok(input.clone());
             }
+            let out = escape_filter_body(&value_to_string_raw(input));
+            Ok(mark_safe(out))
         }
+        "safe" => Ok(mark_safe(value_to_string(input))),
+        "forceescape" => {
+            let out = escape_filter_body(&value_to_string_raw(input));
+            Ok(mark_safe(out))
+        }
+        "default" | "d" => Ok(filter_default(input, args)),
+        "batch" => filter_batch(input, args),
+        "first" => Ok(filter_first(input)),
+        "last" => Ok(filter_last(input)),
+        "reverse" => Ok(filter_reverse(input)),
+        "trim" => Ok(filter_trim(input)),
+        "sum" => filter_sum(input, args),
+        "wordcount" => Ok(filter_wordcount(input)),
+        "nl2br" => Ok(filter_nl2br(input)),
+        "indent" => Ok(filter_indent(input, args)),
+        "title" => Ok(filter_title(input)),
+        "truncate" => Ok(filter_truncate(input, args)),
+        "striptags" => Ok(filter_striptags(input, args)),
+        "urlencode" => Ok(filter_urlencode(input, args)),
+        "string" => Ok(filter_string(input)),
+        "float" => Ok(filter_float(input, args)),
+        "int" => Ok(filter_int(input, args)),
+        "sort" => filter_sort(input, args),
+        "dictsort" => filter_dictsort(input, args),
+        "center" => Ok(filter_center(input, args)),
+        "dump" => Ok(filter_dump(input, args)),
+        "list" => filter_list(input),
+        "slice" => filter_slice_(input, args),
+        "urlize" => Ok(filter_urlize(input, args)),
+        "selectattr" => Ok(filter_selectattr(input, args)),
+        "rejectattr" => Ok(filter_rejectattr(input, args)),
+        "groupby" => filter_groupby(input, args),
         "abs" => {
-            let n = input
-                .as_f64()
-                .or_else(|| value_to_string(input).parse().ok())
-                .ok_or_else(|| RunjucksError::new("abs filter expects a number"))?;
+            let n = as_f64_arg(input).ok_or_else(|| RunjucksError::new("abs filter expects a number"))?;
             let a = n.abs();
             Ok(if a.fract() == 0.0 && a >= i64::MIN as f64 && a <= i64::MAX as f64 {
                 json!(a as i64)

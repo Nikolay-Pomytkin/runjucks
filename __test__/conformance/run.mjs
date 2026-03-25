@@ -19,6 +19,11 @@ for (const c of loadAllConformanceCases()) {
         const env = new Environment()
         if (c.env.autoescape === false) env.setAutoescape(false)
         if (c.env.dev === true) env.setDev(true)
+        if (c.env.globals) {
+          for (const [name, value] of Object.entries(c.env.globals)) {
+            env.addGlobal(name, value)
+          }
+        }
         out = env.renderString(c.template, c.context ?? {})
       } else {
         out = renderString(c.template, c.context ?? {})

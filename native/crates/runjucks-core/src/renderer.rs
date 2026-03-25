@@ -3,6 +3,10 @@
 use crate::ast::{BinOp, CompareOp, Expr, ForVars, MacroDef, Node, SwitchCase, UnaryOp};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
+use crate::globals::{
+    builtin_range, cycler_handle_value, is_builtin_marker_value, joiner_handle_value,
+    parse_cycler_id, parse_joiner_id, value_is_callable, CyclerState, JoinerState,
+};
 use crate::loader::TemplateLoader;
 use crate::{lexer, parser};
 use serde_json::{json, Map, Value};
@@ -88,6 +92,10 @@ pub struct RenderState<'a> {
     pub super_context: Option<(String, usize)>,
     /// Bodies from innermost `{% call %}` for `caller()` inside macro execution.
     pub caller_stack: Vec<Vec<Node>>,
+    /// Stateful `cycler(...)` instances (index matches handle object).
+    pub cyclers: Vec<CyclerState>,
+    /// Stateful `joiner(...)` instances.
+    pub joiners: Vec<JoinerState>,
 }
 
 impl<'a> RenderState<'a> {
@@ -100,6 +108,8 @@ impl<'a> RenderState<'a> {
             block_chains: None,
             super_context: None,
             caller_stack: Vec::new(),
+            cyclers: Vec::new(),
+            joiners: Vec::new(),
         }
     }
 
@@ -546,7 +556,12 @@ fn render_node(
                 .map(|a| eval_to_value(env, state, a, stack))
                 .collect::<Result<_>>()?;
             let v = crate::filters::apply_builtin(env, name, &Value::String(s), &arg_vals)?;
-            Ok(crate::value::value_to_string(&v))
+            let out = crate::value::value_to_string(&v);
+            if env.autoescape && !crate::value::is_marked_safe(&v) {
+                Ok(crate::filters::escape_html(&out))
+            } else {
+                Ok(out)
+            }
         }
         Node::CallBlock { callee, body } => {
             let Expr::Call { callee: macro_target, args } = callee else {
@@ -780,7 +795,7 @@ fn eval_for_output(
         _ => {
             let v = eval_to_value(env, state, e, stack)?;
             let s = crate::value::value_to_string(&v);
-            if env.autoescape {
+            if env.autoescape && !crate::value::is_marked_safe(&v) {
                 Ok(crate::filters::escape_html(&s))
             } else {
                 Ok(s)
@@ -790,6 +805,9 @@ fn eval_for_output(
 }
 
 fn is_truthy(v: &Value) -> bool {
+    if crate::value::is_undefined_value(v) {
+        return false;
+    }
     match v {
         Value::Null | Value::Bool(false) => false,
         Value::Bool(true) => true,
@@ -902,8 +920,8 @@ fn eval_is_test(
             Value::String(s) => s.chars().all(|c| !c.is_lowercase()),
             _ => false,
         },
-        "callable" => false,
-        "defined" => !value.is_null(),
+        "callable" => value_is_callable(value),
+        "defined" => !crate::value::is_undefined_value(value),
         _ => false,
     })
 }
@@ -937,6 +955,54 @@ fn json_num(x: f64) -> Value {
     }
 }
 
+fn can_dispatch_builtin(stack: &CtxStack, name: &str) -> bool {
+    matches!(name, "range" | "cycler" | "joiner")
+        && (!stack.defined(name) || is_builtin_marker_value(&stack.get(name), name))
+}
+
+fn try_dispatch_builtin(
+    state: &mut RenderState<'_>,
+    stack: &CtxStack,
+    name: &str,
+    arg_vals: &[Value],
+) -> Option<Result<Value>> {
+    if !can_dispatch_builtin(stack, name) {
+        return None;
+    }
+    match name {
+        "range" => Some(builtin_range(arg_vals)),
+        "cycler" => {
+            let id = state.cyclers.len();
+            state
+                .cyclers
+                .push(CyclerState::new(arg_vals.to_vec()));
+            Some(Ok(cycler_handle_value(id)))
+        }
+        "joiner" => {
+            let sep = match arg_vals.len() {
+                0 => ",".to_string(),
+                1 => {
+                    let s = crate::value::value_to_string(&arg_vals[0]);
+                    if s.is_empty() {
+                        ",".to_string()
+                    } else {
+                        s
+                    }
+                }
+                _ => {
+                    return Some(Err(RunjucksError::new(
+                        "`joiner` expects at most one argument",
+                    )));
+                }
+            };
+            let id = state.joiners.len();
+            state.joiners.push(JoinerState::new(sep));
+            Some(Ok(joiner_handle_value(id)))
+        }
+        _ => None,
+    }
+}
+
 fn render_macro_body(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -961,7 +1027,7 @@ fn eval_to_value(
 ) -> Result<Value> {
     match e {
         Expr::Literal(v) => Ok(v.clone()),
-        Expr::Variable(name) => Ok(stack.get(name)),
+        Expr::Variable(name) => Ok(env.resolve_variable(stack, name)),
         Expr::Unary { op, expr } => {
             let v = eval_to_value(env, state, expr, stack)?;
             Ok(match op {
@@ -1058,6 +1124,13 @@ fn eval_to_value(
                         return Ok(Value::Bool(stack.defined(n)));
                     }
                 }
+                if test_name == "callable" {
+                    if let Expr::Variable(n) = &**left {
+                        if state.lookup_macro(n).is_some() {
+                            return Ok(Value::Bool(true));
+                        }
+                    }
+                }
                 let v = eval_to_value(env, state, left, stack)?;
                 Ok(Value::Bool(eval_is_test(
                     env, state, test_name, &v, arg_exprs, stack,
@@ -1114,6 +1187,17 @@ fn eval_to_value(
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
                 .collect::<Result<_>>()?;
+            if let Expr::GetAttr { base, attr } = callee.as_ref() {
+                if attr == "next" && arg_vals.is_empty() {
+                    let b = eval_to_value(env, state, base, stack)?;
+                    if let Some(id) = parse_cycler_id(&b) {
+                        if let Some(c) = state.cyclers.get_mut(id) {
+                            return Ok(c.next());
+                        }
+                        return Ok(Value::Null);
+                    }
+                }
+            }
             if let Expr::Variable(name) = callee.as_ref() {
                 if name == "super" {
                     if !args.is_empty() {
@@ -1160,6 +1244,17 @@ fn eval_to_value(
                     let s = render_macro_body(env, state, &mdef, &arg_vals, stack)?;
                     return Ok(Value::String(s));
                 }
+                if arg_vals.is_empty() {
+                    let v = env.resolve_variable(stack, name);
+                    if let Some(id) = parse_joiner_id(&v) {
+                        if let Some(j) = state.joiners.get_mut(id) {
+                            return Ok(Value::String(j.invoke()));
+                        }
+                    }
+                }
+                if let Some(r) = try_dispatch_builtin(state, stack, name, &arg_vals) {
+                    return r;
+                }
             }
             if let Expr::GetAttr { base, attr } = callee.as_ref() {
                 if let Expr::Variable(ns) = base.as_ref() {
@@ -1170,7 +1265,7 @@ fn eval_to_value(
                 }
             }
             Err(RunjucksError::new(
-                "only template macro calls are supported for `()` expressions",
+                "only template macros, built-in globals (`range`, `cycler`, `joiner`), or `super`/`caller` are supported for `()` expressions",
             ))
         }
         Expr::Filter { name, input, args } => {

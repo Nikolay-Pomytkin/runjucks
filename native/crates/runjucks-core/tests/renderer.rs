@@ -42,11 +42,8 @@ fn render_output_variable_present() {
 
 #[test]
 fn render_variable_autoescapes_html_when_enabled() {
-    let env = Environment {
-        autoescape: true,
-        dev: false,
-        loader: None,
-    };
+    let mut env = Environment::default();
+    env.autoescape = true;
     let root = Node::Root(vec![Node::Output(vec![Expr::Variable("x".into())])]);
     let mut stack = CtxStack::from_root(json!({ "x": "<script>" }).as_object().unwrap().clone());
     let out = render(&env, None, &root, &mut stack).unwrap();
@@ -55,11 +52,8 @@ fn render_variable_autoescapes_html_when_enabled() {
 
 #[test]
 fn render_variable_no_escape_when_autoescape_off() {
-    let env = Environment {
-        autoescape: false,
-        dev: false,
-        loader: None,
-    };
+    let mut env = Environment::default();
+    env.autoescape = false;
     let root = Node::Root(vec![Node::Output(vec![Expr::Variable("x".into())])]);
     let mut stack = CtxStack::from_root(json!({ "x": "<b>" }).as_object().unwrap().clone());
     let out = render(&env, None, &root, &mut stack).unwrap();

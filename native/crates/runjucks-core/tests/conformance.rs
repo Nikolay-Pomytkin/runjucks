@@ -26,6 +26,10 @@ struct EnvOpt {
     autoescape: Option<bool>,
     #[serde(default)]
     dev: Option<bool>,
+    /// Merged into [`Environment::globals`] via [`Environment::add_global`] (defaults from
+    /// [`Environment::default`] remain unless a key is overridden).
+    #[serde(default)]
+    globals: Option<Value>,
 }
 
 fn all_cases() -> Vec<Case> {
@@ -51,6 +55,11 @@ fn conformance_render_matches_nunjucks_golden_outputs() {
             }
             if let Some(d) = e.dev {
                 env.dev = d;
+            }
+            if let Some(Value::Object(map)) = e.globals.clone() {
+                for (k, v) in map {
+                    env.add_global(k, v);
+                }
             }
         }
         if case.skip {

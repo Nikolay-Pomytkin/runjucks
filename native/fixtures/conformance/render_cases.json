@@ -102,16 +102,14 @@
     "source": "nunjucks/tests/filters.js ~86-87",
     "template": "{{ undefined | default(\"foo\") }}",
     "context": {},
-    "expected": "foo",
-    "skip": true
+    "expected": "foo"
   },
   {
     "id": "tests_js_for_batch",
     "source": "nunjucks/tests/filters.js ~35-43 (for + batch)",
     "template": "{% for a in [1,2,3,4,5,6]|batch(2) %}-{% for b in a %}{{ b }}{% endfor %}-{% endfor %}",
     "context": {},
-    "expected": "-12--34--56-",
-    "skip": true
+    "expected": "-12--34--56-"
   },
   {
     "id": "tests_js_set_and_output",
@@ -119,8 +117,7 @@
     "template": "{% set val = \"<html>\" | escape %}{{ val }}",
     "context": {},
     "env": { "autoescape": true },
-    "expected": "&lt;html&gt;",
-    "skip": true
+    "expected": "&lt;html&gt;"
   },
   {
     "id": "tests_js_number_is_number",
@@ -205,5 +202,73 @@
     "template": "{{ \"a\" if false else \"b\" }}",
     "context": {},
     "expected": "b"
+  },
+  {
+    "id": "globals_js_range_stop_join",
+    "source": "nunjucks/nunjucks/src/globals.js `range`",
+    "template": "{{ range(3) | join(',') }}",
+    "context": {},
+    "expected": "0,1,2"
+  },
+  {
+    "id": "globals_js_range_start_stop",
+    "source": "nunjucks/nunjucks/src/globals.js `range`",
+    "template": "{{ range(0, 5) | join(',') }}",
+    "context": {},
+    "expected": "0,1,2,3,4"
+  },
+  {
+    "id": "globals_js_range_negative_step",
+    "source": "nunjucks/nunjucks/src/globals.js `range`",
+    "template": "{{ range(5, 0, -1) | join(',') }}",
+    "context": {},
+    "expected": "5,4,3,2,1"
+  },
+  {
+    "id": "globals_js_cycler_next",
+    "source": "nunjucks/nunjucks/src/globals.js `cycler`",
+    "template": "{% set c = cycler('a', 'b') %}{{ c.next() }}{{ c.next() }}",
+    "context": {},
+    "expected": "ab"
+  },
+  {
+    "id": "globals_js_joiner_alternate",
+    "source": "nunjucks/nunjucks/src/globals.js `joiner`",
+    "template": "{% set j = joiner(',') %}{{ j() }}{{ j() }}{{ j() }}",
+    "context": {},
+    "expected": ",,"
+  },
+  {
+    "id": "globals_js_range_is_callable",
+    "source": "nunjucks/tests/tests.js callable vs function",
+    "template": "{{ range is callable }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "globals_macro_is_callable",
+    "source": "nunjucks `is callable` for macros",
+    "template": "{% macro m() %}{% endmacro %}{{ m is callable }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "globals_shadow_range_context",
+    "source": "nunjucks environment.js Context.lookup — context over globals",
+    "template": "{{ range }}",
+    "context": { "range": null },
+    "expected": ""
+  },
+  {
+    "id": "env_add_global_callable_marker",
+    "source": "runjucks `add_global` + `__runjucks_callable`",
+    "template": "{{ myfn is callable }}",
+    "context": {},
+    "env": {
+      "globals": {
+        "myfn": { "__runjucks_callable": true }
+      }
+    },
+    "expected": "true"
   }
 ]

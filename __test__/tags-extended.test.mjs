@@ -69,11 +69,8 @@ test('renderString: unclosed if tag throws', () => {
   )
 })
 
-test.skip(
-  'addFilter real callback (pending NAPI wiring)',
-  () => {
-    const env = new Environment()
-    env.addFilter('double', (s) => `${s}${s}`)
-    assert.equal(env.renderString('{{ "a" | double }}', {}), 'aa')
-  },
-)
+test('addFilter real callback', () => {
+  const env = new Environment()
+  env.addFilter('double', (s) => `${s}${s}`)
+  assert.equal(env.renderString('{{ "a" | double }}', {}), 'aa')
+})

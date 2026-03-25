@@ -3,10 +3,18 @@
 //! It ties together [`crate::lexer::tokenize`], [`crate::parser::parse`], and [`crate::renderer::render`].
 
 use crate::errors::{Result, RunjucksError};
+use crate::globals::default_globals_map;
 use crate::loader::TemplateLoader;
+use crate::value::undefined_value;
 use crate::{lexer, parser, renderer};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
+
+/// User-registered filter (Nunjucks `addFilter`). Invoked as `(input, extra_args…)`.
+///
+/// When a custom filter has the same name as a built-in, the custom filter wins (Nunjucks behavior).
+pub type CustomFilter = Arc<dyn Fn(&Value, &[Value]) -> Result<Value> + Send + Sync>;
 
 /// Configuration and entry point for rendering templates.
 ///
@@ -40,6 +48,9 @@ pub struct Environment {
     pub dev: bool,
     /// Resolves template names for [`Environment::render_template`], `include`, and `extends`.
     pub loader: Option<Arc<dyn TemplateLoader + Send + Sync>>,
+    /// Nunjucks-style globals: used when a name is not bound in the template context (context wins if the key exists, including `null`).
+    pub globals: HashMap<String, Value>,
+    pub(crate) custom_filters: HashMap<String, CustomFilter>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -48,6 +59,8 @@ impl std::fmt::Debug for Environment {
             .field("autoescape", &self.autoescape)
             .field("dev", &self.dev)
             .field("loader", &self.loader.is_some())
+            .field("globals_len", &self.globals.len())
+            .field("custom_filters_len", &self.custom_filters.len())
             .finish()
     }
 }
@@ -59,11 +72,34 @@ impl Default for Environment {
             autoescape: true,
             dev: false,
             loader: None,
+            globals: default_globals_map(),
+            custom_filters: HashMap::new(),
         }
     }
 }
 
 impl Environment {
+    /// Registers or replaces a global value (Nunjucks `addGlobal`). Names still lose to template context keys with the same name.
+    pub fn add_global(&mut self, name: impl Into<String>, value: Value) -> &mut Self {
+        self.globals.insert(name.into(), value);
+        self
+    }
+
+    /// Registers or replaces a custom filter (Nunjucks `addFilter`). Overrides a built-in with the same name.
+    pub fn add_filter(&mut self, name: impl Into<String>, filter: CustomFilter) -> &mut Self {
+        self.custom_filters.insert(name.into(), filter);
+        self
+    }
+
+    /// Resolves a name: template context first (any frame), then [`Environment::globals`].
+    pub fn resolve_variable(&self, stack: &renderer::CtxStack, name: &str) -> Value {
+        if stack.defined(name) {
+            stack.get(name)
+        } else {
+            self.globals.get(name).cloned().unwrap_or_else(undefined_value)
+        }
+    }
+
     /// Lexes `template`, parses it to an AST, and renders it with `context`.
     ///
     /// # Errors

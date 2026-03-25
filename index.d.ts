@@ -2,15 +2,26 @@
 /* eslint-disable */
 export declare class Environment {
   constructor()
+  /** Renders with this environment. `Env` is required so custom filters can call back into JavaScript synchronously. */
   renderString(template: string, context: any): string
   setAutoescape(enabled: boolean): void
   setDev(enabled: boolean): void
+  /** Registers `(input, ...args) => any`. Overrides a built-in filter with the same name. */
   addFilter(name: string, func: unknown): void
+  /** JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc). */
+  addGlobal(name: string, value: any): void
+  /** Subset of Nunjucks `configure`: `autoescape` and `dev` are applied; other keys are not supported yet. */
+  configure(opts: ConfigureOptions): void
   /** Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc. */
   setTemplateMap(map: Record<string, string>): void
   /** Renders a named template from the map set via [`set_template_map`]. */
   renderTemplate(name: string, context: any): string
 }
 export type JsEnvironment = Environment
+
+export interface ConfigureOptions {
+  autoescape?: boolean
+  dev?: boolean
+}
 
 export declare function renderString(template: string, context: any): string

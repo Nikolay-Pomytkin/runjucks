@@ -28,6 +28,7 @@ pub mod ast;
 pub mod environment;
 pub mod errors;
 pub mod filters;
+pub mod globals;
 pub mod lexer;
 pub mod loader;
 pub mod parser;
@@ -35,6 +36,6 @@ pub mod renderer;
 pub mod tag_lex;
 pub mod value;
 
-pub use environment::Environment;
+pub use environment::{CustomFilter, Environment};
 pub use errors::RunjucksError;
 pub use loader::{map_loader, FnLoader, TemplateLoader};

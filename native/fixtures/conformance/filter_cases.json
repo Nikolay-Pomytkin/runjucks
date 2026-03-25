@@ -41,5 +41,54 @@
     "context": {},
     "env": { "autoescape": false },
     "expected": "&lt;html&gt;&#92;"
+  },
+  {
+    "id": "filters_safe_with_autoescape",
+    "source": "nunjucks markSafe / autoescape",
+    "template": "{{ \"<em>x</em>\" | safe }}",
+    "context": {},
+    "expected": "<em>x</em>"
+  },
+  {
+    "id": "filters_default_boolean_true",
+    "source": "nunjucks/tests/filters.js default",
+    "template": "{{ \"\" | default(\"x\", true) }}",
+    "context": {},
+    "expected": "x"
+  },
+  {
+    "id": "filters_trim_title",
+    "source": "nunjucks trim/title",
+    "template": "{{ \"  hello world  \" | trim | title }}",
+    "context": {},
+    "expected": "Hello World"
+  },
+  {
+    "id": "filters_reverse_string",
+    "source": "nunjucks reverse",
+    "template": "{{ \"abc\" | reverse }}",
+    "context": {},
+    "expected": "cba"
+  },
+  {
+    "id": "filters_first_last",
+    "source": "nunjucks first/last",
+    "template": "{{ [1,2,3] | first }}{{ [1,2,3] | last }}",
+    "context": {},
+    "expected": "13"
+  },
+  {
+    "id": "filters_urlencode_string",
+    "source": "nunjucks urlencode",
+    "template": "{{ \"a b\" | urlencode }}",
+    "context": {},
+    "expected": "a%20b"
+  },
+  {
+    "id": "filters_dictsort_keys",
+    "source": "nunjucks dictsort",
+    "template": "{{ ({\"b\":1,\"a\":2} | dictsort | first | join(\",\")) }}",
+    "context": {},
+    "expected": "a,2"
   }
 ]
