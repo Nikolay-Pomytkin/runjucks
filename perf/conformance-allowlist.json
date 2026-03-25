@@ -12,8 +12,12 @@
     "tests_js_falsy_zero",
     "tests_js_truthy_pancakes",
     "tests_js_addition_literal",
+    "tests_js_mul_literal",
     "tests_js_filter_abs",
     "tests_js_filter_capitalize",
+    "tests_js_filter_default_undefined",
+    "tests_js_for_batch",
+    "tests_js_set_and_output",
     "tests_js_number_is_number",
     "tests_js_string_is_string",
     "tests_js_equalto",
@@ -25,15 +29,22 @@
     "filter_length_array",
     "if_truthy_branch",
     "for_simple_sum_style",
-    "expr_inline_if"
+    "expr_inline_if",
+    "jinja_compat_slice_range",
+    "jinja_compat_slice_step"
   ],
   "filter_cases": [
     "filters_join_simple",
     "filters_length_string",
     "filters_upper",
     "filters_replace",
+    "filters_replace_max_count",
+    "filters_replace_empty_needle",
+    "filters_random_singleton",
     "filters_round",
-    "filters_escape_autoescape_off"
+    "filters_escape_autoescape_off",
+    "filters_select_odd",
+    "filters_reject_even"
   ],
   "tag_parity_cases": [
     "tag_switch_basic",
@@ -43,6 +54,7 @@
     "tag_raw_braces",
     "tag_verbatim_braces",
     "tag_macro_greet",
+    "tag_macro_defaults_kwargs",
     "tag_filter_block_upper",
     "tag_switch_case1_only",
     "tag_for_loop_builtins",

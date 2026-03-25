@@ -56,3 +56,16 @@ test('configure: sets autoescape and dev', () => {
   env.configure({ autoescape: false, dev: true })
   assert.equal(env.renderString('{{ "<b>" }}', {}), '<b>')
 })
+
+test('configure: throwOnUndefined rejects missing variables', () => {
+  const env = new Environment()
+  env.configure({ throwOnUndefined: true })
+  assert.throws(() => env.renderString('{{ nope }}', {}), /undefined variable/)
+})
+
+test('addTest: custom is test', () => {
+  const env = new Environment()
+  env.addTest('multiple_of_three', (v, n) => Number(n) !== 0 && Number(v) % Number(n) === 0)
+  assert.equal(env.renderString('{{ 9 is multiple_of_three(3) }}', {}), 'true')
+  assert.equal(env.renderString('{{ 10 is multiple_of_three(3) }}', {}), 'false')
+})

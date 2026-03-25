@@ -13,11 +13,19 @@ pub struct IfBranch {
     pub body: Vec<Node>,
 }
 
+/// One formal parameter in a `{% macro %}` header (`a` or `a = expr`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacroParam {
+    pub name: String,
+    /// Default expression evaluated in the **caller's** scope when the argument is omitted.
+    pub default: Option<Expr>,
+}
+
 /// A template macro definition (`{% macro name(args) %}…{% endmacro %}`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MacroDef {
     pub name: String,
-    pub params: Vec<String>,
+    pub params: Vec<MacroParam>,
     pub body: Vec<Node>,
 }
 
@@ -64,9 +72,13 @@ pub enum Node {
         body: Option<Vec<Node>>,
     },
     /// `{% include expr %}` with optional `ignore missing` — template name from expression.
+    ///
+    /// `with_context`: `None` / `Some(true)` — current frame stack; `Some(false)` — isolated root
+    /// context (template globals only; matches Jinja `without context` / Nunjucks-style isolation).
     Include {
         template: Expr,
         ignore_missing: bool,
+        with_context: Option<bool>,
     },
     /// `{% switch expr %}{% case c %}…{% default %}…{% endswitch %}`.
     Switch {
@@ -159,15 +171,24 @@ pub enum Expr {
         base: Box<Expr>,
         attr: String,
     },
-    /// Subscript: `base[index]`.
+    /// Subscript: `base[index]` or Jinja-style `base[start:stop:step]`.
     GetItem {
         base: Box<Expr>,
+        /// Single index, or [`Expr::Slice`] for `:` subscripts.
         index: Box<Expr>,
+    },
+    /// Slice inside `[ … ]` (`start:stop:step`; any part may be omitted).
+    Slice {
+        start: Option<Box<Expr>>,
+        stop: Option<Box<Expr>>,
+        step: Option<Box<Expr>>,
     },
     /// Function-style call `callee(args…)` (runtime may be limited until globals exist).
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        /// `name = value` arguments (applied after positionals; unknown names ignored, Nunjucks-style).
+        kwargs: Vec<(String, Expr)>,
     },
     /// Filter pipeline step: `input | name` or `input | name(arg, …)`.
     Filter {

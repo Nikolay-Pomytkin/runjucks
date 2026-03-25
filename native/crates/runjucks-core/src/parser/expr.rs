@@ -2,8 +2,9 @@
 //!
 //! Reference: `nunjucks/nunjucks/src/parser.js` (`parseExpression` → `parseOr` → … → `parsePrimary`).
 
-use crate::ast::{BinOp, CompareOp, Expr, UnaryOp};
+use crate::ast::{BinOp, CompareOp, Expr, MacroParam, UnaryOp};
 use crate::errors::{Result, RunjucksError};
+use crate::parser::split::split_top_level_commas;
 use nom::branch::alt;
 use nom::character::complete::{char, digit1};
 use nom::combinator::{all_consuming, map_res, opt, recognize};
@@ -163,27 +164,264 @@ fn parse_filter_name(input: &str) -> IResult<&str, String> {
     Ok((rest, name))
 }
 
-fn parse_call_argument_list(input: &str) -> IResult<&str, Vec<Expr>> {
-    let mut rest = trim_start(input);
-    if let Some(r) = rest.strip_prefix(')') {
-        return Ok((r, vec![]));
+fn simple_ident_str(s: &str) -> bool {
+    let mut ch = s.chars();
+    let Some(first) = ch.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
     }
-    let mut args = Vec::new();
-    loop {
-        let (r, e) = parse_inline_if(rest)?;
-        args.push(e);
-        let r = trim_start(r);
-        if let Some(r2) = r.strip_prefix(')') {
-            return Ok((r2, args));
+    ch.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// If `seg` is `name = expr` at depth 0 (not `==`), returns `(name, expr source)`.
+fn split_call_kw_seg(seg: &str) -> Option<(&str, &str)> {
+    let seg = seg.trim();
+    let bytes = seg.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = in_string {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if c == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if c == q {
+                in_string = None;
+            }
+            i += 1;
+            continue;
         }
-        let r = r.strip_prefix(',').ok_or_else(|| {
-            nom::Err::Failure(nom::error::Error::new(
-                r,
-                nom::error::ErrorKind::Tag,
-            ))
-        })?;
-        rest = trim_start(r);
+        if c == b'"' || c == b'\'' {
+            in_string = Some(c);
+            i += 1;
+            continue;
+        }
+        match c {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'=' if depth == 0 => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    continue;
+                }
+                if i > 0 && bytes[i - 1] == b'=' {
+                    i += 1;
+                    continue;
+                }
+                let left = seg[..i].trim();
+                let right = seg[i + 1..].trim();
+                if simple_ident_str(left) {
+                    return Some((left, right));
+                }
+            }
+            _ => {}
+        }
+        i += 1;
     }
+    None
+}
+
+/// After `(` of a call, splits at the matching `)` and returns `(rest_after_close, inner)`.
+fn split_call_inner_rest(rest_after_open_paren: &str) -> IResult<&str, &str> {
+    let s = trim_start(rest_after_open_paren);
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = in_string {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if c == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if c == q {
+                in_string = None;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'"' || c == b'\'' {
+            in_string = Some(c);
+            i += 1;
+            continue;
+        }
+        match c {
+            b'(' => depth += 1,
+            b')' if depth == 0 => {
+                return Ok((&s[i + 1..], &s[..i]));
+            }
+            b')' => depth -= 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    Err(nom::Err::Failure(nom::error::Error::new(
+        s,
+        nom::error::ErrorKind::Tag,
+    )))
+}
+
+fn parse_call_argument_list_inner(inner: &str) -> Result<(Vec<Expr>, Vec<(String, Expr)>)> {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return Ok((vec![], vec![]));
+    }
+    let segs = split_top_level_commas(inner);
+    let mut pos = Vec::new();
+    let mut kw = Vec::new();
+    for seg in segs {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        if let Some((name, rhs)) = split_call_kw_seg(seg) {
+            kw.push((name.to_string(), parse_expression(rhs)?));
+        } else {
+            pos.push(parse_expression(seg)?);
+        }
+    }
+    Ok((pos, kw))
+}
+
+fn parse_call_argument_list(input: &str) -> IResult<&str, (Vec<Expr>, Vec<(String, Expr)>)> {
+    let input = trim_start(input);
+    if let Some(r) = input.strip_prefix(')') {
+        return Ok((r, (vec![], vec![])));
+    }
+    let (rest, inner) = split_call_inner_rest(input)?;
+    match parse_call_argument_list_inner(inner) {
+        Ok(pair) => Ok((rest, pair)),
+        Err(_) => Err(nom::Err::Failure(nom::error::Error::new(
+            inner,
+            nom::error::ErrorKind::Verify,
+        ))),
+    }
+}
+
+/// Index of the closing `]` for subscript content (caller has already consumed the opening `[`).
+fn bracket_content_end(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn has_top_level_colon(body: &str) -> bool {
+    let mut d_paren = 0i32;
+    let mut d_bracket = 0i32;
+    for c in body.chars() {
+        match c {
+            '(' => d_paren += 1,
+            ')' => d_paren -= 1,
+            '[' => d_bracket += 1,
+            ']' => d_bracket -= 1,
+            ':' if d_paren == 0 && d_bracket == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn split_top_level_colon(body: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut d_paren = 0i32;
+    let mut d_bracket = 0i32;
+    for (i, c) in body.char_indices() {
+        match c {
+            '(' => d_paren += 1,
+            ')' => d_paren -= 1,
+            '[' => d_bracket += 1,
+            ']' => d_bracket -= 1,
+            ':' if d_paren == 0 && d_bracket == 0 => {
+                parts.push(body[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(body[start..].trim());
+    parts
+}
+
+fn parse_optional_slice_segment(
+    seg: &str,
+) -> std::result::Result<Option<Expr>, nom::Err<nom::error::Error<&str>>> {
+    let seg = seg.trim();
+    if seg.is_empty() {
+        return Ok(None);
+    }
+    all_consuming(parse_inline_if)
+        .parse(seg)
+        .map(|(_, e)| Some(e))
+}
+
+fn parse_subscript(input: &str) -> IResult<&str, Expr> {
+    let end = bracket_content_end(input).ok_or_else(|| {
+        nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))
+    })?;
+    let body = trim_start(&input[..end]);
+    let rest = &input[end + 1..];
+
+    if !has_top_level_colon(body) {
+        let (_, e) = all_consuming(parse_inline_if).parse(body).map_err(|e| e)?;
+        return Ok((rest, e));
+    }
+
+    let segs = split_top_level_colon(body);
+    if segs.len() > 3 {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            body,
+            nom::error::ErrorKind::TooLarge,
+        )));
+    }
+    let start_e =
+        parse_optional_slice_segment(segs.first().copied().unwrap_or("")).map_err(|e| e)?;
+    let stop_e = parse_optional_slice_segment(segs.get(1).copied().unwrap_or("")).map_err(|e| e)?;
+    let step_e = parse_optional_slice_segment(segs.get(2).copied().unwrap_or("")).map_err(|e| e)?;
+    let start = start_e.map(Box::new);
+    let stop = stop_e.map(Box::new);
+    let step = step_e.map(Box::new);
+    Ok((
+        rest,
+        Expr::Slice {
+            start,
+            stop,
+            step,
+        },
+    ))
 }
 
 fn parse_postfix(input: &str, mut node: Expr) -> IResult<&str, Expr> {
@@ -200,14 +438,7 @@ fn parse_postfix(input: &str, mut node: Expr) -> IResult<&str, Expr> {
             continue;
         }
         if let Some(r2) = r.strip_prefix('[') {
-            let (r3, idx) = parse_inline_if(trim_start(r2))?;
-            let r3 = trim_start(r3);
-            let r4 = r3.strip_prefix(']').ok_or_else(|| {
-                nom::Err::Failure(nom::error::Error::new(
-                    r3,
-                    nom::error::ErrorKind::Tag,
-                ))
-            })?;
+            let (r4, idx) = parse_subscript(trim_start(r2))?;
             node = Expr::GetItem {
                 base: Box::new(node),
                 index: Box::new(idx),
@@ -216,10 +447,11 @@ fn parse_postfix(input: &str, mut node: Expr) -> IResult<&str, Expr> {
             continue;
         }
         if let Some(r2) = r.strip_prefix('(') {
-            let (r3, args) = parse_call_argument_list(r2)?;
+            let (r3, (args, kwargs)) = parse_call_argument_list(r2)?;
             node = Expr::Call {
                 callee: Box::new(node),
                 args,
+                kwargs,
             };
             rest = r3;
             continue;
@@ -345,11 +577,17 @@ fn parse_filter_chain(input: &str, mut node: Expr) -> IResult<&str, Expr> {
         let after = trim_start(after);
         let (r2, name) = parse_filter_name(after)?;
         let after_name = trim_start(r2);
-        let (r3, extra_args) = if let Some(inner) = after_name.strip_prefix('(') {
+        let (r3, (extra_args, filter_kw)) = if let Some(inner) = after_name.strip_prefix('(') {
             parse_call_argument_list(inner)?
         } else {
-            (after_name, vec![])
+            (after_name, (vec![], vec![]))
         };
+        if !filter_kw.is_empty() {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                after_name,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
         node = Expr::Filter {
             name,
             input: Box::new(node),
@@ -723,6 +961,28 @@ fn parse_or(input: &str) -> IResult<&str, Expr> {
         break;
     }
     Ok((rest, acc))
+}
+
+pub(crate) fn parse_macro_param_segment(seg: &str) -> Result<MacroParam> {
+    let seg = seg.trim();
+    if seg.is_empty() {
+        return Err(RunjucksError::new("empty macro parameter"));
+    }
+    if let Some((name, rhs)) = split_call_kw_seg(seg) {
+        Ok(MacroParam {
+            name: name.to_string(),
+            default: Some(parse_expression(rhs)?),
+        })
+    } else if simple_ident_str(seg) {
+        Ok(MacroParam {
+            name: seg.to_string(),
+            default: None,
+        })
+    } else {
+        Err(RunjucksError::new(format!(
+            "invalid macro parameter `{seg}` (expected `name` or `name = default`)"
+        )))
+    }
 }
 
 pub(crate) fn parse_inline_if(input: &str) -> IResult<&str, Expr> {

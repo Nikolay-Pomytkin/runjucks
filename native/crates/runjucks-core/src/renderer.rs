@@ -3,9 +3,11 @@
 use crate::ast::{BinOp, CompareOp, Expr, ForVars, MacroDef, Node, SwitchCase, UnaryOp};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use crate::globals::{
     builtin_range, cycler_handle_value, is_builtin_marker_value, joiner_handle_value,
-    parse_cycler_id, parse_joiner_id, value_is_callable, CyclerState, JoinerState,
+    parse_cycler_id, parse_joiner_id, CyclerState, JoinerState,
 };
 use crate::loader::TemplateLoader;
 use crate::{lexer, parser};
@@ -96,10 +98,16 @@ pub struct RenderState<'a> {
     pub cyclers: Vec<CyclerState>,
     /// Stateful `joiner(...)` instances.
     pub joiners: Vec<JoinerState>,
+    /// PRNG for `| random` (seed from [`Environment::random_seed`] when set).
+    pub rng: SmallRng,
 }
 
 impl<'a> RenderState<'a> {
-    pub fn new(loader: Option<&'a (dyn TemplateLoader + Send + Sync)>) -> Self {
+    pub fn new(loader: Option<&'a (dyn TemplateLoader + Send + Sync)>, rng_seed: Option<u64>) -> Self {
+        let rng = match rng_seed {
+            Some(s) => SmallRng::seed_from_u64(s),
+            None => SmallRng::from_entropy(),
+        };
         Self {
             loader,
             stack: Vec::new(),
@@ -110,6 +118,7 @@ impl<'a> RenderState<'a> {
             caller_stack: Vec::new(),
             cyclers: Vec::new(),
             joiners: Vec::new(),
+            rng,
         }
     }
 
@@ -158,7 +167,7 @@ pub fn render(
     root: &Node,
     ctx_stack: &mut CtxStack,
 ) -> Result<String> {
-    let mut state = RenderState::new(loader);
+    let mut state = RenderState::new(loader, env.random_seed);
     render_entry(env, &mut state, root, ctx_stack)
 }
 
@@ -468,6 +477,7 @@ fn render_node(
         Node::Include {
             template,
             ignore_missing,
+            with_context,
         } => {
             let loader = state.loader.ok_or_else(|| {
                 RunjucksError::new("`include` requires a template loader")
@@ -481,7 +491,12 @@ fn render_node(
             let tokens = lexer::tokenize(&src)?;
             let included = parser::parse(&tokens)?;
             state.push_template(&name)?;
-            let out = render_entry(env, state, &included, stack)?;
+            let out = if matches!(with_context, Some(false)) {
+                let mut isolated = CtxStack::from_root(Map::new());
+                render_entry(env, state, &included, &mut isolated)?
+            } else {
+                render_entry(env, state, &included, stack)?
+            };
             state.pop_template();
             Ok(out)
         }
@@ -555,7 +570,13 @@ fn render_node(
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
                 .collect::<Result<_>>()?;
-            let v = crate::filters::apply_builtin(env, name, &Value::String(s), &arg_vals)?;
+            let v = crate::filters::apply_builtin(
+                env,
+                &mut state.rng,
+                name,
+                &Value::String(s),
+                &arg_vals,
+            )?;
             let out = crate::value::value_to_string(&v);
             if env.autoescape && !crate::value::is_marked_safe(&v) {
                 Ok(crate::filters::escape_html(&out))
@@ -564,7 +585,12 @@ fn render_node(
             }
         }
         Node::CallBlock { callee, body } => {
-            let Expr::Call { callee: macro_target, args } = callee else {
+            let Expr::Call {
+                callee: macro_target,
+                args,
+                kwargs,
+            } = callee
+            else {
                 return Err(RunjucksError::new(
                     "`{% call %}` expects a macro call expression such as `wrap()` or `ns.wrap()`",
                 ));
@@ -572,6 +598,10 @@ fn render_node(
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
+                .collect::<Result<_>>()?;
+            let kw_vals: Vec<(String, Value)> = kwargs
+                .iter()
+                .map(|(k, e)| Ok((k.clone(), eval_to_value(env, state, e, stack)?)))
                 .collect::<Result<_>>()?;
             let mdef = if let Expr::Variable(name) = macro_target.as_ref() {
                 state
@@ -597,7 +627,7 @@ fn render_node(
                 ));
             };
             state.caller_stack.push(body.clone());
-            let res = render_macro_body(env, state, &mdef, &arg_vals, stack);
+            let res = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack);
             state.caller_stack.pop();
             res
         }
@@ -849,6 +879,80 @@ fn json_partial_cmp(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     }
 }
 
+fn eval_slice_bound(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    e: Option<&Expr>,
+    stack: &mut CtxStack,
+) -> Result<Option<i64>> {
+    let Some(e) = e else {
+        return Ok(None);
+    };
+    let v = eval_to_value(env, state, e, stack)?;
+    if v.is_null() || crate::value::is_undefined_value(&v) {
+        return Ok(None);
+    }
+    let n = v
+        .as_i64()
+        .or_else(|| v.as_f64().map(|x| x as i64))
+        .or_else(|| crate::value::value_to_string(&v).parse().ok());
+    match n {
+        Some(x) => Ok(Some(x)),
+        None => Err(RunjucksError::new("slice bound must be a number")),
+    }
+}
+
+/// Jinja-compat slice (`nunjucks` `sliceLookup`).
+fn jinja_slice_array(
+    obj: &[Value],
+    start: Option<i64>,
+    stop: Option<i64>,
+    step: Option<i64>,
+) -> Vec<Value> {
+    let len = obj.len() as i64;
+    let step = step.unwrap_or(1);
+    if step == 0 {
+        return vec![];
+    }
+    let mut start = start;
+    let mut stop = stop;
+    if start.is_none() {
+        start = Some(if step < 0 { (len - 1).max(0) } else { 0 });
+    }
+    if stop.is_none() {
+        stop = Some(if step < 0 { -1 } else { len });
+    } else if let Some(s) = stop {
+        if s < 0 {
+            stop = Some(s + len);
+        }
+    }
+    if let Some(s) = start {
+        if s < 0 {
+            start = Some(s + len);
+        }
+    }
+    let start = start.unwrap_or(0);
+    let stop = stop.unwrap_or(len);
+    let mut results = Vec::new();
+    let mut i = start;
+    loop {
+        if i < 0 || i > len {
+            break;
+        }
+        if step > 0 && i >= stop {
+            break;
+        }
+        if step < 0 && i <= stop {
+            break;
+        }
+        if let Some(item) = obj.get(i as usize) {
+            results.push(item.clone());
+        }
+        i += step;
+    }
+    results
+}
+
 fn eval_in(key: &Value, container: &Value) -> Result<bool> {
     match container {
         Value::Array(a) => Ok(a.iter().any(|v| v == key)),
@@ -875,7 +979,10 @@ fn is_test_parts(e: &Expr) -> Option<(&str, &[Expr])> {
         Expr::Variable(n) => Some((n.as_str(), &[])),
         Expr::Literal(Value::String(s)) => Some((s.as_str(), &[])),
         Expr::Literal(Value::Null) => Some(("null", &[])),
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, kwargs } => {
+            if !kwargs.is_empty() {
+                return None;
+            }
             if let Expr::Variable(n) = callee.as_ref() {
                 Some((n.as_str(), args.as_slice()))
             } else {
@@ -898,32 +1005,7 @@ fn eval_is_test(
         .iter()
         .map(|e| eval_to_value(env, state, e, stack))
         .collect::<Result<_>>()?;
-    Ok(match test_name {
-        "equalto" => arg_vals.first().map(|a| a == value).unwrap_or(false),
-        "sameas" => match arg_vals.first() {
-            Some(a) => match (value, a) {
-                (Value::Object(_), Value::Object(_)) | (Value::Array(_), Value::Array(_)) => false,
-                _ => a == value,
-            },
-            None => false,
-        },
-        "null" | "none" => value.is_null(),
-        "falsy" => !is_truthy(value),
-        "truthy" => is_truthy(value),
-        "number" => value.is_number(),
-        "string" => value.is_string(),
-        "lower" => match value {
-            Value::String(s) => s.chars().all(|c| !c.is_uppercase()),
-            _ => false,
-        },
-        "upper" => match value {
-            Value::String(s) => s.chars().all(|c| !c.is_lowercase()),
-            _ => false,
-        },
-        "callable" => value_is_callable(value),
-        "defined" => !crate::value::is_undefined_value(value),
-        _ => false,
-    })
+    env.apply_is_test(test_name, value, &arg_vals)
 }
 
 fn as_number(v: &Value) -> Option<f64> {
@@ -1007,13 +1089,28 @@ fn render_macro_body(
     env: &Environment,
     state: &mut RenderState<'_>,
     m: &MacroDef,
-    arg_vals: &[Value],
+    positional: &[Value],
+    kwargs: &[(String, Value)],
     outer: &mut CtxStack,
 ) -> Result<String> {
     let mut inner = outer.flatten();
+    for p in &m.params {
+        let val = if let Some(ref d) = p.default {
+            eval_to_value(env, state, d, outer)?
+        } else {
+            Value::Null
+        };
+        inner.insert(p.name.clone(), val);
+    }
     for (i, p) in m.params.iter().enumerate() {
-        let v = arg_vals.get(i).cloned().unwrap_or(Value::Null);
-        inner.insert(p.clone(), v);
+        if let Some(v) = positional.get(i) {
+            inner.insert(p.name.clone(), v.clone());
+        }
+    }
+    for (k, v) in kwargs {
+        if m.params.iter().any(|p| p.name == *k) {
+            inner.insert(k.clone(), v.clone());
+        }
     }
     let mut stack = CtxStack::from_root(inner);
     render_children(env, state, &m.body, &mut stack)
@@ -1027,7 +1124,7 @@ fn eval_to_value(
 ) -> Result<Value> {
     match e {
         Expr::Literal(v) => Ok(v.clone()),
-        Expr::Variable(name) => Ok(env.resolve_variable(stack, name)),
+        Expr::Variable(name) => env.resolve_variable(stack, name),
         Expr::Unary { op, expr } => {
             let v = eval_to_value(env, state, expr, stack)?;
             Ok(match op {
@@ -1169,26 +1266,52 @@ fn eval_to_value(
         }
         Expr::GetItem { base, index } => {
             let b = eval_to_value(env, state, base, stack)?;
-            let i = eval_to_value(env, state, index, stack)?;
-            match (&b, &i) {
-                (Value::Array(a), Value::Number(n)) => {
-                    let idx = n
-                        .as_u64()
-                        .or_else(|| n.as_f64().map(|x| x as u64))
-                        .unwrap_or(0) as usize;
-                    Ok(a.get(idx).cloned().unwrap_or(Value::Null))
+            match index.as_ref() {
+                Expr::Slice {
+                    start: s,
+                    stop: st,
+                    step: step_e,
+                } => {
+                    let Value::Array(a) = &b else {
+                        return Ok(Value::Null);
+                    };
+                    let start_v = eval_slice_bound(env, state, s.as_deref(), stack)?;
+                    let stop_v = eval_slice_bound(env, state, st.as_deref(), stack)?;
+                    let step_v = eval_slice_bound(env, state, step_e.as_deref(), stack)?;
+                    Ok(Value::Array(jinja_slice_array(a, start_v, stop_v, step_v)))
                 }
-                (Value::Object(o), Value::String(k)) => Ok(o.get(k).cloned().unwrap_or(Value::Null)),
-                _ => Ok(Value::Null),
+                idx_e => {
+                    let i = eval_to_value(env, state, idx_e, stack)?;
+                    match (&b, &i) {
+                        (Value::Array(a), Value::Number(n)) => {
+                            let idx = n
+                                .as_u64()
+                                .or_else(|| n.as_f64().map(|x| x as u64))
+                                .unwrap_or(0) as usize;
+                            Ok(a.get(idx).cloned().unwrap_or(Value::Null))
+                        }
+                        (Value::Object(o), Value::String(k)) => {
+                            Ok(o.get(k).cloned().unwrap_or(Value::Null))
+                        }
+                        _ => Ok(Value::Null),
+                    }
+                }
             }
         }
-        Expr::Call { callee, args } => {
+        Expr::Slice { .. } => Err(RunjucksError::new(
+            "slice expression is only valid inside `[ ]`",
+        )),
+        Expr::Call { callee, args, kwargs } => {
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
                 .collect::<Result<_>>()?;
+            let kw_vals: Vec<(String, Value)> = kwargs
+                .iter()
+                .map(|(k, e)| Ok((k.clone(), eval_to_value(env, state, e, stack)?)))
+                .collect::<Result<_>>()?;
             if let Expr::GetAttr { base, attr } = callee.as_ref() {
-                if attr == "next" && arg_vals.is_empty() {
+                if attr == "next" && arg_vals.is_empty() && kw_vals.is_empty() {
                     let b = eval_to_value(env, state, base, stack)?;
                     if let Some(id) = parse_cycler_id(&b) {
                         if let Some(c) = state.cyclers.get_mut(id) {
@@ -1200,7 +1323,7 @@ fn eval_to_value(
             }
             if let Expr::Variable(name) = callee.as_ref() {
                 if name == "super" {
-                    if !args.is_empty() {
+                    if !args.is_empty() || !kw_vals.is_empty() {
                         return Err(RunjucksError::new("`super()` takes no arguments"));
                     }
                     let (block_name, layer) = state.super_context.clone().ok_or_else(|| {
@@ -1227,7 +1350,7 @@ fn eval_to_value(
                     return Ok(Value::String(s));
                 }
                 if name == "caller" {
-                    if !args.is_empty() {
+                    if !args.is_empty() || !kw_vals.is_empty() {
                         return Err(RunjucksError::new("`caller()` takes no arguments"));
                     }
                     let body = state
@@ -1241,11 +1364,11 @@ fn eval_to_value(
                     return Ok(Value::String(s));
                 }
                 if let Some(mdef) = state.lookup_macro(name).cloned() {
-                    let s = render_macro_body(env, state, &mdef, &arg_vals, stack)?;
+                    let s = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack)?;
                     return Ok(Value::String(s));
                 }
                 if arg_vals.is_empty() {
-                    let v = env.resolve_variable(stack, name);
+                    let v = env.resolve_variable(stack, name)?;
                     if let Some(id) = parse_joiner_id(&v) {
                         if let Some(j) = state.joiners.get_mut(id) {
                             return Ok(Value::String(j.invoke()));
@@ -1259,7 +1382,7 @@ fn eval_to_value(
             if let Expr::GetAttr { base, attr } = callee.as_ref() {
                 if let Expr::Variable(ns) = base.as_ref() {
                     if let Some(mdef) = state.lookup_namespaced_macro(ns, attr).cloned() {
-                        let s = render_macro_body(env, state, &mdef, &arg_vals, stack)?;
+                        let s = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack)?;
                         return Ok(Value::String(s));
                     }
                 }
@@ -1274,7 +1397,7 @@ fn eval_to_value(
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
                 .collect::<Result<_>>()?;
-            crate::filters::apply_builtin(env, name, &input_v, &arg_vals)
+            crate::filters::apply_builtin(env, &mut state.rng, name, &input_v, &arg_vals)
         }
         Expr::List(items) => {
             let mut out = Vec::with_capacity(items.len());

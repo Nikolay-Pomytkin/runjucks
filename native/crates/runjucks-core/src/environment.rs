@@ -3,9 +3,9 @@
 //! It ties together [`crate::lexer::tokenize`], [`crate::parser::parse`], and [`crate::renderer::render`].
 
 use crate::errors::{Result, RunjucksError};
-use crate::globals::default_globals_map;
+use crate::globals::{default_globals_map, value_is_callable};
 use crate::loader::TemplateLoader;
-use crate::value::undefined_value;
+use crate::value::{is_undefined_value, undefined_value, value_to_string};
 use crate::{lexer, parser, renderer};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -16,6 +16,9 @@ use std::sync::Arc;
 /// When a custom filter has the same name as a built-in, the custom filter wins (Nunjucks behavior).
 pub type CustomFilter = Arc<dyn Fn(&Value, &[Value]) -> Result<Value> + Send + Sync>;
 
+/// User-registered `is` test (Nunjucks `addTest`). Invoked as `(value, extra_args…) -> bool`.
+pub type CustomTest = Arc<dyn Fn(&Value, &[Value]) -> Result<bool> + Send + Sync>;
+
 /// Configuration and entry point for rendering templates.
 ///
 /// # Fields
@@ -23,6 +26,7 @@ pub type CustomFilter = Arc<dyn Fn(&Value, &[Value]) -> Result<Value> + Send + S
 /// - **`autoescape`**: When `true` (the default), HTML-escapes string output from variable tags via
 ///   [`crate::filters::escape_html`].
 /// - **`dev`**: Reserved for developer-mode behavior (e.g. richer errors); currently unused in the renderer.
+/// - **`throw_on_undefined`**: When `true`, unbound variables are errors instead of the internal undefined sentinel.
 /// - **`loader`**: Optional [`TemplateLoader`] for [`Environment::render_template`], `{% include %}`, `{% import %}`, `{% from %}`, and `{% extends %}`.
 ///
 /// # Default
@@ -50,7 +54,12 @@ pub struct Environment {
     pub loader: Option<Arc<dyn TemplateLoader + Send + Sync>>,
     /// Nunjucks-style globals: used when a name is not bound in the template context (context wins if the key exists, including `null`).
     pub globals: HashMap<String, Value>,
+    /// When true, an unbound variable name (not in context or globals) is a render error instead of [`crate::value::undefined_value`].
+    pub throw_on_undefined: bool,
+    /// When set, [`crate::filters::apply_builtin`] `random` uses this seed for reproducible output (conformance / tests).
+    pub random_seed: Option<u64>,
     pub(crate) custom_filters: HashMap<String, CustomFilter>,
+    pub(crate) custom_tests: HashMap<String, CustomTest>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -61,8 +70,33 @@ impl std::fmt::Debug for Environment {
             .field("loader", &self.loader.is_some())
             .field("globals_len", &self.globals.len())
             .field("custom_filters_len", &self.custom_filters.len())
+            .field("custom_tests_len", &self.custom_tests.len())
+            .field("throw_on_undefined", &self.throw_on_undefined)
+            .field("random_seed", &self.random_seed)
             .finish()
     }
+}
+
+fn is_truthy_value(v: &Value) -> bool {
+    if is_undefined_value(v) {
+        return false;
+    }
+    match v {
+        Value::Null | Value::Bool(false) => false,
+        Value::Bool(true) => true,
+        Value::Number(n) => n
+            .as_f64()
+            .map(|x| x != 0.0 && !x.is_nan())
+            .unwrap_or(true),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+fn as_is_test_integer(v: &Value) -> Result<i64> {
+    v.as_i64()
+        .or_else(|| v.as_f64().map(|x| x as i64))
+        .ok_or_else(|| RunjucksError::new("test expected a number"))
 }
 
 impl Default for Environment {
@@ -73,7 +107,10 @@ impl Default for Environment {
             dev: false,
             loader: None,
             globals: default_globals_map(),
+            throw_on_undefined: false,
+            random_seed: None,
             custom_filters: HashMap::new(),
+            custom_tests: HashMap::new(),
         }
     }
 }
@@ -91,12 +128,96 @@ impl Environment {
         self
     }
 
+    /// Registers or replaces a custom `is` test (Nunjucks `addTest`). Used by `x is name` and by `select` / `reject`.
+    pub fn add_test(&mut self, name: impl Into<String>, test: CustomTest) -> &mut Self {
+        self.custom_tests.insert(name.into(), test);
+        self
+    }
+
+    pub(crate) fn eval_user_is_test(
+        &self,
+        name: &str,
+        value: &Value,
+        args: &[Value],
+    ) -> Result<bool> {
+        match self.custom_tests.get(name) {
+            Some(t) => t(value, args),
+            None => Err(RunjucksError::new(format!("unknown test: `{name}`"))),
+        }
+    }
+
+    /// Built-in and user-registered `is` tests (`x is name`, `select` / `reject`). Argument values are already evaluated.
+    pub(crate) fn apply_is_test(
+        &self,
+        test_name: &str,
+        value: &Value,
+        arg_vals: &[Value],
+    ) -> Result<bool> {
+        match test_name {
+            "equalto" => Ok(arg_vals.first().map(|a| a == value).unwrap_or(false)),
+            "sameas" => Ok(match arg_vals.first() {
+                Some(a) => match (value, a) {
+                    (Value::Object(_), Value::Object(_)) | (Value::Array(_), Value::Array(_)) => {
+                        false
+                    }
+                    _ => a == value,
+                },
+                None => false,
+            }),
+            "null" | "none" => Ok(value.is_null()),
+            "falsy" => Ok(!is_truthy_value(value)),
+            "truthy" => Ok(is_truthy_value(value)),
+            "number" => Ok(value.is_number()),
+            "string" => Ok(value.is_string()),
+            "lower" => Ok(match value {
+                Value::String(s) => s.chars().all(|c| !c.is_uppercase()),
+                _ => false,
+            }),
+            "upper" => Ok(match value {
+                Value::String(s) => s.chars().all(|c| !c.is_lowercase()),
+                _ => false,
+            }),
+            "callable" => Ok(value_is_callable(value)),
+            "defined" => Ok(!is_undefined_value(value)),
+            "odd" => {
+                let n = as_is_test_integer(value)?;
+                Ok(n.rem_euclid(2) != 0)
+            }
+            "even" => {
+                let n = as_is_test_integer(value)?;
+                Ok(n.rem_euclid(2) == 0)
+            }
+            "divisibleby" => {
+                let denom = arg_vals
+                    .first()
+                    .and_then(|a| {
+                        a.as_i64()
+                            .or_else(|| a.as_f64().map(|x| x as i64))
+                            .or_else(|| value_to_string(a).parse().ok())
+                    })
+                    .ok_or_else(|| RunjucksError::new("`divisibleby` test expects a divisor"))?;
+                if denom == 0 {
+                    return Ok(false);
+                }
+                let n = as_is_test_integer(value)?;
+                Ok(n.rem_euclid(denom) == 0)
+            }
+            _ => self.eval_user_is_test(test_name, value, arg_vals),
+        }
+    }
+
     /// Resolves a name: template context first (any frame), then [`Environment::globals`].
-    pub fn resolve_variable(&self, stack: &renderer::CtxStack, name: &str) -> Value {
+    ///
+    /// Unbound names yield [`crate::value::undefined_value`] unless [`Environment::throw_on_undefined`] is set.
+    pub fn resolve_variable(&self, stack: &renderer::CtxStack, name: &str) -> Result<Value> {
         if stack.defined(name) {
-            stack.get(name)
+            Ok(stack.get(name))
+        } else if let Some(v) = self.globals.get(name) {
+            Ok(v.clone())
+        } else if self.throw_on_undefined {
+            Err(RunjucksError::new(format!("undefined variable: `{name}`")))
         } else {
-            self.globals.get(name).cloned().unwrap_or_else(undefined_value)
+            Ok(undefined_value())
         }
     }
 
@@ -150,7 +271,8 @@ impl Environment {
             _ => Map::new(),
         };
         let mut stack = renderer::CtxStack::from_root(root);
-        let mut state = renderer::RenderState::new(Some(loader.as_ref()));
+        let mut state =
+            renderer::RenderState::new(Some(loader.as_ref()), self.random_seed);
         state.push_template(name)?;
         let out = renderer::render_entry(self, &mut state, &ast, &mut stack)?;
         state.pop_template();

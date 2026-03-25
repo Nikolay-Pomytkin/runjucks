@@ -75,5 +75,12 @@
     "template": "{% macro wrap() %}<div>{{ caller() }}</div>{% endmacro %}{% call wrap() %}in{% endcall %}",
     "context": {},
     "expected": "<div>in</div>"
+  },
+  {
+    "id": "tag_macro_defaults_kwargs",
+    "source": "nunjucks macro default + keyword args",
+    "template": "{% macro m(a, b=1) %}{{ a }},{{ b }}{% endmacro %}{{ m(2) }},{{ m(2, b=3) }}",
+    "context": {},
+    "expected": "2,1,2,3"
   }
 ]

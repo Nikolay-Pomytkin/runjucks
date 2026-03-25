@@ -2,6 +2,7 @@
 
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
+use rand::Rng;
 use crate::value::{
     is_marked_safe, is_undefined_value, mark_safe, value_to_string, value_to_string_raw,
 };
@@ -630,6 +631,44 @@ fn is_truthy_filter(v: &Value) -> bool {
         && !v.as_f64().is_some_and(|x| x == 0.0 || x.is_nan())
 }
 
+fn filter_select(env: &Environment, input: &Value, args: &[Value]) -> Result<Value> {
+    let test_name = args
+        .first()
+        .map(value_to_string)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| RunjucksError::new("`select` filter expects a test name"))?;
+    let test_args = &args[1..];
+    let Value::Array(items) = input else {
+        return Ok(Value::Array(vec![]));
+    };
+    let mut out = Vec::new();
+    for item in items {
+        if env.apply_is_test(&test_name, item, test_args)? {
+            out.push(item.clone());
+        }
+    }
+    Ok(Value::Array(out))
+}
+
+fn filter_reject(env: &Environment, input: &Value, args: &[Value]) -> Result<Value> {
+    let test_name = args
+        .first()
+        .map(value_to_string)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| RunjucksError::new("`reject` filter expects a test name"))?;
+    let test_args = &args[1..];
+    let Value::Array(items) = input else {
+        return Ok(Value::Array(vec![]));
+    };
+    let mut out = Vec::new();
+    for item in items {
+        if !env.apply_is_test(&test_name, item, test_args)? {
+            out.push(item.clone());
+        }
+    }
+    Ok(Value::Array(out))
+}
+
 fn filter_groupby(input: &Value, args: &[Value]) -> Result<Value> {
     let attr = args
         .first()
@@ -713,11 +752,96 @@ fn filter_urlize(input: &Value, args: &[Value]) -> Value {
     Value::String(out)
 }
 
+/// Nunjucks `replace` (literal substring, optional max count, empty-needle split behavior).
+fn filter_replace_nunjucks(input: &Value, args: &[Value]) -> Result<Value> {
+    let from_v = args
+        .first()
+        .ok_or_else(|| RunjucksError::new("replace filter needs from string"))?;
+    let from = match from_v {
+        Value::String(s) => s.clone(),
+        Value::Number(_) => value_to_string(from_v),
+        _ => {
+            return Ok(input.clone());
+        }
+    };
+    let to = args
+        .get(1)
+        .map(value_to_string)
+        .unwrap_or_default();
+    let max_count = args
+        .get(2)
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| value_to_string(v).parse().ok())
+                .or_else(|| v.as_f64().map(|x| x as i64))
+        })
+        .unwrap_or(-1_i64);
+    let max_rep = if max_count < 0 {
+        usize::MAX
+    } else {
+        max_count as usize
+    };
+
+    let hay = match input {
+        Value::String(s) => s.clone(),
+        Value::Number(_) => value_to_string(input),
+        _ if is_marked_safe(input) => value_to_string_raw(input).into_owned(),
+        _ => {
+            return Ok(input.clone());
+        }
+    };
+
+    fn copy_safeness(input: &Value, s: String) -> Value {
+        if is_marked_safe(input) {
+            mark_safe(s)
+        } else {
+            Value::String(s)
+        }
+    }
+
+    if from.is_empty() {
+        // Nunjucks / Python: `new + chars.join(new) + new` (no separator before the first char).
+        let chs: Vec<char> = hay.chars().collect();
+        let mut res = to.clone();
+        for (i, ch) in chs.iter().enumerate() {
+            res.push(*ch);
+            if i + 1 < chs.len() {
+                res.push_str(&to);
+            }
+        }
+        res.push_str(&to);
+        return Ok(copy_safeness(input, res));
+    }
+
+    let mut pos = 0usize;
+    let mut count = 0usize;
+    let mut next = hay.find(&from);
+    if max_rep == 0 || next.is_none() {
+        return Ok(copy_safeness(input, hay));
+    }
+    let mut out = String::new();
+    while let Some(idx) = next {
+        if count >= max_rep {
+            break;
+        }
+        out.push_str(&hay[pos..idx]);
+        out.push_str(&to);
+        pos = idx + from.len();
+        count += 1;
+        next = hay[pos..].find(&from).map(|i| i + pos);
+    }
+    if pos < hay.len() {
+        out.push_str(&hay[pos..]);
+    }
+    Ok(copy_safeness(input, out))
+}
+
 /// Applies a filter (`name`) to `input` with extra `args` (Nunjucks-style).
 ///
 /// Resolves user filters from [`Environment`] first; built-ins are used when no custom filter matches.
 pub fn apply_builtin(
     env: &Environment,
+    rng: &mut impl Rng,
     name: &str,
     input: &Value,
     args: &[Value],
@@ -758,17 +882,16 @@ pub fn apply_builtin(
             }
             Ok(Value::String(s))
         }
-        "replace" => {
-            let from = args
-                .first()
-                .map(value_to_string)
-                .ok_or_else(|| RunjucksError::new("replace filter needs from string"))?;
-            let to = args
-                .get(1)
-                .map(value_to_string)
-                .unwrap_or_default();
-            let hay = value_to_string(input);
-            Ok(Value::String(hay.replace(&from, &to)))
+        "replace" => filter_replace_nunjucks(input, args),
+        "random" => {
+            let Value::Array(arr) = input else {
+                return Ok(Value::Null);
+            };
+            if arr.is_empty() {
+                return Ok(Value::Null);
+            }
+            let idx = rng.gen_range(0..arr.len());
+            Ok(arr[idx].clone())
         }
         "round" => {
             let n = as_f64_arg(input).ok_or_else(|| RunjucksError::new("round filter expects a number"))?;
@@ -827,6 +950,8 @@ pub fn apply_builtin(
         "urlize" => Ok(filter_urlize(input, args)),
         "selectattr" => Ok(filter_selectattr(input, args)),
         "rejectattr" => Ok(filter_rejectattr(input, args)),
+        "select" => filter_select(env, input, args),
+        "reject" => filter_reject(env, input, args),
         "groupby" => filter_groupby(input, args),
         "abs" => {
             let n = as_f64_arg(input).ok_or_else(|| RunjucksError::new("abs filter expects a number"))?;

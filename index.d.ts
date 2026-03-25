@@ -6,11 +6,15 @@ export declare class Environment {
   renderString(template: string, context: any): string
   setAutoescape(enabled: boolean): void
   setDev(enabled: boolean): void
+  /** Fixes the PRNG used by `| random` for reproducible tests (omit / pass `undefined` to use a fresh non-deterministic seed per render). */
+  setRandomSeed(seed?: number | undefined | null): void
   /** Registers `(input, ...args) => any`. Overrides a built-in filter with the same name. */
   addFilter(name: string, func: unknown): void
+  /** Registers `(value, ...args) => boolean` (truthy return) for `is` tests and for `select` / `reject`. Built-in tests (`odd`, `even`, …) take precedence over the same name. */
+  addTest(name: string, func: unknown): void
   /** JSON-serializable globals only; JavaScript functions are rejected by conversion (see parity doc). */
   addGlobal(name: string, value: any): void
-  /** Subset of Nunjucks `configure`: `autoescape` and `dev` are applied; other keys are not supported yet. */
+  /** Subset of Nunjucks `configure`: `autoescape`, `dev`, and `throwOnUndefined` are applied; other keys are not supported yet. */
   configure(opts: ConfigureOptions): void
   /** Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc. */
   setTemplateMap(map: Record<string, string>): void
@@ -22,6 +26,7 @@ export type JsEnvironment = Environment
 export interface ConfigureOptions {
   autoescape?: boolean
   dev?: boolean
+  throwOnUndefined?: boolean
 }
 
 export declare function renderString(template: string, context: any): string

@@ -1,21 +1,28 @@
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use runjucks_core::environment::Environment;
 use runjucks_core::filters::{apply_builtin, escape_html};
 use runjucks_core::value::is_marked_safe;
 use serde_json::{json, Value};
 
+fn test_rng() -> SmallRng {
+    SmallRng::seed_from_u64(0x5EED)
+}
+
 #[test]
 fn builtin_upper_lower_length() {
     let env = Environment::default();
+    let mut rng = test_rng();
     assert_eq!(
-        apply_builtin(&env, "upper", &json!("ab"), &[]).unwrap(),
+        apply_builtin(&env, &mut rng, "upper", &json!("ab"), &[]).unwrap(),
         json!("AB")
     );
     assert_eq!(
-        apply_builtin(&env, "lower", &json!("AB"), &[]).unwrap(),
+        apply_builtin(&env, &mut rng, "lower", &json!("AB"), &[]).unwrap(),
         json!("ab")
     );
     assert_eq!(
-        apply_builtin(&env, "length", &json!("hello"), &[]).unwrap(),
+        apply_builtin(&env, &mut rng, "length", &json!("hello"), &[]).unwrap(),
         json!(5)
     );
 }
@@ -23,18 +30,20 @@ fn builtin_upper_lower_length() {
 #[test]
 fn builtin_join_round_replace() {
     let env = Environment::default();
+    let mut rng = test_rng();
     assert_eq!(
-        apply_builtin(&env, "join", &json!(["a", "b"]), &[json!(",")])
+        apply_builtin(&env, &mut rng, "join", &json!(["a", "b"]), &[json!(",")])
             .unwrap(),
         json!("a,b")
     );
     assert_eq!(
-        apply_builtin(&env, "round", &json!(4.5667), &[]).unwrap(),
+        apply_builtin(&env, &mut rng, "round", &json!(4.5667), &[]).unwrap(),
         json!(5)
     );
     assert_eq!(
         apply_builtin(
             &env,
+            &mut rng,
             "replace",
             &json!("foofoo"),
             &[json!("foo"), json!("bar")]
@@ -45,11 +54,64 @@ fn builtin_join_round_replace() {
 }
 
 #[test]
+fn replace_max_count_and_empty_needle_match_nunjucks() {
+    let env = Environment::default();
+    let mut rng = test_rng();
+    assert_eq!(
+        apply_builtin(
+            &env,
+            &mut rng,
+            "replace",
+            &json!("ababab"),
+            &[json!("ab"), json!("x"), json!(2)]
+        )
+        .unwrap(),
+        json!("xxab")
+    );
+    assert_eq!(
+        apply_builtin(
+            &env,
+            &mut rng,
+            "replace",
+            &json!("foo"),
+            &[json!(""), json!(".")]
+        )
+        .unwrap(),
+        json!(".f.o.o.")
+    );
+    assert_eq!(
+        apply_builtin(
+            &env,
+            &mut rng,
+            "replace",
+            &json!("hello"),
+            &[json!("l"), json!(""), json!(1)]
+        )
+        .unwrap(),
+        json!("helo")
+    );
+}
+
+#[test]
+fn random_filter_single_element_is_stable() {
+    let env = Environment::default();
+    let mut rng = test_rng();
+    assert_eq!(
+        apply_builtin(&env, &mut rng, "random", &json!([42]), &[]).unwrap(),
+        json!(42)
+    );
+}
+
+#[test]
 fn builtin_abs_capitalize() {
     let env = Environment::default();
-    assert_eq!(apply_builtin(&env, "abs", &json!(-3), &[]).unwrap(), json!(3));
+    let mut rng = test_rng();
     assert_eq!(
-        apply_builtin(&env, "capitalize", &json!("foo"), &[]).unwrap(),
+        apply_builtin(&env, &mut rng, "abs", &json!(-3), &[]).unwrap(),
+        json!(3)
+    );
+    assert_eq!(
+        apply_builtin(&env, &mut rng, "capitalize", &json!("foo"), &[]).unwrap(),
         json!("Foo")
     );
 }
@@ -72,25 +134,35 @@ fn escape_html_empty() {
 #[test]
 fn safe_and_escape_filter_mark_safe() {
     let env = Environment::default();
-    let raw = apply_builtin(&env, "safe", &json!("<b>"), &[]).unwrap();
+    let mut rng = test_rng();
+    let raw = apply_builtin(&env, &mut rng, "safe", &json!("<b>"), &[]).unwrap();
     assert!(is_marked_safe(&raw));
-    let esc = apply_builtin(&env, "escape", &raw, &[]).unwrap();
+    let esc = apply_builtin(&env, &mut rng, "escape", &raw, &[]).unwrap();
     assert_eq!(esc, raw);
-    let doubled = apply_builtin(&env, "escape", &json!("<"), &[]).unwrap();
+    let doubled = apply_builtin(&env, &mut rng, "escape", &json!("<"), &[]).unwrap();
     assert!(is_marked_safe(&doubled));
 }
 
 #[test]
 fn default_undefined_and_boolean_mode() {
     let env = Environment::default();
+    let mut rng = test_rng();
     use runjucks_core::value::undefined_value;
     assert_eq!(
-        apply_builtin(&env, "default", &undefined_value(), &[json!("foo")]).unwrap(),
+        apply_builtin(
+            &env,
+            &mut rng,
+            "default",
+            &undefined_value(),
+            &[json!("foo")]
+        )
+        .unwrap(),
         json!("foo")
     );
     assert_eq!(
         apply_builtin(
             &env,
+            &mut rng,
             "default",
             &Value::Null,
             &[json!("foo")]
@@ -101,6 +173,7 @@ fn default_undefined_and_boolean_mode() {
     assert_eq!(
         apply_builtin(
             &env,
+            &mut rng,
             "default",
             &json!(false),
             &[json!("foo"), json!(true)]
@@ -109,7 +182,14 @@ fn default_undefined_and_boolean_mode() {
         json!("foo")
     );
     assert_eq!(
-        apply_builtin(&env, "d", &undefined_value(), &[json!("z")]).unwrap(),
+        apply_builtin(
+            &env,
+            &mut rng,
+            "d",
+            &undefined_value(),
+            &[json!("z")]
+        )
+        .unwrap(),
         json!("z")
     );
 }
@@ -117,8 +197,10 @@ fn default_undefined_and_boolean_mode() {
 #[test]
 fn batch_and_join_attr() {
     let env = Environment::default();
+    let mut rng = test_rng();
     let out = apply_builtin(
         &env,
+        &mut rng,
         "batch",
         &json!([1, 2, 3, 4, 5, 6]),
         &[json!(2)],
@@ -127,6 +209,7 @@ fn batch_and_join_attr() {
     assert_eq!(out, json!([[1, 2], [3, 4], [5, 6]]));
     let with_fill = apply_builtin(
         &env,
+        &mut rng,
         "batch",
         &json!([1, 2, 3]),
         &[json!(2), json!(0)],
@@ -135,6 +218,7 @@ fn batch_and_join_attr() {
     assert_eq!(with_fill, json!([[1, 2], [3, 0]]));
     let joined = apply_builtin(
         &env,
+        &mut rng,
         "join",
         &json!([{"x": "a"}, {"x": "b"}]),
         &[json!(","), json!("x")],
@@ -146,12 +230,27 @@ fn batch_and_join_attr() {
 #[test]
 fn round_ceil_floor() {
     let env = Environment::default();
+    let mut rng = test_rng();
     assert_eq!(
-        apply_builtin(&env, "round", &json!(1.5), &[json!(0), json!("floor")]).unwrap(),
+        apply_builtin(
+            &env,
+            &mut rng,
+            "round",
+            &json!(1.5),
+            &[json!(0), json!("floor")]
+        )
+        .unwrap(),
         json!(1)
     );
     assert_eq!(
-        apply_builtin(&env, "round", &json!(1.3), &[json!(0), json!("ceil")]).unwrap(),
+        apply_builtin(
+            &env,
+            &mut rng,
+            "round",
+            &json!(1.3),
+            &[json!(0), json!("ceil")]
+        )
+        .unwrap(),
         json!(2)
     );
 }
@@ -159,12 +258,27 @@ fn round_ceil_floor() {
 #[test]
 fn selectattr_rejectattr_and_sort() {
     let env = Environment::default();
+    let mut rng = test_rng();
     let arr = json!([{"a": 1}, {"a": 0}, {"a": 2}]);
-    let sel = apply_builtin(&env, "selectattr", &arr, &[json!("a")]).unwrap();
+    let sel = apply_builtin(
+        &env,
+        &mut rng,
+        "selectattr",
+        &arr,
+        &[json!("a")],
+    )
+    .unwrap();
     assert_eq!(sel, json!([{"a": 1}, {"a": 2}]));
-    let rej = apply_builtin(&env, "rejectattr", &arr, &[json!("a")]).unwrap();
+    let rej = apply_builtin(
+        &env,
+        &mut rng,
+        "rejectattr",
+        &arr,
+        &[json!("a")],
+    )
+    .unwrap();
     assert_eq!(rej, json!([{"a": 0}]));
-    let sorted = apply_builtin(&env, "sort", &arr, &[]).unwrap();
+    let sorted = apply_builtin(&env, &mut rng, "sort", &arr, &[]).unwrap();
     assert_eq!(
         sorted,
         json!([{"a": 0}, {"a": 1}, {"a": 2}])
@@ -184,6 +298,7 @@ fn template_safe_outputs_raw_html_when_autoescape_on() {
 #[test]
 fn forceescape_is_safe_wrapped() {
     let env = Environment::default();
-    let v = apply_builtin(&env, "forceescape", &json!("<"), &[]).unwrap();
+    let mut rng = test_rng();
+    let v = apply_builtin(&env, &mut rng, "forceescape", &json!("<"), &[]).unwrap();
     assert!(is_marked_safe(&v));
 }

@@ -18,8 +18,8 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 | Category | P0 | P1 | P2 | P3 |
 |----------|----|----|----|----|
 | **Tags** | — | — | — | `asyncEach`, `asyncAll`, `ifAsync` |
-| **Expressions** | — | — | `throwOnUndefined`, Jinja slices | |
-| **Filters** | — | — | `select` / `reject` (dynamic tests), `random` | |
+| **Expressions** | — | — | — | |
+| **Filters** | — | — | — | |
 | **Node API** | — | — | `compile`, `getTemplate`, `render(name)`, filesystem loader, Express | async `render`, `addExtension`, precompile, browser build |
 | **Conformance** | — | more vectors from upstream tests | optional perf CI artifact | |
 
@@ -29,7 +29,7 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 
 ### Implemented (parser + renderer)
 
-`if`/`elif`/`else`/`endif`, `for`/`else`/`endfor` (single, multi-var, k/v, `loop.*`), `switch`/`case`/`default`/`endswitch`, `set`/`endset` (multi-target, block capture, frame scoping), `include` (expression, `ignore missing`), `import`/`from` (top-level macros; see Partial), `extends` (full expression, evaluated at render; see Partial for static cycle tracing), `block`/`endblock`, `macro`/`endmacro`, `{{ super() }}` (multi-level `extends`), `{% call %}…{% endcall %}` / `caller()`, `{% filter %}…{% endfilter %}`.
+`if`/`elif`/`else`/`endif`, `for`/`else`/`endfor` (single, multi-var, k/v, `loop.*`), `switch`/`case`/`default`/`endswitch`, `set`/`endset` (multi-target, block capture, frame scoping), `include` (expression, `ignore missing`, `without context` / `with context`), `import`/`from` (top-level macros; see Partial), `extends` (full expression, evaluated at render; see Partial for static cycle tracing), `block`/`endblock`, `macro`/`endmacro` (defaults + call kwargs), `{{ super() }}` (multi-level `extends`), `{% call %}…{% endcall %}` / `caller()`, `{% filter %}…{% endfilter %}`.
 
 ### Not yet implemented
 
@@ -56,8 +56,8 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 
 ### Partial
 
-- **`{% macro %}`**: header parsing does not support **default argument values** or keyword args (`bar="default"`). Macro body renders to string; no `SafeString` handling.
-- **`{% include %}`**: no `with context` / `without context` modifiers (Nunjucks `parseFrom` supports these for `{% from %}` and docs mention them for include in some builds).
+- **`{% macro %}`**: macro body renders to string; no `SafeString` handling. **Shipped:** default parameters and call-site keyword args (`{% macro m(a, b=1) %}`, `{{ m(2, b=3) }}`) per Nunjucks binding rules.
+- **`{% include %}`**: **`without context`** is supported (Jinja-style isolated context); explicit **`with context`** parses as a no-op vs default include (full frame stack). Stock **nunjucks 3.x** does not parse these on `include`, so they are not on the npm parity allowlist.
 - **`{% import %}` / `{% from %}`**: `with context` / `without context` are parsed and stored but **not** applied to macro extraction (Nunjucks runs `getExported` with merged context); only top-level macros are collected, not side effects from running the imported template.
 - **`{% extends %}`**: dynamic parent names are resolved at render time only; **literal-only** static cycle detection is not extended to extends (cycles are still caught when the resolved name repeats during `build_block_chains`).
 
@@ -67,7 +67,7 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 
 ### Implemented
 
-`Literal`, `Variable`, `GetAttr`, `GetItem`, `Call` (macros, `super()`, `caller()`, built-in globals below), `Filter`, `List`, `Dict`, `InlineIf`, `Unary`, `Binary`, `Compare`, `is` tests (`defined`, `equalto`, `sameas`, `null`/`none`, `falsy`, `truthy`, `number`, `string`, `lower`, `upper`, `callable`).
+`Literal`, `Variable`, `GetAttr`, `GetItem` (including Jinja-style `arr[start:stop:step]` via [`Expr::Slice`](native/crates/runjucks-core/src/ast.rs)), `Call` (macros, `super()`, `caller()`, built-in globals below), `Filter`, `List`, `Dict`, `InlineIf`, `Unary`, `Binary`, `Compare`, `is` tests (`defined`, `equalto`, `sameas`, `null`/`none`, `falsy`, `truthy`, `number`, `string`, `lower`, `upper`, `callable`, `odd`, `even`, `divisibleby`, plus [`Environment::add_test`](native/crates/runjucks-core/src/environment.rs) / `addTest` in JS).
 
 - [x] **`addGlobal` / default globals (`range`, `cycler`, `joiner`)** — **P1** (shipped)
   [`Environment::globals`](native/crates/runjucks-core/src/environment.rs) + [`Environment::add_global`](native/crates/runjucks-core/src/environment.rs); [`Environment::resolve_variable`](native/crates/runjucks-core/src/environment.rs) matches Nunjucks context-over-globals lookup. Defaults in [`globals::default_globals_map`](native/crates/runjucks-core/src/globals.rs). **`range`**: [`globals::builtin_range`](native/crates/runjucks-core/src/globals.rs). **`cycler` / `joiner`**: opaque handles + [`RenderState::cyclers` / `joiners`](native/crates/runjucks-core/src/renderer.rs); `c.next()`, `j()` dispatch in [`Expr::Call`](native/crates/runjucks-core/src/renderer.rs).
@@ -80,14 +80,14 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 
 ### Not yet implemented
 
-- [ ] **Unknown `is` tests silently return `false`** — **P2**
-  Nunjucks throws on unknown tests. Consider erroring or adding `addTest` API.
+- [x] **Unknown `is` tests throw** — **P2** (shipped)
+  [`Environment::apply_is_test`](native/crates/runjucks-core/src/environment.rs) errors with `unknown test: \`…\`` when the name is not built-in and not [`Environment::add_test`](native/crates/runjucks-core/src/environment.rs). NAPI: [`addTest`](native/crates/runjucks-napi/src/lib.rs).
 
-- [ ] **`throwOnUndefined`** — **P2**
-  Nunjucks `Environment` option; undefined variables throw instead of rendering empty. Not surfaced on runjucks `Environment`.
+- [x] **`throwOnUndefined`** — **P2** (shipped)
+  [`Environment::throw_on_undefined`](native/crates/runjucks-core/src/environment.rs); [`resolve_variable`](native/crates/runjucks-core/src/environment.rs) returns an error for unbound names. NAPI: `configure({ throwOnUndefined: true })`.
 
-- [ ] **Jinja-compat array slices** — **P2**
-  `arr[1:4]`, `arr[::2]`, etc. Tested in Nunjucks `jinja-compat.js`; not parsed in [`expr.rs`](native/crates/runjucks-core/src/parser/expr.rs).
+- [x] **Jinja-compat array slices** — **P2** (shipped, native)
+  `arr[1:4]`, `arr[::2]`, etc. Parsed in [`expr.rs` `parse_subscript`](native/crates/runjucks-core/src/parser/expr.rs); evaluated with [`jinja_slice_array`](native/crates/runjucks-core/src/renderer.rs) (same rules as `nunjucks` `sliceLookup`). **Note:** vanilla `nunjucks` requires `installJinjaCompat()` for this syntax; runjucks accepts it without a compat shim. Conformance goldens: `jinja_compat_slice_range`, `jinja_compat_slice_step`; parity tests call `installJinjaCompat()` when `env.jinjaCompat` is set (see [`__test__/parity.test.mjs`](__test__/parity.test.mjs)).
 
 ---
 
@@ -95,24 +95,20 @@ Living checklist of **what runjucks still needs** to match Nunjucks behavior. Pu
 
 ### Implemented
 
-Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.rs): `upper`, `lower`, `length`, `join` (optional `attr`), `replace`, `round` (precision + optional `ceil`/`floor`), `escape` / `e`, `safe`, `forceescape`, `default` / `d` (two-arg undefined-only vs three-arg `boolean` “or” mode), `batch`, `abs`, `capitalize`, `first`, `last`, `sort` (reverse, case-sensitive, attribute), `reverse`, `trim`, `int`, `float`, `string`, `title`, `truncate`, `striptags`, `urlencode`, `indent`, `nl2br`, `sum`, `wordcount`, `dictsort`, `center`, `dump`, `list`, `slice`, `urlize`, `selectattr`, `rejectattr`, `groupby`.
+Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.rs): `upper`, `lower`, `length`, `join` (optional `attr`), `replace` (optional max count + empty-needle behavior aligned with Nunjucks), `random` (array element; seeded via [`Environment::random_seed`](native/crates/runjucks-core/src/environment.rs) / NAPI `setRandomSeed` for stable tests), `round` (precision + optional `ceil`/`floor`), `escape` / `e`, `safe`, `forceescape`, `default` / `d` (two-arg undefined-only vs three-arg `boolean` “or” mode), `batch`, `abs`, `capitalize`, `first`, `last`, `sort` (reverse, case-sensitive, attribute), `reverse`, `trim`, `int`, `float`, `string`, `title`, `truncate`, `striptags`, `urlencode`, `indent`, `nl2br`, `sum`, `wordcount`, `dictsort`, `center`, `dump`, `list`, `slice`, `urlize`, `selectattr`, `rejectattr`, `select`, `reject`, `groupby`.
 
 - **Safe strings:** [`value::RJ_SAFE`](native/crates/runjucks-core/src/value.rs) / [`mark_safe`](native/crates/runjucks-core/src/value.rs); unbound names use [`value::RJ_UNDEFINED`](native/crates/runjucks-core/src/value.rs) for Nunjucks `default` / `defined` parity with [`Environment::resolve_variable`](native/crates/runjucks-core/src/environment.rs).
 
 ### Partial
 
-- **`replace`:** no `maxCount` / empty-`from` Python-style parity from Nunjucks.
 - **`length`:** no ECMAScript `Map`/`Set` size.
-- **`select` / `reject`:** require `Environment` test registry (`getTest`); not implemented.
-- **`random`:** nondeterministic; not implemented.
 - **`striptags`:** `preserveLinebreaks` branch is simplified vs Nunjucks.
 - **Filter safeness chaining:** Nunjucks `copySafeness` across many filters is only partially mirrored (`string` / `escape` / `safe` paths).
 
 ### Not yet implemented
 
-- [ ] **`select` / `reject`** — **P2** (needs `addTest` / built-in test lookup like Nunjucks).
-
-- [ ] **`random`** — **P2** (nondeterministic; omit or add seeded test hook).
+- [x] **`select` / `reject`** — **P2** (shipped)
+  [`filter_select` / `filter_reject`](native/crates/runjucks-core/src/filters.rs) use [`Environment::apply_is_test`](native/crates/runjucks-core/src/environment.rs) (built-in `odd`, `even`, `divisibleby`, string tests, etc., plus `add_test` / `addTest`).
 
 ---
 
@@ -120,19 +116,21 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 ### Implemented
 
-`renderString` (top-level + `Environment`), `Environment` class (`setAutoescape`, `setDev`, `setTemplateMap`, `renderTemplate`).
+`renderString` (top-level + `Environment`), `Environment` class (`setAutoescape`, `setDev`, `setRandomSeed`, `setTemplateMap`, `renderTemplate`).
 
 - [x] **`addFilter(name, fn)`** — JS `(input, ...args) => any` registered on [`Environment::add_filter`](native/crates/runjucks-core/src/environment.rs); overrides built-ins with the same name. Invoked synchronously during render via a persistent [`napi_ref`](https://nodejs.org/api/n-api.html#napi_create_reference) (main-thread / sync render only).
 
 - [x] **`addGlobal(name, value)`** — JSON-serializable values via [`Environment::add_global`](native/crates/runjucks-core/src/environment.rs). Plain JS functions are rejected at conversion; use an object tagged with `__runjucks_callable` for `is callable` parity (see [`globals.rs`](native/crates/runjucks-core/src/globals.rs)).
 
-- [x] **`configure({ autoescape?, dev? })`** — maps to `Environment` flags; other Nunjucks `configure` keys remain future work until core supports them.
+- [x] **`addTest(name, fn)`** — JS `(value, ...args) => boolean` (truthy ok); see [`JsEnvironment::add_test`](native/crates/runjucks-napi/src/lib.rs). Rust: [`Environment::add_test`](native/crates/runjucks-core/src/environment.rs). Built-in test names still use the built-in implementation.
+
+- [x] **`configure({ autoescape?, dev?, throwOnUndefined? })`** — maps to `Environment` flags; other Nunjucks `configure` keys remain future work until core supports them.
 
 ### Not yet implemented
 
 **P1 (partial / follow-up):**
 - [ ] **`addGlobal` with live JS functions** — invoke user callbacks from templates (beyond JSON + `__runjucks_callable` markers).
-- [ ] **`configure(opts)` full parity** — `throwOnUndefined`, `tags` (custom delimiters), `trimBlocks`, `lstripBlocks` (require lexer/parser/renderer support).
+- [ ] **`configure(opts)` full parity** — `tags` (custom delimiters), `trimBlocks`, `lstripBlocks` (require lexer/parser/renderer support).
 
 **P2:**
 - [ ] **`compile(src)` / `getTemplate(name)`** — return a compiled template object with `.render(ctx)` for caching.
@@ -145,7 +143,7 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 - [ ] **`addExtension`** — custom tag extensions.
 - [ ] **`precompile` / `precompileString`** — ahead-of-time compilation.
 - [ ] **Browser build** — UMD / ESM bundle for browser use.
-- [ ] **`installJinjaCompat()`** — Jinja2 compatibility shim.
+- [ ] **`installJinjaCompat()`** — Jinja2 compatibility shim as a Nunjucks-style JS API (runjucks already parses slices natively; this would mirror `nunjucks.installJinjaCompat` for drop-in migration only).
 
 ---
 
@@ -153,17 +151,14 @@ Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.
 
 ### Current state
 
-- **46** JSON vectors: `render_cases.json` (29) + `filter_cases.json` (6) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (11).
-- **3** render cases marked `"skip": true` (Rust + Node skip until implemented):
-  - `tests_js_filter_default_undefined` — needs full `default` filter semantics.
-  - `tests_js_for_batch` — needs `batch` filter.
-  - `tests_js_set_and_output` — needs `set` + `escape` + autoescape interplay.
+- **66** JSON vectors: `render_cases.json` (40) + `filter_cases.json` (15) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (11).
+- **Filter / set coverage** — `tests_js_filter_default_undefined`, `tests_js_for_batch`, and `tests_js_set_and_output` are exercised by the Rust conformance suite (no `"skip"` flags in JSON); they are also on the perf parity allowlist when comparing to the `nunjucks` npm package.
 - **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) compares runjucks vs the `nunjucks` npm package for every ID in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (non-skipped fixtures + tag parity subset).
 - **Perf allowlist** — grows with green cases; includes `render_cases`, `filter_cases`, and `tag_parity_cases` keys (see file).
 
 ### Next steps
 
-- [ ] **Fix 3 skipped render cases** — **P0**: implement `default` (full), `batch`, fix `set`+escape. Remove `"skip": true` from JSON and keep IDs on the perf allowlist.
+- [x] **Default + batch + set/escape goldens** — covered by conformance + allowlist (see `tests_js_filter_default_undefined`, `tests_js_for_batch`, `tests_js_set_and_output`).
 - [ ] **Grow `tag_parity_cases.json`** — **P1**: add vectors for composition-only cases (`include`/`extends` with loader — often covered in Rust + Node integration tests), more edge cases from upstream.
 - [ ] **Expand perf allowlist** — **P2**: as new conformance cases go green, append IDs under the right key and run `npm run perf`.
 

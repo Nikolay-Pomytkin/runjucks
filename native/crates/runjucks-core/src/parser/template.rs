@@ -2,10 +2,12 @@
 
 #![allow(clippy::manual_contains)]
 
-use crate::ast::{Expr, ForVars, IfBranch, MacroDef, Node, SwitchCase};
+use crate::ast::{Expr, ForVars, IfBranch, MacroDef, MacroParam, Node, SwitchCase};
+use crate::parser::expr::parse_macro_param_segment;
 use crate::errors::{Result, RunjucksError};
 use crate::lexer::Token;
 use crate::parser::parse_expr;
+use crate::parser::split::split_top_level_commas;
 
 /// Longer keywords first so `elseif` does not match as `else`, `endblock` before `block`, etc.
 const TAG_KEYWORDS: &[&str] = &[
@@ -175,16 +177,35 @@ fn parse_set_targets(lhs: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-fn strip_ignore_missing(rest: &str) -> (&str, bool) {
-    let t = rest.trim_end();
-    const SUF: &[u8] = b"ignore missing";
-    let b = t.as_bytes();
-    if b.len() >= SUF.len() && b[b.len() - SUF.len()..].eq_ignore_ascii_case(SUF) {
-        let main = t[..t.len() - SUF.len()].trim_end();
-        (main, true)
-    } else {
-        (t, false)
+/// Strips trailing `ignore missing`, `without context`, and `with context` (longest-first where needed).
+fn strip_trailing_include_modifiers(mut s: &str) -> (&str, bool, Option<bool>) {
+    let mut ignore_missing = false;
+    let mut with_context: Option<bool> = None;
+    loop {
+        let t = s.trim_end();
+        const WOC: &[u8] = b"without context";
+        const WC: &[u8] = b"with context";
+        const IM: &[u8] = b"ignore missing";
+        let b = t.as_bytes();
+        if b.len() >= WOC.len() && b[b.len() - WOC.len()..].eq_ignore_ascii_case(WOC) {
+            s = t[..t.len() - WOC.len()].trim_end();
+            with_context = Some(false);
+            continue;
+        }
+        if b.len() >= WC.len() && b[b.len() - WC.len()..].eq_ignore_ascii_case(WC) {
+            s = t[..t.len() - WC.len()].trim_end();
+            with_context = Some(true);
+            continue;
+        }
+        if b.len() >= IM.len() && b[b.len() - IM.len()..].eq_ignore_ascii_case(IM) {
+            s = t[..t.len() - IM.len()].trim_end();
+            ignore_missing = true;
+            continue;
+        }
+        s = t;
+        break;
     }
+    (s.trim(), ignore_missing, with_context)
 }
 
 /// Byte index of `needle` in `rest` only when outside double-quoted regions (`\"` escapes respected).
@@ -422,56 +443,6 @@ fn parse_block_name(rest: &str) -> Result<String> {
     Ok(name.to_string())
 }
 
-fn split_top_level_commas(s: &str) -> Vec<&str> {
-    if s.is_empty() {
-        return Vec::new();
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::new();
-    let mut start = 0usize;
-    let mut i = 0usize;
-    let mut depth = 0i32;
-    let mut in_string: Option<u8> = None;
-    let mut escaped = false;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if let Some(q) = in_string {
-            if escaped {
-                escaped = false;
-                i += 1;
-                continue;
-            }
-            if c == b'\\' {
-                escaped = true;
-                i += 1;
-                continue;
-            }
-            if c == q {
-                in_string = None;
-            }
-            i += 1;
-            continue;
-        }
-        if c == b'"' || c == b'\'' {
-            in_string = Some(c);
-            i += 1;
-            continue;
-        }
-        match c {
-            b'(' => depth += 1,
-            b')' => depth = (depth - 1).max(0),
-            b',' if depth == 0 => {
-                out.push(s[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    out.push(s[start..].trim());
-    out
-}
-
 fn parse_filter_tag_header(rest: &str) -> Result<(String, Vec<Expr>)> {
     let s = rest.trim();
     if s.is_empty() {
@@ -513,7 +484,7 @@ fn parse_filter_tag_header(rest: &str) -> Result<(String, Vec<Expr>)> {
     Ok((name, vec![]))
 }
 
-fn parse_macro_header(rest: &str) -> Result<(String, Vec<String>)> {
+fn parse_macro_header(rest: &str) -> Result<(String, Vec<MacroParam>)> {
     let rest = rest.trim();
     let open = rest
         .find('(')
@@ -530,14 +501,13 @@ fn parse_macro_header(rest: &str) -> Result<(String, Vec<String>)> {
         .rfind(')')
         .ok_or_else(|| RunjucksError::new("unclosed `)` in macro"))?;
     let inner = rest[open + 1..close].trim();
-    let params: Vec<String> = if inner.is_empty() {
+    let params: Vec<MacroParam> = if inner.is_empty() {
         vec![]
     } else {
-        inner
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
+        split_top_level_commas(inner)
+            .into_iter()
+            .map(parse_macro_param_segment)
+            .collect::<Result<_>>()?
     };
     let tail = rest[close + 1..].trim();
     if !tail.is_empty() {
@@ -672,12 +642,13 @@ fn parse_include_stmt(tokens: &[Token], i: &mut usize) -> Result<Node> {
         return Err(RunjucksError::new("internal: expected `include` tag"));
     };
     let rest0 = strip_keyword_prefix(body, &["include"])?;
-    let (rest, ignore_missing) = strip_ignore_missing(rest0);
-    let template = parse_expr(rest.trim())?;
+    let (expr_src, ignore_missing, with_context) = strip_trailing_include_modifiers(rest0);
+    let template = parse_expr(expr_src.trim())?;
     *i += 1;
     Ok(Node::Include {
         template,
         ignore_missing,
+        with_context,
     })
 }
 

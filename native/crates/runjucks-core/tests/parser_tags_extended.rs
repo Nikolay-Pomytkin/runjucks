@@ -108,6 +108,26 @@ fn parse_set_block_endset() {
 }
 
 #[test]
+fn parse_include_without_context() {
+    let tpl = r#"{% include "x.html" without context %}"#;
+    let tokens = tokenize(tpl).unwrap();
+    let root = parse(&tokens).unwrap();
+    let Node::Root(nodes) = root else {
+        panic!("expected root");
+    };
+    let Node::Include {
+        with_context,
+        ignore_missing,
+        ..
+    } = &nodes[0]
+    else {
+        panic!("expected include");
+    };
+    assert_eq!(with_context, &Some(false));
+    assert!(!*ignore_missing);
+}
+
+#[test]
 fn parse_include_variable_and_ignore_missing() {
     let tpl = r#"{% include name ignore missing %}"#;
     let tokens = tokenize(tpl).unwrap();
@@ -118,12 +138,14 @@ fn parse_include_variable_and_ignore_missing() {
     let Node::Include {
         template,
         ignore_missing,
+        with_context,
     } = &nodes[0]
     else {
         panic!("expected include");
     };
     assert!(matches!(template, Expr::Variable(_)));
     assert!(*ignore_missing);
+    assert!(with_context.is_none());
 }
 
 #[test]

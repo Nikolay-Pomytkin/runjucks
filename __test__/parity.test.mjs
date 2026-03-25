@@ -27,6 +27,9 @@ function makeRunjucksEnv(case_) {
   const ae = case_.env?.autoescape
   env.setAutoescape(ae !== false)
   if (case_.env?.dev === true) env.setDev(true)
+  if (case_.env?.randomSeed != null && typeof env.setRandomSeed === 'function') {
+    env.setRandomSeed(Number(case_.env.randomSeed))
+  }
   return env
 }
 
@@ -61,6 +64,11 @@ for (const id of collectIds()) {
     const rjEnv = makeRunjucksEnv(c)
     const njEnv = makeNunjucksEnv(c)
 
+    let uninstallJinja = null
+    if (c.env?.jinjaCompat === true) {
+      uninstallJinja = nunjucks.installJinjaCompat()
+    }
+
     let rOut
     let nOut
     try {
@@ -68,6 +76,8 @@ for (const id of collectIds()) {
       nOut = njEnv.renderString(tpl, ctx)
     } catch (e) {
       assert.fail(`render error for ${id}: ${e.message}`)
+    } finally {
+      if (uninstallJinja) uninstallJinja()
     }
 
     assert.equal(

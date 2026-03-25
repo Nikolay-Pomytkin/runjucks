@@ -91,3 +91,60 @@ fn custom_filter_with_extra_args() {
         .unwrap();
     assert_eq!(out, "a-a");
 }
+
+#[test]
+fn unknown_is_test_yields_error() {
+    let env = Environment::default();
+    let err = env
+        .render_string("{{ 1 is not_a_builtin_test }}".into(), json!({}))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("unknown test"),
+        "expected unknown test error, got {}",
+        err
+    );
+}
+
+#[test]
+fn throw_on_undefined_errors_for_missing_name() {
+    let mut env = Environment::default();
+    env.throw_on_undefined = true;
+    let err = env
+        .render_string("{{ missing }}".into(), json!({}))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("undefined variable"),
+        "expected undefined variable error, got {}",
+        err
+    );
+}
+
+#[test]
+fn throw_on_undefined_allows_globals() {
+    let mut env = Environment::default();
+    env.throw_on_undefined = true;
+    env.add_global("g", json!(7));
+    let out = env.render_string("{{ g }}".into(), json!({})).unwrap();
+    assert_eq!(out, "7");
+}
+
+#[test]
+fn add_test_registers_is_expression() {
+    let mut env = Environment::default();
+    env.add_test(
+        "positive",
+        Arc::new(|value, _| {
+            let n = value
+                .as_f64()
+                .or_else(|| value.as_i64().map(|i| i as f64))
+                .ok_or_else(|| {
+                    runjucks_core::RunjucksError::new("`positive` test expects a number")
+                })?;
+            Ok(n > 0.0)
+        }),
+    );
+    let out = env
+        .render_string("{{ 3 is positive }} — {{ -1 is positive }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "true — false");
+}

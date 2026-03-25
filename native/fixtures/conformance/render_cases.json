@@ -204,6 +204,13 @@
     "expected": "b"
   },
   {
+    "id": "tests_js_mul_literal",
+    "source": "nunjucks expression multiplication",
+    "template": "{{ 2 * 3 }}",
+    "context": {},
+    "expected": "6"
+  },
+  {
     "id": "globals_js_range_stop_join",
     "source": "nunjucks/nunjucks/src/globals.js `range`",
     "template": "{{ range(3) | join(',') }}",
@@ -270,5 +277,21 @@
       }
     },
     "expected": "true"
+  },
+  {
+    "id": "jinja_compat_slice_range",
+    "source": "Jinja-compat slice (runjucks native; vanilla nunjucks needs installJinjaCompat)",
+    "template": "{{ arr[1:4] | join(',') }}",
+    "context": { "arr": [0, 1, 2, 3, 4, 5] },
+    "env": { "jinjaCompat": true },
+    "expected": "1,2,3"
+  },
+  {
+    "id": "jinja_compat_slice_step",
+    "source": "Jinja-compat slice with step",
+    "template": "{{ nums[::2] | join(',') }}",
+    "context": { "nums": [0, 1, 2, 3, 4] },
+    "env": { "jinjaCompat": true },
+    "expected": "0,2,4"
   }
 ]

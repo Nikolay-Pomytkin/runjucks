@@ -26,6 +26,10 @@ struct EnvOpt {
     autoescape: Option<bool>,
     #[serde(default)]
     dev: Option<bool>,
+    #[serde(default)]
+    throw_on_undefined: Option<bool>,
+    #[serde(default, rename = "randomSeed")]
+    random_seed: Option<u64>,
     /// Merged into [`Environment::globals`] via [`Environment::add_global`] (defaults from
     /// [`Environment::default`] remain unless a key is overridden).
     #[serde(default)]
@@ -55,6 +59,12 @@ fn conformance_render_matches_nunjucks_golden_outputs() {
             }
             if let Some(d) = e.dev {
                 env.dev = d;
+            }
+            if let Some(t) = e.throw_on_undefined {
+                env.throw_on_undefined = t;
+            }
+            if let Some(s) = e.random_seed {
+                env.random_seed = Some(s);
             }
             if let Some(Value::Object(map)) = e.globals.clone() {
                 for (k, v) in map {

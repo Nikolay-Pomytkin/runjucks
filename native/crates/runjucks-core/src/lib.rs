@@ -36,6 +36,6 @@ pub mod renderer;
 pub mod tag_lex;
 pub mod value;
 
-pub use environment::{CustomFilter, Environment};
+pub use environment::{CustomFilter, CustomTest, Environment};
 pub use errors::RunjucksError;
 pub use loader::{map_loader, FnLoader, TemplateLoader};

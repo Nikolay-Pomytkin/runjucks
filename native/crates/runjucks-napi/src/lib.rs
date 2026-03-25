@@ -4,7 +4,7 @@ use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
 use napi::bindgen_prelude::ToNapiValue;
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
-use runjucks_core::{map_loader, CustomFilter, Environment, RunjucksError};
+use runjucks_core::{map_loader, CustomFilter, CustomTest, Environment, RunjucksError};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ptr;
@@ -100,6 +100,47 @@ impl Drop for JsFnRef {
     }
 }
 
+fn json_value_is_truthy(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Null | serde_json::Value::Bool(false) => false,
+        serde_json::Value::Bool(true) => true,
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .map(|x| x != 0.0 && !x.is_nan())
+            .unwrap_or(true),
+        serde_json::Value::String(s) => !s.is_empty(),
+        serde_json::Value::Array(a) => !a.is_empty(),
+        serde_json::Value::Object(o) => {
+            if o.get("__runjucks_undefined") == Some(&serde_json::Value::Bool(true)) {
+                return false;
+            }
+            true
+        }
+    }
+}
+
+fn napi_custom_test(js: Arc<JsFnRef>) -> CustomTest {
+    Arc::new(move |value, args| {
+        let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
+            RunjucksError::new(
+                "custom test invoked without an active Node N-API render context",
+            )
+        })?;
+        if active != js.env {
+            return Err(RunjucksError::new(
+                "N-API environment mismatch during custom test call",
+            ));
+        }
+        let mut call_args: Vec<serde_json::Value> = Vec::with_capacity(1 + args.len());
+        call_args.push(value.clone());
+        call_args.extend_from_slice(args);
+        let out = js
+            .call(&call_args)
+            .map_err(|e: Error| RunjucksError::new(e.to_string()))?;
+        Ok(json_value_is_truthy(&out))
+    })
+}
+
 fn napi_custom_filter(js: Arc<JsFnRef>) -> CustomFilter {
     Arc::new(move |input, args| {
         let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
@@ -139,6 +180,7 @@ fn render_with_env(
 pub struct ConfigureOptions {
     pub autoescape: Option<bool>,
     pub dev: Option<bool>,
+    pub throw_on_undefined: Option<bool>,
 }
 
 #[napi(js_name = "Environment")]
@@ -191,6 +233,17 @@ impl JsEnvironment {
         Ok(())
     }
 
+    /// Fixes the PRNG used by `| random` for reproducible tests (omit / pass `undefined` to use a fresh non-deterministic seed per render).
+    #[napi(js_name = "setRandomSeed")]
+    pub fn set_random_seed(&self, seed: Option<u32>) -> Result<()> {
+        let mut env = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        env.random_seed = seed.map(u64::from);
+        Ok(())
+    }
+
     /// Registers `(input, ...args) => any`. Overrides a built-in filter with the same name.
     #[napi]
     pub fn add_filter(&self, env: Env, name: String, func: Unknown) -> Result<()> {
@@ -200,6 +253,18 @@ impl JsEnvironment {
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         inner.add_filter(name, napi_custom_filter(js));
+        Ok(())
+    }
+
+    /// Registers `(value, ...args) => boolean` (truthy return) for `is` tests and for `select` / `reject`. Built-in tests (`odd`, `even`, …) take precedence over the same name.
+    #[napi(js_name = "addTest")]
+    pub fn add_test(&self, env: Env, name: String, func: Unknown) -> Result<()> {
+        let js = Arc::new(JsFnRef::new(&env, &func)?);
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        inner.add_test(name, napi_custom_test(js));
         Ok(())
     }
 
@@ -214,7 +279,7 @@ impl JsEnvironment {
         Ok(())
     }
 
-    /// Subset of Nunjucks `configure`: `autoescape` and `dev` are applied; other keys are not supported yet.
+    /// Subset of Nunjucks `configure`: `autoescape`, `dev`, and `throwOnUndefined` are applied; other keys are not supported yet.
     #[napi]
     pub fn configure(&self, opts: ConfigureOptions) -> Result<()> {
         let mut env = self
@@ -226,6 +291,9 @@ impl JsEnvironment {
         }
         if let Some(d) = opts.dev {
             env.dev = d;
+        }
+        if let Some(t) = opts.throw_on_undefined {
+            env.throw_on_undefined = t;
         }
         Ok(())
     }

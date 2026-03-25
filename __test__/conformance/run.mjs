@@ -24,6 +24,9 @@ for (const c of loadAllConformanceCases()) {
             env.addGlobal(name, value)
           }
         }
+        if (c.env.randomSeed != null && typeof env.setRandomSeed === 'function') {
+          env.setRandomSeed(Number(c.env.randomSeed))
+        }
         out = env.renderString(c.template, c.context ?? {})
       } else {
         out = renderString(c.template, c.context ?? {})

@@ -30,6 +30,22 @@ fn include_renders_subtemplate() {
 }
 
 #[test]
+fn include_without_context_sees_only_globals() {
+    let mut m = HashMap::new();
+    m.insert(
+        "inner.html".into(),
+        r#"{{ x | default("inner") }}"#.into(),
+    );
+    m.insert(
+        "main.html".into(),
+        r#"{% set x = "outer" %}{% include "inner.html" without context %}"#.into(),
+    );
+    let env = env_with_map(m);
+    let out = env.render_template("main.html", json!({})).unwrap();
+    assert_eq!(out, "inner");
+}
+
+#[test]
 fn include_cycle_errors() {
     let mut m = HashMap::new();
     m.insert("a.html".into(), r#"{% include "b.html" %}"#.into());
