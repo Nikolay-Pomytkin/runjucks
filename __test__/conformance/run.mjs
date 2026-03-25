@@ -24,6 +24,7 @@ for (const c of loadAllConformanceCases()) {
           if (c.env.throwOnUndefined === true) configOpts.throwOnUndefined = true
           if (c.env.trimBlocks === true) configOpts.trimBlocks = true
           if (c.env.lstripBlocks === true) configOpts.lstripBlocks = true
+          if (c.env.tags) configOpts.tags = c.env.tags
           if (Object.keys(configOpts).length > 0) env.configure(configOpts)
         }
         if (c.env.globals) {

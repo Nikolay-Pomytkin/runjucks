@@ -154,5 +154,73 @@
     "context": { "x": "hi" },
     "env": { "trimBlocks": true },
     "expected": "hi\nafter"
+  },
+  {
+    "id": "tag_custom_delimiters_var",
+    "source": "nunjucks custom tags",
+    "template": "Hello <$ name $>!",
+    "context": { "name": "World" },
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "Hello World!"
+  },
+  {
+    "id": "tag_custom_delimiters_block",
+    "source": "nunjucks custom tags",
+    "template": "<% if ok %>yes<% else %>no<% endif %>",
+    "context": { "ok": true },
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "yes"
+  },
+  {
+    "id": "tag_custom_delimiters_for",
+    "source": "nunjucks custom tags for loop",
+    "template": "<% for i in items %><$ i $><% endfor %>",
+    "context": { "items": ["a", "b", "c"] },
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "abc"
+  },
+  {
+    "id": "tag_custom_delimiters_comment",
+    "source": "nunjucks custom tags comment",
+    "template": "a<# comment #>b",
+    "context": {},
+    "env": {
+      "tags": {
+        "blockStart": "<%",
+        "blockEnd": "%>",
+        "variableStart": "<$",
+        "variableEnd": "$>",
+        "commentStart": "<#",
+        "commentEnd": "#>"
+      }
+    },
+    "expected": "ab"
   }
 ]

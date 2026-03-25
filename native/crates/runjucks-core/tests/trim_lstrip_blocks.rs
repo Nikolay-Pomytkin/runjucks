@@ -5,14 +5,14 @@ use serde_json::json;
 fn opts_trim() -> LexerOptions {
     LexerOptions {
         trim_blocks: true,
-        lstrip_blocks: false,
+        ..LexerOptions::default()
     }
 }
 
 fn opts_lstrip() -> LexerOptions {
     LexerOptions {
-        trim_blocks: false,
         lstrip_blocks: true,
+        ..LexerOptions::default()
     }
 }
 
@@ -20,6 +20,7 @@ fn opts_both() -> LexerOptions {
     LexerOptions {
         trim_blocks: true,
         lstrip_blocks: true,
+        ..LexerOptions::default()
     }
 }
 

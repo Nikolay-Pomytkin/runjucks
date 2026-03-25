@@ -4,7 +4,7 @@
 
 use crate::errors::{Result, RunjucksError};
 use crate::globals::{default_globals_map, value_is_callable};
-use crate::lexer::LexerOptions;
+use crate::lexer::{LexerOptions, Tags};
 use crate::loader::TemplateLoader;
 use crate::value::{is_undefined_value, undefined_value, value_to_string};
 use crate::{lexer, parser, renderer};
@@ -63,6 +63,8 @@ pub struct Environment {
     pub trim_blocks: bool,
     /// When true, leading whitespace/tabs on a line before a block tag or comment are stripped (Nunjucks `lstripBlocks`).
     pub lstrip_blocks: bool,
+    /// Custom delimiter strings (Nunjucks `tags` key in `configure`). `None` uses default delimiters.
+    pub tags: Option<Tags>,
     pub(crate) custom_filters: HashMap<String, CustomFilter>,
     pub(crate) custom_tests: HashMap<String, CustomTest>,
 }
@@ -116,6 +118,7 @@ impl Default for Environment {
             random_seed: None,
             trim_blocks: false,
             lstrip_blocks: false,
+            tags: None,
             custom_filters: HashMap::new(),
             custom_tests: HashMap::new(),
         }
@@ -233,6 +236,7 @@ impl Environment {
         LexerOptions {
             trim_blocks: self.trim_blocks,
             lstrip_blocks: self.lstrip_blocks,
+            tags: self.tags.clone(),
         }
     }
 

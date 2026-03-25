@@ -16,16 +16,42 @@
 
 use crate::errors::{Result, RunjucksError};
 
-/// Options controlling whitespace behavior during lexing.
+/// Nunjucks-style delimiter customization (the `tags` key in `configure`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tags {
+    pub block_start: String,
+    pub block_end: String,
+    pub variable_start: String,
+    pub variable_end: String,
+    pub comment_start: String,
+    pub comment_end: String,
+}
+
+impl Default for Tags {
+    fn default() -> Self {
+        Self {
+            block_start: "{%".into(),
+            block_end: "%}".into(),
+            variable_start: "{{".into(),
+            variable_end: "}}".into(),
+            comment_start: "{#".into(),
+            comment_end: "#}".into(),
+        }
+    }
+}
+
+/// Options controlling whitespace behavior and delimiters during lexing.
 ///
-/// Mirrors the Nunjucks `trimBlocks` / `lstripBlocks` configuration keys.
-#[derive(Clone, Copy, Debug, Default)]
+/// Mirrors the Nunjucks `trimBlocks`, `lstripBlocks`, and `tags` configuration keys.
+#[derive(Clone, Debug, Default)]
 pub struct LexerOptions {
     /// When `true`, the first newline after a `{% … %}` tag is stripped.
     pub trim_blocks: bool,
     /// When `true`, leading whitespace and tabs on a line are stripped up to a `{% … %}` tag or `{# … #}` comment
     /// (only when the tag/comment is the first non-whitespace on that line).
     pub lstrip_blocks: bool,
+    /// Custom delimiter strings. `None` uses the Nunjucks defaults (`{%`, `%}`, `{{`, `}}`, `{#`, `#}`).
+    pub tags: Option<Tags>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,19 +61,26 @@ enum OpenKind {
     Var { trim_open: bool },
 }
 
-fn next_opener(rest: &str) -> Option<(usize, OpenKind)> {
+fn next_opener(rest: &str, tags: &Tags) -> Option<(usize, OpenKind)> {
+    let bs = &tags.block_start;
+    let vs = &tags.variable_start;
+    let cs = &tags.comment_start;
+    let bs_trim = format!("{bs}-");
+
+    let vs_trim = format!("{vs}-");
+
     let mut best: Option<(usize, OpenKind)> = None;
     for (i, _) in rest.char_indices() {
         let s = &rest[i..];
-        let candidate = if s.starts_with("{#") {
+        let candidate = if s.starts_with(cs.as_str()) {
             Some((i, OpenKind::Comment))
-        } else if s.starts_with("{%-") {
+        } else if s.starts_with(bs_trim.as_str()) {
             Some((i, OpenKind::Tag { trim_open: true }))
-        } else if s.starts_with("{%") {
+        } else if s.starts_with(bs.as_str()) {
             Some((i, OpenKind::Tag { trim_open: false }))
-        } else if s.starts_with("{{-") {
+        } else if s.starts_with(vs_trim.as_str()) {
             Some((i, OpenKind::Var { trim_open: true }))
-        } else if s.starts_with("{{") {
+        } else if s.starts_with(vs.as_str()) {
             Some((i, OpenKind::Var { trim_open: false }))
         } else {
             None
@@ -63,17 +96,22 @@ fn next_opener(rest: &str) -> Option<(usize, OpenKind)> {
     best
 }
 
-fn parse_tag_prefix(rest: &str) -> Result<(String, usize, bool)> {
-    let open_len = if rest.starts_with("{%-") {
-        3
-    } else if rest.starts_with("{%") {
-        2
+fn parse_tag_prefix(rest: &str, tags: &Tags) -> Result<(String, usize, bool)> {
+    let bs = &tags.block_start;
+    let bs_trim = format!("{bs}-");
+    let open_len = if rest.starts_with(bs_trim.as_str()) {
+        bs_trim.len()
+    } else if rest.starts_with(bs.as_str()) {
+        bs.len()
     } else {
-        return Err(RunjucksError::new("internal lexer error: expected `{%`"));
+        return Err(RunjucksError::new(format!(
+            "internal lexer error: expected `{bs}`"
+        )));
     };
     let after_open = &rest[open_len..];
-    let (body_end, close_len) = find_tag_close(after_open)?;
-    let trim_close = after_open[body_end..].starts_with("-%}");
+    let (body_end, close_len) = find_tag_close(after_open, &tags.block_end)?;
+    let trim_close_marker = format!("-{}", tags.block_end);
+    let trim_close = after_open[body_end..].starts_with(trim_close_marker.as_str());
     let body = after_open[..body_end].trim().to_string();
     let total = open_len + body_end + close_len;
     Ok((body, total, trim_close))
@@ -84,14 +122,21 @@ fn parse_tag_prefix(rest: &str) -> Result<(String, usize, bool)> {
 ///
 /// `rest` is the template suffix **after** the opening `{% raw %}` / `{% verbatim %}` tag was consumed.
 /// Nesting level starts at 1 (inside the outer block).
-fn find_matching_block_close(rest: &str, open_name: &str, end_name: &str) -> Result<usize> {
+fn find_matching_block_close(
+    rest: &str,
+    open_name: &str,
+    end_name: &str,
+    tags: &Tags,
+) -> Result<usize> {
+    let bs = &tags.block_start;
+    let bs_trim = format!("{bs}-");
     let open_prefix = format!("{open_name} ");
     let end_prefix = format!("{end_name} ");
     let mut pos = 0usize;
     let mut level = 1usize;
     while pos < rest.len() {
         let slice = &rest[pos..];
-        if !slice.starts_with("{%") && !slice.starts_with("{%-") {
+        if !slice.starts_with(bs.as_str()) && !slice.starts_with(bs_trim.as_str()) {
             let adv = slice
                 .chars()
                 .next()
@@ -101,7 +146,7 @@ fn find_matching_block_close(rest: &str, open_name: &str, end_name: &str) -> Res
             continue;
         }
         let tag_start = pos;
-        let (body, total, _) = match parse_tag_prefix(slice) {
+        let (body, total, _) = match parse_tag_prefix(slice, tags) {
             Ok(t) => t,
             Err(_) => {
                 pos += slice
@@ -112,9 +157,7 @@ fn find_matching_block_close(rest: &str, open_name: &str, end_name: &str) -> Res
                 continue;
             }
         };
-        // `{%` inside literal text can make `parse_tag_prefix` "succeed" by pairing the wrong `%}`
-        // (e.g. `{%{% endverbatim %}`). Match the old byte-scanner: treat as not-a-tag and step.
-        if body.contains("{%") {
+        if body.contains(bs.as_str()) {
             pos += slice
                 .chars()
                 .next()
@@ -135,7 +178,8 @@ fn find_matching_block_close(rest: &str, open_name: &str, end_name: &str) -> Res
         pos = tag_start + total;
     }
     Err(RunjucksError::new(format!(
-        "unclosed {end_name} block: expected matching `%}}` tag"
+        "unclosed {end_name} block: expected matching `{}` tag",
+        tags.block_end
     )))
 }
 
@@ -146,7 +190,10 @@ enum StringScan {
     StringEscape,
 }
 
-fn find_var_close(after_open: &str) -> Result<(usize, usize)> {
+fn find_var_close(after_open: &str, tags: &Tags) -> Result<(usize, usize)> {
+    let ve = &tags.variable_end;
+    let vs = &tags.variable_start;
+    let trim_close = format!("-{ve}");
     let mut state = StringScan::Code;
     let mut i = 0usize;
     while i < after_open.len() {
@@ -168,18 +215,18 @@ fn find_var_close(after_open: &str) -> Result<(usize, usize)> {
             }
             StringScan::Code => {
                 let rest = &after_open[i..];
-                if rest.starts_with("-}}") {
-                    return Ok((i, 3));
+                if rest.starts_with(trim_close.as_str()) {
+                    return Ok((i, trim_close.len()));
                 }
-                if rest.starts_with("}}") {
-                    return Ok((i, 2));
+                if rest.starts_with(ve.as_str()) {
+                    return Ok((i, ve.len()));
                 }
-                if rest.starts_with("{{") {
-                    return Err(RunjucksError::new(
-                        "nested `{{` inside a variable expression is not allowed",
-                    ));
+                if rest.starts_with(vs.as_str()) {
+                    return Err(RunjucksError::new(format!(
+                        "nested `{vs}` inside a variable expression is not allowed"
+                    )));
                 }
-                if rest.starts_with("\"") {
+                if rest.starts_with('"') {
                     state = StringScan::String;
                     i += 1;
                     continue;
@@ -189,12 +236,13 @@ fn find_var_close(after_open: &str) -> Result<(usize, usize)> {
             }
         }
     }
-    Err(RunjucksError::new(
-        "unclosed variable tag: expected `}}` or `-}}` after `{{`",
-    ))
+    Err(RunjucksError::new(format!(
+        "unclosed variable tag: expected `{ve}` or `-{ve}` after `{vs}`"
+    )))
 }
 
-fn find_tag_close(after_open: &str) -> Result<(usize, usize)> {
+fn find_tag_close(after_open: &str, block_end: &str) -> Result<(usize, usize)> {
+    let trim_close = format!("-{block_end}");
     let mut state = StringScan::Code;
     let mut i = 0usize;
     while i < after_open.len() {
@@ -216,13 +264,13 @@ fn find_tag_close(after_open: &str) -> Result<(usize, usize)> {
             }
             StringScan::Code => {
                 let rest = &after_open[i..];
-                if rest.starts_with("-%}") {
-                    return Ok((i, 3));
+                if rest.starts_with(trim_close.as_str()) {
+                    return Ok((i, trim_close.len()));
                 }
-                if rest.starts_with("%}") {
-                    return Ok((i, 2));
+                if rest.starts_with(block_end) {
+                    return Ok((i, block_end.len()));
                 }
-                if rest.starts_with("\"") {
+                if rest.starts_with('"') {
                     state = StringScan::String;
                     i += 1;
                     continue;
@@ -232,9 +280,9 @@ fn find_tag_close(after_open: &str) -> Result<(usize, usize)> {
             }
         }
     }
-    Err(RunjucksError::new(
-        "unclosed template tag: expected `%}` or `-%}` after `{%`",
-    ))
+    Err(RunjucksError::new(format!(
+        "unclosed template tag: expected `{block_end}` or `-{block_end}` after block start"
+    )))
 }
 
 fn apply_var_trim(body: &str, trim_open: bool, trim_close: bool) -> String {
@@ -273,6 +321,7 @@ pub struct Lexer<'a> {
     /// After `-%}` or `-}}`, strip leading whitespace from the next [`Token::Text`].
     strip_leading_next_text: bool,
     opts: LexerOptions,
+    tags: Tags,
     /// After a `{% … %}` tag when `trim_blocks` is on, strip the first newline from the next text.
     trim_block_newline: bool,
 }
@@ -283,6 +332,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn with_options(input: &'a str, opts: LexerOptions) -> Self {
+        let tags = opts.tags.clone().unwrap_or_default();
         Self {
             input,
             position: 0,
@@ -290,6 +340,7 @@ impl<'a> Lexer<'a> {
             pending: None,
             strip_leading_next_text: false,
             opts,
+            tags,
             trim_block_newline: false,
         }
     }
@@ -305,26 +356,37 @@ impl<'a> Lexer<'a> {
     }
 
     fn skip_comment(&mut self) -> Result<()> {
+        let cs = &self.tags.comment_start;
+        let ce = &self.tags.comment_end;
         let rest = self.rest();
-        if !rest.starts_with("{#") {
-            return Err(RunjucksError::new("internal lexer error: expected `{#`"));
+        if !rest.starts_with(cs.as_str()) {
+            return Err(RunjucksError::new(format!(
+                "internal lexer error: expected `{cs}`"
+            )));
         }
-        let Some(end_rel) = rest.find("#}") else {
-            return Err(RunjucksError::new(
-                "unclosed comment: expected `#}` after `{#`",
-            ));
+        let Some(end_rel) = rest.find(ce.as_str()) else {
+            return Err(RunjucksError::new(format!(
+                "unclosed comment: expected `{ce}` after `{cs}`"
+            )));
         };
-        self.position += end_rel + "#}".len();
+        self.position += end_rel + ce.len();
         Ok(())
     }
 
     fn consume_variable(&mut self, trim_open: bool) -> Result<Token> {
+        let vs = &self.tags.variable_start;
+        let vs_trim = format!("{vs}-");
         let rest = self.rest();
-        let open_len = if rest.starts_with("{{-") { 3 } else { 2 };
+        let open_len = if rest.starts_with(vs_trim.as_str()) {
+            vs_trim.len()
+        } else {
+            vs.len()
+        };
         self.position += open_len;
         let after_open = self.rest();
-        let (body_end, close_len) = find_var_close(after_open)?;
-        let trim_close = after_open[body_end..].starts_with("-}}");
+        let (body_end, close_len) = find_var_close(after_open, &self.tags)?;
+        let trim_close_marker = format!("-{}", self.tags.variable_end);
+        let trim_close = after_open[body_end..].starts_with(trim_close_marker.as_str());
         let body = &after_open[..body_end];
         let expr = apply_var_trim(body, trim_open, trim_close);
         self.position += body_end + close_len;
@@ -336,7 +398,7 @@ impl<'a> Lexer<'a> {
 
     fn consume_tag_at_position(&mut self) -> Result<String> {
         let rest = self.rest();
-        let (body, total, trim_close) = parse_tag_prefix(rest)?;
+        let (body, total, trim_close) = parse_tag_prefix(rest, &self.tags)?;
         self.position += total;
         if trim_close {
             self.strip_leading_next_text = true;
@@ -367,11 +429,11 @@ impl<'a> Lexer<'a> {
         let open_name = Self::open_tag_name(mode);
         let end_name = Self::end_tag_name(mode);
         let rest = self.rest();
-        let idx = find_matching_block_close(rest, open_name, end_name)?;
+        let idx = find_matching_block_close(rest, open_name, end_name, &self.tags)?;
         let literal = rest[..idx].to_string();
         self.position += idx;
         let rest2 = self.rest();
-        let (body, total, trim_close) = parse_tag_prefix(rest2)?;
+        let (body, total, trim_close) = parse_tag_prefix(rest2, &self.tags)?;
         self.position += total;
         if trim_close {
             self.strip_leading_next_text = true;
@@ -430,7 +492,7 @@ impl<'a> Lexer<'a> {
 
             let rest = self.rest();
 
-            match next_opener(rest) {
+            match next_opener(rest, &self.tags) {
                 None => {
                     let mut text = rest.to_owned();
                     self.apply_leading_strip(&mut text);

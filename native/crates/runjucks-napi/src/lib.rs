@@ -4,7 +4,7 @@ use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
 use napi::bindgen_prelude::ToNapiValue;
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
-use runjucks_core::{map_loader, CustomFilter, CustomTest, Environment, RunjucksError};
+use runjucks_core::{map_loader, CustomFilter, CustomTest, Environment, RunjucksError, Tags};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ptr;
@@ -177,12 +177,24 @@ fn render_with_env(
 
 #[derive(Debug, Clone)]
 #[napi(object)]
+pub struct TagsOptions {
+    pub block_start: Option<String>,
+    pub block_end: Option<String>,
+    pub variable_start: Option<String>,
+    pub variable_end: Option<String>,
+    pub comment_start: Option<String>,
+    pub comment_end: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+#[napi(object)]
 pub struct ConfigureOptions {
     pub autoescape: Option<bool>,
     pub dev: Option<bool>,
     pub throw_on_undefined: Option<bool>,
     pub trim_blocks: Option<bool>,
     pub lstrip_blocks: Option<bool>,
+    pub tags: Option<TagsOptions>,
 }
 
 #[napi(js_name = "Environment")]
@@ -281,7 +293,7 @@ impl JsEnvironment {
         Ok(())
     }
 
-    /// Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, and `lstripBlocks` are applied.
+    /// Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied.
     #[napi]
     pub fn configure(&self, opts: ConfigureOptions) -> Result<()> {
         let mut env = self
@@ -302,6 +314,17 @@ impl JsEnvironment {
         }
         if let Some(l) = opts.lstrip_blocks {
             env.lstrip_blocks = l;
+        }
+        if let Some(t) = opts.tags {
+            let defaults = Tags::default();
+            env.tags = Some(Tags {
+                block_start: t.block_start.unwrap_or(defaults.block_start),
+                block_end: t.block_end.unwrap_or(defaults.block_end),
+                variable_start: t.variable_start.unwrap_or(defaults.variable_start),
+                variable_end: t.variable_end.unwrap_or(defaults.variable_end),
+                comment_start: t.comment_start.unwrap_or(defaults.comment_start),
+                comment_end: t.comment_end.unwrap_or(defaults.comment_end),
+            });
         }
         Ok(())
     }

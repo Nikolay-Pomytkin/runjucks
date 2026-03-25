@@ -78,6 +78,10 @@
     "tag_lstrip_blocks_if",
     "tag_trim_lstrip_combined",
     "tag_trim_blocks_for_loop_items",
-    "tag_trim_blocks_no_var_strip"
+    "tag_trim_blocks_no_var_strip",
+    "tag_custom_delimiters_var",
+    "tag_custom_delimiters_block",
+    "tag_custom_delimiters_for",
+    "tag_custom_delimiters_comment"
   ]
 }
