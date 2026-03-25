@@ -27,7 +27,7 @@ npm run build:debug
 ## Using the package
 
 ```js
-import { renderString, Environment } from 'runjucks'
+import { renderString, Environment } from '@zneep/runjucks'
 
 console.log(renderString('Hello {{ name }}', { name: 'Ada' }))
 

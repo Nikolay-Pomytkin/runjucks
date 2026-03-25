@@ -1,4 +1,4 @@
-# Publishes the main `runjucks` package plus per-platform optionalDependencies
+# Publishes the main `@zneep/runjucks` package plus per-platform optionalDependencies
 # when `package.json` version increases on `main` (or manual workflow_dispatch).
 # Skips if the version is already on npm. Requires NPM_TOKEN secret.
 #
@@ -50,7 +50,7 @@ jobs:
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             NEW=$(jq -r .version package.json)
-            if npm view "runjucks@${NEW}" version >/dev/null 2>&1; then
+            if npm view "@zneep/runjucks@${NEW}" version >/dev/null 2>&1; then
               reason='already-on-npm'
             else
               publish=true
@@ -60,7 +60,7 @@ jobs:
             BEFORE="${{ github.event.before }}"
             if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               NEW=$(jq -r .version package.json)
-              if npm view "runjucks@${NEW}" version >/dev/null 2>&1; then
+              if npm view "@zneep/runjucks@${NEW}" version >/dev/null 2>&1; then
                 reason='no-parent-commit'
               else
                 publish=true
@@ -71,7 +71,7 @@ jobs:
               NEW=$(jq -r .version package.json)
               if [ "$OLD" = "$NEW" ]; then
                 reason='version-unchanged'
-              elif npm view "runjucks@${NEW}" version >/dev/null 2>&1; then
+              elif npm view "@zneep/runjucks@${NEW}" version >/dev/null 2>&1; then
                 reason='already-on-npm'
               else
                 publish=true

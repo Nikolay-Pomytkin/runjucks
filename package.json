@@ -1,5 +1,5 @@
 {
-  "name": "runjucks",
+  "name": "@zneep/runjucks",
   "version": "0.1.2",
   "description": "Rust-powered Nunjucks-compatible template engine (Node.js native addon)",
   "main": "index.js",
@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Nikolay-Pomytkin/runjucks.git"
+    "url": "git+https://github.com/Nikolay-Pomytkin/runjucks.git"
   },
   "keywords": [
     "nunjucks",
@@ -23,8 +23,7 @@
     "LICENSE"
   ],
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "napi": {
     "binaryName": "runjucks",
@@ -66,12 +65,12 @@
     "tinybench": "6.0.0"
   },
   "optionalDependencies": {
-    "runjucks-win32-x64-msvc": "0.1.2",
-    "runjucks-darwin-x64": "0.1.2",
-    "runjucks-darwin-arm64": "0.1.2",
-    "runjucks-linux-x64-gnu": "0.1.2",
-    "runjucks-linux-x64-musl": "0.1.2",
-    "runjucks-linux-arm64-gnu": "0.1.2",
-    "runjucks-linux-arm64-musl": "0.1.2"
+    "@zneep/runjucks-win32-x64-msvc": "0.1.2",
+    "@zneep/runjucks-darwin-x64": "0.1.2",
+    "@zneep/runjucks-darwin-arm64": "0.1.2",
+    "@zneep/runjucks-linux-x64-gnu": "0.1.2",
+    "@zneep/runjucks-linux-x64-musl": "0.1.2",
+    "@zneep/runjucks-linux-arm64-gnu": "0.1.2",
+    "@zneep/runjucks-linux-arm64-musl": "0.1.2"
   }
 }

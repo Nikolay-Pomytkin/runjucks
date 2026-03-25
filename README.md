@@ -145,7 +145,7 @@ Generated TypeScript definitions are in [`index.d.ts`](index.d.ts). The entry po
 Example:
 
 ```js
-import { renderString, Environment } from 'runjucks'
+import { renderString, Environment } from '@zneep/runjucks'
 
 console.log(renderString('{{ greeting | upper }}', { greeting: 'hello' }))
 
