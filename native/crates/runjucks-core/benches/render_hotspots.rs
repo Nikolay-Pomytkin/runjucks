@@ -21,6 +21,20 @@ fn for_medium(c: &mut Criterion) {
     });
 }
 
+fn for_200_with_loop_index(c: &mut Criterion) {
+    let nums: Vec<u32> = (0..200).collect();
+    let tpl = "{% for n in nums %}{{ loop.index }}:{{ n }}{% endfor %}".to_string();
+    let env = Environment::default();
+    c.bench_function("for_200_loop_index_and_item", |b| {
+        b.iter(|| {
+            let out = env
+                .render_string(tpl.clone(), json!({ "nums": &nums }))
+                .unwrap();
+            black_box(out)
+        })
+    });
+}
+
 fn many_vars(c: &mut Criterion) {
     let mut ctx = serde_json::Map::new();
     let mut tpl = String::with_capacity(80 * 12);
@@ -65,11 +79,37 @@ fn literal_string_upper_filter(c: &mut Criterion) {
     });
 }
 
+fn attr_chain_three(c: &mut Criterion) {
+    let tpl = "{{ u.a.b.c }}".to_string();
+    let env = Environment::default();
+    let ctx = json!({ "u": { "a": { "b": { "c": "x" } } } });
+    c.bench_function("attr_chain_three_depth", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+fn literal_length_filter(c: &mut Criterion) {
+    let tpl = "{{ 'hello' | length }}".to_string();
+    let env = Environment::default();
+    c.bench_function("literal_string_length_filter", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), json!({})).unwrap();
+            black_box(out)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     for_medium,
+    for_200_with_loop_index,
     many_vars,
     nested_for,
-    literal_string_upper_filter
+    literal_string_upper_filter,
+    attr_chain_three,
+    literal_length_filter
 );
 criterion_main!(benches);

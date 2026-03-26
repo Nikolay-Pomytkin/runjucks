@@ -1,0 +1,28 @@
+---
+title: Performance
+description: How to get fast renders from Runjucks in Node.js — caching, builds, and practical tips.
+---
+
+Runjucks moves lexing, parsing, and rendering into **Rust**, then passes the result back to JavaScript. You still pay for **JSON serialization of the context** on each call and for the **N-API** boundary, so the wins show up most on **CPU-heavy templates** (large loops, many interpolations, deep attribute paths), not on tiny one-line snippets.
+
+## What the engine already does for you
+
+- **Parsed template caching** — When you call `renderString` with the **same source string** and compatible environment settings (delimiters, `trimBlocks`, registered extensions, etc.), the engine reuses the parsed AST instead of lexing and parsing again.
+- **Named template caching** — With `setTemplateMap`, templates are cached by name when the map and parse settings are stable; repeated `renderTemplate` / `getTemplate` work benefits.
+- **`Template` instances** — `compile()` / `new Template()` parse **once** per instance; reuse the instance across many `.render(context)` calls for the same file.
+- **Rust-side hot paths** — The core avoids unnecessary work where it can (for example, fast paths for common expression shapes and efficient context lookups). You do not need to configure these; they apply automatically.
+
+## Recommendations
+
+1. **Reuse environments and templates** — Prefer keeping a long-lived `Environment` and reusing `Template` objects instead of parsing the same string on every request.
+2. **Ship a release native addon in production** — Build with `npm run build` (release). Debug builds are much slower; see [Development](./development/).
+3. **Keep contexts JSON-friendly** — The context is converted to JSON-compatible values for the engine. Very large or deeply nested objects cost more to cross the boundary and to look up; structure data to match what templates actually read.
+4. **Compare fairly vs Nunjucks** — Microbenchmarks differ by workload; Runjucks aims to improve worst-case CPU-heavy rows. Treat numbers from `npm run perf` as directional, not a universal speedup factor.
+
+## Measuring
+
+- **Node vs Nunjucks** — From the package root: `npm run perf` (optional `npm run perf:cold` for a cold environment each iteration). See [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md) in the repo.
+- **Large vs small context (Runjucks only)** — `npm run perf:context` after `npm run build` compares the same template with a minimal context and a large unused nested object, so you can see whether end-to-end time is sensitive to JSON marshalling. Documented in [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md).
+- **Rust-only render cost** — `cargo bench -p runjucks_core --bench render_hotspots` from the `native/` directory (or `npm run bench:rust` from the package root).
+
+Maintainers and contributors: engineering notes, regression list, and backlog live in [`RUNJUCKS_PERF.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/RUNJUCKS_PERF.md) in the repository.

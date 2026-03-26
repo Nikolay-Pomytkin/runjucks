@@ -13,7 +13,9 @@ use crate::loader::TemplateLoader;
 use crate::value::{is_undefined_value, undefined_value};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use ahash::AHashMap;
 use serde_json::{json, Map, Value};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -24,27 +26,48 @@ type ExtendsLayout = (Expr, HashMap<String, Vec<Node>>);
 ///
 /// Values are stored as [`Arc`] so repeated reads and shallow copies of bindings can share the same
 /// [`Value`] allocation when the stack is cloned or merged (see [`Self::flatten`]).
+///
+/// Frame maps use [`ahash::AHashMap`] for faster string-key lookup on hot paths (many distinct variables).
 #[derive(Debug, Clone)]
 pub struct CtxStack {
-    frames: Vec<HashMap<String, Arc<Value>>>,
+    frames: Vec<AHashMap<String, Arc<Value>>>,
+    /// Incremented on any binding change (frames, `set`, `set_local`, `loop` injection).
+    /// Used to reuse merged extension context snapshots when the stack is unchanged.
+    revision: u64,
 }
 
 impl CtxStack {
     pub fn from_root(root: Map<String, Value>) -> Self {
-        let mapped: HashMap<String, Arc<Value>> = root
+        let mapped: AHashMap<String, Arc<Value>> = root
             .into_iter()
             .map(|(k, v)| (k, Arc::new(v)))
             .collect();
-        Self { frames: vec![mapped] }
+        Self {
+            frames: vec![mapped],
+            revision: 0,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Monotonic counter; changes whenever template bindings or frames change.
+    #[inline]
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn push_frame(&mut self) {
-        self.frames.push(HashMap::new());
+        self.frames.push(AHashMap::new());
+        self.bump_revision();
     }
 
     pub fn pop_frame(&mut self) {
         if self.frames.len() > 1 {
             self.frames.pop();
+            self.bump_revision();
         }
     }
 
@@ -71,11 +94,13 @@ impl CtxStack {
         for f in self.frames.iter_mut().rev() {
             if f.contains_key(name) {
                 f.insert(name.to_string(), arc);
+                self.bump_revision();
                 return;
             }
         }
         if let Some(inner) = self.frames.last_mut() {
             inner.insert(name.to_string(), arc);
+            self.bump_revision();
         }
     }
 
@@ -83,12 +108,14 @@ impl CtxStack {
     pub fn set_local(&mut self, name: &str, value: Value) {
         if let Some(inner) = self.frames.last_mut() {
             inner.insert(name.to_string(), Arc::new(value));
+            self.bump_revision();
         }
     }
 
     /// Outer frames first, then inner overwrites — snapshot for macro bodies.
     pub fn flatten(&self) -> Map<String, Value> {
-        let mut m = Map::new();
+        let cap: usize = self.frames.iter().map(|f| f.len()).sum();
+        let mut m = Map::with_capacity(cap);
         for f in &self.frames {
             for (k, v) in f {
                 m.insert(k.clone(), v.as_ref().clone());
@@ -127,6 +154,8 @@ pub struct RenderState<'a> {
     pub joiners: Vec<JoinerState>,
     /// PRNG for `| random` (seed from [`Environment::random_seed`] when set).
     pub rng: SmallRng,
+    /// Cached `stack.flatten()` for [`Node::ExtensionTag`] when [`CtxStack::revision`] matches.
+    extension_context_cache: Option<(u64, Value)>,
 }
 
 impl<'a> RenderState<'a> {
@@ -150,6 +179,7 @@ impl<'a> RenderState<'a> {
             cyclers: Vec::new(),
             joiners: Vec::new(),
             rng,
+            extension_context_cache: None,
         }
     }
 
@@ -741,13 +771,18 @@ fn render_node(
             let handler = env.custom_extensions.get(extension_name).ok_or_else(|| {
                 RunjucksError::new(format!("unknown extension `{extension_name}`"))
             })?;
-            let ctx_val = Value::Object(stack.flatten());
+            let rev = stack.revision();
+            let ctx_for_handler = match state.extension_context_cache.take() {
+                Some((r, v)) if r == rev => v,
+                _ => Value::Object(stack.flatten()),
+            };
             let body_s = if let Some(nodes) = body {
                 Some(render_children(env, state, nodes, stack)?)
             } else {
                 None
             };
-            let out = handler(&ctx_val, args.as_str(), body_s)?;
+            let out = handler(&ctx_for_handler, args.as_str(), body_s)?;
+            state.extension_context_cache = Some((rev, ctx_for_handler));
             Ok(if env.autoescape {
                 crate::filters::escape_html(&out)
             } else {
@@ -869,6 +904,7 @@ fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
             inner.insert("loop".to_string(), Arc::new(Value::Object(m)));
         }
     }
+    stack.bump_revision();
 }
 
 fn render_for(
@@ -973,7 +1009,9 @@ fn render_output(
     Ok(out)
 }
 
-/// Template output for `{{ expr }}`: literals are not auto-escaped; other values respect [`Environment::autoescape`].
+/// Template output for `{{ expr }}`: bare literals are not auto-escaped; variable output and
+/// non-literal expressions (including literal `|upper` / `|lower` / `|length` fast paths) respect
+/// [`Environment::autoescape`] like the `eval_to_value` + stringify path.
 fn eval_for_output(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -986,6 +1024,46 @@ fn eval_for_output(
             let v = env.resolve_variable_ref(stack, name)?;
             let s = crate::value::value_to_string(v.as_ref());
             if env.autoescape && !crate::value::is_marked_safe(v.as_ref()) {
+                Ok(crate::filters::escape_html(&s))
+            } else {
+                Ok(s)
+            }
+        }
+        Expr::Filter { name, input, args } => {
+            if args.is_empty() && !env.custom_filters.contains_key(name) {
+                if let Expr::Literal(Value::String(s)) = input.as_ref() {
+                    match name.as_str() {
+                        "upper" => {
+                            let out = s.to_uppercase();
+                            return if env.autoescape {
+                                Ok(crate::filters::escape_html(&out))
+                            } else {
+                                Ok(out)
+                            };
+                        }
+                        "lower" => {
+                            let out = s.to_lowercase();
+                            return if env.autoescape {
+                                Ok(crate::filters::escape_html(&out))
+                            } else {
+                                Ok(out)
+                            };
+                        }
+                        "length" => {
+                            return Ok(s.chars().count().to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                if let Expr::Literal(Value::Array(a)) = input.as_ref() {
+                    if name == "length" {
+                        return Ok(a.len().to_string());
+                    }
+                }
+            }
+            let v = eval_to_value(env, state, e, stack)?;
+            let s = crate::value::value_to_string(&v);
+            if env.autoescape && !crate::value::is_marked_safe(&v) {
                 Ok(crate::filters::escape_html(&s))
             } else {
                 Ok(s)
@@ -1333,6 +1411,25 @@ fn render_caller_invocation(
     Ok(out)
 }
 
+/// If `e` is a chain of `.attr` segments on a plain variable (`foo.bar.baz`), returns the root
+/// name and path segments in order. Otherwise `None` (dynamic base, call expression, etc.).
+fn collect_attr_chain_from_getattr<'a>(mut e: &'a Expr) -> Option<(&'a str, Vec<&'a str>)> {
+    let mut attrs: Vec<&'a str> = Vec::new();
+    loop {
+        match e {
+            Expr::GetAttr { base, attr } => {
+                attrs.push(attr.as_str());
+                e = base.as_ref();
+            }
+            Expr::Variable(name) => {
+                attrs.reverse();
+                return Some((name.as_str(), attrs));
+            }
+            _ => return None,
+        }
+    }
+}
+
 fn eval_to_value(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -1513,6 +1610,25 @@ fn eval_to_value(
                     return Ok(undefined_value());
                 }
             }
+            if let Some((root_name, attrs)) = collect_attr_chain_from_getattr(e) {
+                if !state.macro_namespaces.contains_key(root_name)
+                    && !state.macro_namespace_values.contains_key(root_name)
+                {
+                    let mut cur = env.resolve_variable_ref(stack, root_name)?;
+                    for a in &attrs {
+                        if is_undefined_value(cur.as_ref()) || cur.as_ref().is_null() {
+                            return Ok(undefined_value());
+                        }
+                        match cur.as_ref() {
+                            Value::Object(o) => {
+                                cur = Cow::Owned(o.get(*a).cloned().unwrap_or_else(undefined_value));
+                            }
+                            _ => return Ok(undefined_value()),
+                        }
+                    }
+                    return Ok(cur.into_owned());
+                }
+            }
             let b = eval_to_value(env, state, base, stack)?;
             if is_undefined_value(&b) || b.is_null() {
                 return Ok(undefined_value());
@@ -1523,25 +1639,82 @@ fn eval_to_value(
             }
         }
         Expr::GetItem { base, index } => {
-            let b = eval_to_value(env, state, base, stack)?;
-            if is_undefined_value(&b) || b.is_null() {
-                return Ok(undefined_value());
-            }
             match index.as_ref() {
                 Expr::Slice {
                     start: s,
                     stop: st,
                     step: step_e,
                 } => {
-                    let Value::Array(a) = &b else {
-                        return Ok(Value::Null);
-                    };
                     let start_v = eval_slice_bound(env, state, s.as_deref(), stack)?;
                     let stop_v = eval_slice_bound(env, state, st.as_deref(), stack)?;
                     let step_v = eval_slice_bound(env, state, step_e.as_deref(), stack)?;
-                    Ok(Value::Array(jinja_slice_array(a, start_v, stop_v, step_v)))
+                    if let Expr::Variable(name) = base.as_ref() {
+                        let base_val = env.resolve_variable_ref(stack, name)?;
+                        if is_undefined_value(base_val.as_ref()) || base_val.as_ref().is_null() {
+                            return Ok(undefined_value());
+                        }
+                        if let Value::Array(a) = base_val.as_ref() {
+                            return Ok(Value::Array(jinja_slice_array(
+                                a,
+                                start_v,
+                                stop_v,
+                                step_v,
+                            )));
+                        }
+                        return Ok(Value::Null);
+                    }
+                    let b = eval_to_value(env, state, base, stack)?;
+                    if is_undefined_value(&b) || b.is_null() {
+                        return Ok(undefined_value());
+                    }
+                    let Value::Array(a) = &b else {
+                        return Ok(Value::Null);
+                    };
+                    Ok(Value::Array(jinja_slice_array(
+                        a,
+                        start_v,
+                        stop_v,
+                        step_v,
+                    )))
                 }
                 idx_e => {
+                    if let Expr::Variable(name) = base.as_ref() {
+                        let base_val = env.resolve_variable_ref(stack, name)?;
+                        if is_undefined_value(base_val.as_ref()) || base_val.as_ref().is_null() {
+                            return Ok(undefined_value());
+                        }
+                        match idx_e {
+                            Expr::Literal(Value::Number(n)) => {
+                                let idx = n
+                                    .as_u64()
+                                    .or_else(|| n.as_f64().map(|x| x as u64))
+                                    .unwrap_or(0) as usize;
+                                match base_val.as_ref() {
+                                    Value::Array(a) => {
+                                        return Ok(
+                                            a.get(idx).cloned().unwrap_or_else(undefined_value),
+                                        );
+                                    }
+                                    _ => return Ok(undefined_value()),
+                                }
+                            }
+                            Expr::Literal(Value::String(k)) => {
+                                match base_val.as_ref() {
+                                    Value::Object(o) => {
+                                        return Ok(
+                                            o.get(k).cloned().unwrap_or_else(undefined_value),
+                                        );
+                                    }
+                                    _ => return Ok(undefined_value()),
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let b = eval_to_value(env, state, base, stack)?;
+                    if is_undefined_value(&b) || b.is_null() {
+                        return Ok(undefined_value());
+                    }
                     let i = eval_to_value(env, state, idx_e, stack)?;
                     match (&b, &i) {
                         (Value::Array(a), Value::Number(n)) => {
@@ -1696,7 +1869,13 @@ fn eval_to_value(
                     match name.as_str() {
                         "upper" => return Ok(Value::String(s.to_uppercase())),
                         "lower" => return Ok(Value::String(s.to_lowercase())),
+                        "length" => return Ok(json!(s.chars().count())),
                         _ => {}
+                    }
+                }
+                if let Expr::Literal(Value::Array(a)) = input.as_ref() {
+                    if name == "length" {
+                        return Ok(json!(a.len()));
                     }
                 }
             }

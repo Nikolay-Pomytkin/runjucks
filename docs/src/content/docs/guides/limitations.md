@@ -3,7 +3,7 @@ title: Limitations and differences
 description: Where Runjucks intentionally differs from Nunjucks or does not yet match it.
 ---
 
-Runjucks targets **Node.js** and **synchronous** rendering. This page lists **product-level** gaps and quirks. For a maintainer-facing checklist, see **`NUNJUCKS_PARITY.md`** in the repository.
+Runjucks targets **Node.js** and **synchronous** rendering. This page lists **product-level** gaps and quirks. For a maintainer-facing checklist, see **`NUNJUCKS_PARITY.md`** in the repository. For throughput and caching (what is *not* a limitation), see [Performance](./performance/).
 
 ## Node.js and loaders
 

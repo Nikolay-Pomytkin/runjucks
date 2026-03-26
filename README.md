@@ -18,7 +18,7 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 
 - **Templates** — `{% import %}`, `{% from %}`, `{% call %}` / `caller`, `{{ super() }}` in blocks, `{% raw %}` (partial: lexer may handle), etc.
 - **Loaders & async** — Async / filesystem loaders beyond an in-memory map; Nunjucks’ full async story.
-- **JS `addFilter`** — Exposed on `Environment` but **not wired** into Rust yet (no-op); custom filters are Rust built-ins only today.
+- **JS `addFilter`** — Registers JavaScript callbacks that run during render (same thread); overrides built-ins with the same name.
 - **Parity** — Many upstream golden tests still fail; see [`native/fixtures/conformance/`](native/fixtures/conformance/README.md). For a full prioritized backlog of remaining gaps (tags, filters, API, conformance), see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md).
 
 Development continues against [Nunjucks](https://github.com/mozilla/nunjucks) behavior; if you keep a checkout next to this repo, the vendored tree is still useful as [`../nunjucks`](../nunjucks).
@@ -105,7 +105,12 @@ npm run docs:dev      # local dev server
 npm run docs:build    # TypeDoc + rustdoc + Starlight → docs/dist/
 ```
 
-Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)). The site includes **Template language**, **JavaScript API**, and **Limitations** guides under [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/).
+Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)). The site includes **Template language**, **JavaScript API**, **Performance**, and **Limitations** guides under [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/).
+
+## Performance
+
+- **User guide:** [Performance](docs/src/content/docs/guides/performance.md) (caching, release builds, measuring).
+- **Maintainer backlog:** [`RUNJUCKS_PERF.md`](RUNJUCKS_PERF.md); **`npm run perf`** / **`npm run bench:rust`** compare workloads vs Nunjucks and Rust microbenches.
 
 ## Development
 
@@ -140,7 +145,7 @@ Integration tests live under [`native/crates/runjucks-core/tests/`](native/crate
 Generated TypeScript definitions are in [`index.d.ts`](index.d.ts). The entry points mirror Nunjucks-style naming:
 
 - **`renderString(template, context)`** — render with default options (autoescape on).
-- **`new Environment()`** — `renderString`, `setAutoescape`, `setDev`, **`setTemplateMap`**, **`renderTemplate`**; **`addFilter` is currently a no-op** (custom filters from JS are not implemented yet).
+- **`new Environment()`** — `renderString`, `setAutoescape`, `setDev`, **`setTemplateMap`**, **`renderTemplate`**, **`addFilter`** (JS callbacks), **`addGlobal`**, etc.
 
 Example:
 

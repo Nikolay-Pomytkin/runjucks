@@ -50,6 +50,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Template language', slug: 'guides/syntax' },
 						{ label: 'JavaScript API', slug: 'guides/javascript-api' },
+						{ label: 'Performance', slug: 'guides/performance' },
 						{ label: 'Limitations', slug: 'guides/limitations' },
 					],
 				},

@@ -60,3 +60,7 @@ Tag **parsing** is fixed in the engine; your callback only **produces output** f
 ## Context and `throwOnUndefined`
 
 By default, missing variables render as empty. With **`throwOnUndefined: true`** (via `configure`), accessing an undefined name is an error. **`undefined` and `null`** from JavaScript both participate in the same JSON-style model the engine uses — treat them with the same expectations as in [Limitations](./limitations/).
+
+## Performance
+
+For practical guidance (caching, release builds, measuring), see **[Performance](./performance/)**. The engine caches parsed templates and applies Rust-side optimizations automatically; the page explains what that means for Node apps.

@@ -59,7 +59,9 @@
     "docs:preview": "npm run preview --prefix docs",
     "perf": "node perf/run.mjs",
     "perf:cold": "node perf/run.mjs --cold",
-    "perf:json": "node perf/run.mjs --json"
+    "perf:json": "node perf/run.mjs --json",
+    "perf:context": "node perf/context-boundary.mjs",
+    "perf:context:json": "node perf/context-boundary.mjs --json"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0",
