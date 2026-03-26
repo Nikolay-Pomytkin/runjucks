@@ -107,6 +107,50 @@ fn literal_length_builtin_on_string_and_array() {
 }
 
 #[test]
+fn is_test_empty_args_uses_variable_lhs() {
+    let env = Environment::default();
+    let ctx = json!({ "v": Value::Null });
+    assert_eq!(
+        env.render_string("{{ v is none }}".into(), ctx.clone()).unwrap(),
+        "true"
+    );
+    assert_eq!(
+        env.render_string("{{ missing is defined }}".into(), ctx).unwrap(),
+        "false"
+    );
+}
+
+#[test]
+fn variable_builtin_upper_lower_length_matches_expectation() {
+    let env = Environment::default();
+    let ctx = json!({
+        "s": "Hello",
+        "arr": [1, 2, 3],
+        "obj": { "a": 1, "b": 2 }
+    });
+    assert_eq!(
+        env.render_string("{{ s | upper }}".into(), ctx.clone()).unwrap(),
+        "HELLO"
+    );
+    assert_eq!(
+        env.render_string("{{ s | lower }}".into(), ctx.clone()).unwrap(),
+        "hello"
+    );
+    assert_eq!(
+        env.render_string("{{ s | length }}".into(), ctx.clone()).unwrap(),
+        "5"
+    );
+    assert_eq!(
+        env.render_string("{{ arr | length }}".into(), ctx.clone()).unwrap(),
+        "3"
+    );
+    assert_eq!(
+        env.render_string("{{ obj | length }}".into(), ctx).unwrap(),
+        "2"
+    );
+}
+
+#[test]
 fn literal_length_fast_path_skipped_when_custom_filter_registered() {
     let mut env = Environment::default();
     env.add_filter(

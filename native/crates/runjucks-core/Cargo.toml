@@ -28,6 +28,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "render_hotspots"
 harness = false
 
+[[bench]]
+name = "parse_hotspots"
+harness = false
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

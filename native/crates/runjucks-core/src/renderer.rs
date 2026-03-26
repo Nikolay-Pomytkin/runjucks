@@ -1031,6 +1031,40 @@ fn eval_for_output(
         }
         Expr::Filter { name, input, args } => {
             if args.is_empty() && !env.custom_filters.contains_key(name) {
+                if let Expr::Variable(var_name) = input.as_ref() {
+                    let input_v = env.resolve_variable_ref(stack, var_name)?;
+                    match name.as_str() {
+                        "upper" => {
+                            let out = crate::value::value_to_string(input_v.as_ref()).to_uppercase();
+                            return if env.autoescape && !crate::value::is_marked_safe(input_v.as_ref())
+                            {
+                                Ok(crate::filters::escape_html(&out))
+                            } else {
+                                Ok(out)
+                            };
+                        }
+                        "lower" => {
+                            let out = crate::value::value_to_string(input_v.as_ref()).to_lowercase();
+                            return if env.autoescape && !crate::value::is_marked_safe(input_v.as_ref())
+                            {
+                                Ok(crate::filters::escape_html(&out))
+                            } else {
+                                Ok(out)
+                            };
+                        }
+                        "length" => {
+                            let n = match input_v.as_ref() {
+                                Value::String(s) => s.chars().count(),
+                                Value::Array(a) => a.len(),
+                                Value::Object(o) => o.len(),
+                                v if is_undefined_value(v) => 0,
+                                _ => 0,
+                            };
+                            return Ok(n.to_string());
+                        }
+                        _ => {}
+                    }
+                }
                 if let Expr::Literal(Value::String(s)) = input.as_ref() {
                     match name.as_str() {
                         "upper" => {
@@ -1239,21 +1273,6 @@ fn is_test_parts(e: &Expr) -> Option<(&str, &[Expr])> {
         }
         _ => None,
     }
-}
-
-fn eval_is_test(
-    env: &Environment,
-    state: &mut RenderState<'_>,
-    test_name: &str,
-    value: &Value,
-    arg_exprs: &[Expr],
-    stack: &mut CtxStack,
-) -> Result<bool> {
-    let arg_vals: Vec<Value> = arg_exprs
-        .iter()
-        .map(|e| eval_to_value(env, state, e, stack))
-        .collect::<Result<_>>()?;
-    env.apply_is_test(test_name, value, &arg_vals)
 }
 
 fn as_number(v: &Value) -> Option<f64> {
@@ -1565,10 +1584,22 @@ fn eval_to_value(
                         }
                     }
                 }
-                let v = eval_to_value(env, state, left, stack)?;
-                Ok(Value::Bool(eval_is_test(
-                    env, state, test_name, &v, arg_exprs, stack,
-                )?))
+                if arg_exprs.is_empty() {
+                    let v = match &**left {
+                        Expr::Variable(n) => env.resolve_variable_ref(stack, n)?,
+                        _ => Cow::Owned(eval_to_value(env, state, left, stack)?),
+                    };
+                    return Ok(Value::Bool(env.apply_is_test(test_name, v.as_ref(), &[])?));
+                }
+                let arg_vals: Vec<Value> = arg_exprs
+                    .iter()
+                    .map(|e| eval_to_value(env, state, e, stack))
+                    .collect::<Result<_>>()?;
+                let v = match &**left {
+                    Expr::Variable(n) => env.resolve_variable_ref(stack, n)?.into_owned(),
+                    _ => eval_to_value(env, state, left, stack)?,
+                };
+                Ok(Value::Bool(env.apply_is_test(test_name, &v, &arg_vals)?))
             }
         },
         Expr::Compare { head, rest } => {
@@ -1865,6 +1896,31 @@ fn eval_to_value(
         }
         Expr::Filter { name, input, args } => {
             if args.is_empty() && !env.custom_filters.contains_key(name) {
+                if let Expr::Variable(var_name) = input.as_ref() {
+                    let input_v = env.resolve_variable_ref(stack, var_name)?;
+                    match name.as_str() {
+                        "upper" => {
+                            return Ok(Value::String(
+                                crate::value::value_to_string(input_v.as_ref()).to_uppercase(),
+                            ));
+                        }
+                        "lower" => {
+                            return Ok(Value::String(
+                                crate::value::value_to_string(input_v.as_ref()).to_lowercase(),
+                            ));
+                        }
+                        "length" => {
+                            return Ok(match input_v.as_ref() {
+                                Value::String(s) => json!(s.chars().count()),
+                                Value::Array(a) => json!(a.len()),
+                                Value::Object(o) => json!(o.len()),
+                                v if is_undefined_value(v) => json!(0),
+                                _ => json!(0),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
                 if let Expr::Literal(Value::String(s)) = input.as_ref() {
                     match name.as_str() {
                         "upper" => return Ok(Value::String(s.to_uppercase())),

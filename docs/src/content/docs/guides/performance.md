@@ -17,12 +17,14 @@ Runjucks moves lexing, parsing, and rendering into **Rust**, then passes the res
 1. **Reuse environments and templates** — Prefer keeping a long-lived `Environment` and reusing `Template` objects instead of parsing the same string on every request.
 2. **Ship a release native addon in production** — Build with `npm run build` (release). Debug builds are much slower; see [Development](./development/).
 3. **Keep contexts JSON-friendly** — The context is converted to JSON-compatible values for the engine. Very large or deeply nested objects cost more to cross the boundary and to look up; structure data to match what templates actually read.
-4. **Compare fairly vs Nunjucks** — Microbenchmarks differ by workload; Runjucks aims to improve worst-case CPU-heavy rows. Treat numbers from `npm run perf` as directional, not a universal speedup factor.
+4. **Optional JSON-string ingress** — If profiling shows that **JSON serialization** of the context is a bottleneck, you can pass a **JSON string** (`renderStringFromJson`) instead of a live object so Rust parses the payload once. Advanced builds can enable a faster JSON parser in the native addon; see [`RUNJUCKS_PERF.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/RUNJUCKS_PERF.md) in the repository.
+5. **Compare fairly vs Nunjucks** — Microbenchmarks differ by workload; Runjucks aims to improve worst-case CPU-heavy rows. Treat numbers from `npm run perf` as directional, not a universal speedup factor.
 
 ## Measuring
 
 - **Node vs Nunjucks** — From the package root: `npm run perf` (optional `npm run perf:cold` for a cold environment each iteration). See [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md) in the repo.
 - **Large vs small context (Runjucks only)** — `npm run perf:context` after `npm run build` compares the same template with a minimal context and a large unused nested object, so you can see whether end-to-end time is sensitive to JSON marshalling. Documented in [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md).
-- **Rust-only render cost** — `cargo bench -p runjucks_core --bench render_hotspots` from the `native/` directory (or `npm run bench:rust` from the package root).
+- **Rust-only render cost** — `cargo bench -p runjucks_core --bench render_hotspots` from the `native/` directory (or `npm run bench:rust` from the package root). Steady-state runs mostly measure **evaluation** after the parse cache is warm.
+- **Rust-only parse cost** — `cargo bench -p runjucks_core --bench parse_hotspots` (or `npm run bench:rust:parse`) measures **lex + parse** (cold compilation) and includes a pair comparing **full render** vs **render-only** on a pre-parsed AST. See [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md).
 
 Maintainers and contributors: engineering notes, regression list, and backlog live in [`RUNJUCKS_PERF.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/RUNJUCKS_PERF.md) in the repository.

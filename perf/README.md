@@ -28,23 +28,34 @@ A **release** build of the `.node` binary is required (`npm run build`, not `bui
 
 ## Rust-only microbenches (Criterion)
 
-The Node harness includes JSON marshalling and N-API. For **pure renderer** throughput, use Criterion from the workspace root:
+The Node harness includes JSON marshalling and N-API. For **pure Rust** throughput, use Criterion from the workspace root.
+
+### Parse vs render (what each bench measures)
+
+| Bench | What it includes |
+|-------|------------------|
+| **`parse_hotspots`** | **Lex + parse only** (`tokenize`, `parse`). No JSON context, no tree-walk eval. Use this to see **cold compilation** cost (unique templates per process, or after cache eviction). |
+| **`render_hotspots`** | **`Environment::render_string`** — steady state hits the **inline parse cache**, so the timed work is mostly **render** (eval, filters, output), not repeated lex/parse. |
+
+To compare **render-only** vs **full compile + render** on the same template, `parse_hotspots` includes a pair: `parse_vs_render_cold_render_string_for200` (new `Environment` each iteration → cold parse every time) vs `parse_vs_render_render_only_for200` (pre-parsed AST + `Environment::render_parsed`). If the second is much faster, parse is a large fraction of the first.
 
 ```bash
+cd native && cargo bench -p runjucks_core --bench parse_hotspots
 cd native && cargo bench -p runjucks_core --bench render_hotspots
 ```
 
-Scenarios mirror [`synthetic.mjs`](synthetic.mjs): 200-iteration `{% for %}`, 80 interpolations, nested `for`.
+`render_hotspots` scenarios mirror [`synthetic.mjs`](synthetic.mjs): 200-iteration `{% for %}`, 80 interpolations, nested `for`.
 
 **Profiling (Linux, `perf`):** after `cargo install flamegraph`, from `native/`:
 
 ```bash
 cargo flamegraph --bench render_hotspots -p runjucks_core
+cargo flamegraph --bench parse_hotspots -p runjucks_core
 ```
 
 On macOS you can use Instruments or sample the same bench binary. Expected hotspots before tuning were: per-iteration `loop` object construction, `serde_json::Value` cloning on variable reads, and string buffer growth — the core now reuses the `loop` map in place, borrows context/globals for bare `{{ var }}` output, and **reserves** accumulation buffers where cheap heuristics exist.
 
-Optional npm alias from package root: `npm run bench:rust`.
+Optional npm aliases from package root: `npm run bench:rust` (render), `npm run bench:rust:parse` (parse).
 
 ### Profile-guided optimization (PGO) — Linux / macOS
 
@@ -78,7 +89,7 @@ PGO can improve the **renderer** binary (Criterion) **without** source changes. 
 
 Paths and `llvm-profdata` availability vary by platform; on macOS you may use `xcrun llvm-profdata`. **BOLT** (post-link) is optional and Linux-specific — see LLVM docs.
 
-**Faster JSON** (`simd-json` / `sonic-rs`) at the **N-API** boundary is only worth it if **context-boundary** probes and profiles show **ingress** dominates. If so, prototype behind a `cfg` feature in `runjucks-napi` and compare parity tests; otherwise skip.
+**Faster JSON parse in Rust** is optional: use **`renderStringFromJson(template, JSON.stringify(ctx))`** so the addon receives JSON text and parses in Rust. Build `runjucks-napi` with **`--features fast-json`** to use `simd-json` for that parse step. Only worth it if **context-boundary** probes and profiles show **ingress** dominates; parity check: [`__test__/json-ingress.test.mjs`](../__test__/json-ingress.test.mjs).
 
 ## What it measures
 

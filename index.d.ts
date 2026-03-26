@@ -4,6 +4,8 @@ export declare class Environment {
   constructor()
   /** Renders with this environment. `Env` is required so custom filters can call back into JavaScript synchronously. */
   renderString(template: string, context: any): string
+  /** Same as [`render_string`], but context is a JSON string (see [`render_string_from_json`]). */
+  renderStringFromJson(template: string, contextJson: string): string
   setAutoescape(enabled: boolean): void
   setDev(enabled: boolean): void
   /** Fixes the PRNG used by `| random` for reproducible tests (omit / pass `undefined` to use a fresh non-deterministic seed per render). */
@@ -60,6 +62,14 @@ export interface ConfigureOptions {
 export declare function render(name: string, context: any): string
 
 export declare function renderString(template: string, context: any): string
+
+/**
+ * Like [`render_string`], but the context is **JSON text** (e.g. from `JSON.stringify(ctx)` in JS).
+ * Skips N-API object→JSON conversion on the JS side when you already have a string; Rust still
+ * parses to `serde_json::Value` before render. Build with `--features fast-json` on `runjucks-napi`
+ * for a faster JSON parse when profiling shows ingress dominates.
+ */
+export declare function renderStringFromJson(template: string, contextJson: string): string
 
 /** Clears the module-level default environment (for tests; matches Nunjucks `reset`). */
 export declare function reset(): void

@@ -219,6 +219,31 @@ fn render_with_env(
         .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
 }
 
+/// Parses JSON text to [`serde_json::Value`]. With the **`fast-json`** crate feature, uses `simd-json`
+/// (same semantic result for valid JSON; invalid JSON errors may differ slightly in message text).
+fn parse_json_context_string(ctx: String) -> napi::Result<serde_json::Value> {
+    #[cfg(feature = "fast-json")]
+    {
+        let mut bytes = ctx.into_bytes();
+        simd_json::serde::from_slice::<serde_json::Value>(&mut bytes)
+            .map_err(|e| Error::from_reason(format!("JSON parse: {e}")))
+    }
+    #[cfg(not(feature = "fast-json"))]
+    {
+        serde_json::from_str(&ctx).map_err(|e| Error::from_reason(e.to_string()))
+    }
+}
+
+/// Like [`render_string`], but the context is **JSON text** (e.g. from `JSON.stringify(ctx)` in JS).
+/// Skips N-API object→JSON conversion on the JS side when you already have a string; Rust still
+/// parses to `serde_json::Value` before render. Build with `--features fast-json` on `runjucks-napi`
+/// for a faster JSON parse when profiling shows ingress dominates.
+#[napi(js_name = "renderStringFromJson")]
+pub fn render_string_from_json(template: String, context_json: String) -> napi::Result<String> {
+    let ctx = parse_json_context_string(context_json)?;
+    render_with_env(&Environment::default(), template, ctx)
+}
+
 #[derive(Debug, Clone)]
 #[napi(object)]
 pub struct TagsOptions {
@@ -413,6 +438,22 @@ impl JsEnvironment {
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         with_render_napi_env(env.raw(), || render_with_env(&inner, template, context))
+    }
+
+    /// Same as [`render_string`], but context is a JSON string (see [`render_string_from_json`]).
+    #[napi(js_name = "renderStringFromJson")]
+    pub fn render_string_from_json_env(
+        &self,
+        env: Env,
+        template: String,
+        context_json: String,
+    ) -> Result<String> {
+        let ctx = parse_json_context_string(context_json)?;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        with_render_napi_env(env.raw(), || render_with_env(&inner, template, ctx))
     }
 
     #[napi]

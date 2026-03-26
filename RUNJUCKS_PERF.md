@@ -2,7 +2,7 @@
 
 **Audience:** maintainers optimizing throughput and memory. For **users**, see [Performance](docs/src/content/docs/guides/performance.md) (practical tips), [JavaScript API](docs/src/content/docs/guides/javascript-api.md) (caching behavior), and [Limitations](docs/src/content/docs/guides/limitations.md). This file is the **engineering plan** for profiling, hot-path work, and what *not* to chase; it is not the public product doc.
 
-**Related:** [NUNJUCKS_PARITY.md](NUNJUCKS_PARITY.md) (behavior vs Nunjucks), [perf/README.md](perf/README.md) (Node harness), [native/crates/runjucks-core/benches/render_hotspots.rs](native/crates/runjucks-core/benches/render_hotspots.rs) (Rust-only Criterion benches).
+**Related:** [NUNJUCKS_PARITY.md](NUNJUCKS_PARITY.md) (behavior vs Nunjucks), [perf/README.md](perf/README.md) (Node harness), [native/crates/runjucks-core/benches/render_hotspots.rs](native/crates/runjucks-core/benches/render_hotspots.rs) (Rust-only **render** Criterion benches), [native/crates/runjucks-core/benches/parse_hotspots.rs](native/crates/runjucks-core/benches/parse_hotspots.rs) (**lex + parse** only).
 
 ---
 
@@ -43,7 +43,12 @@ Runjucks time is spent in roughly four buckets:
 | **Loop object reuse** | In-place update of `loop` `Map` after first iteration | [`inject_loop` / `fill_loop_object`](native/crates/runjucks-core/src/renderer.rs) |
 | **Variable output borrow path** | `resolve_variable_ref` + `get_ref`; `eval_for_output` for `Expr::Variable` | [`environment.rs`](native/crates/runjucks-core/src/environment.rs), [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs) |
 | **String `reserve` heuristics** | `render_for`, `render_children`, `render_output`, root `Node::Root` | [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs) |
-| **Rust microbenches** | Criterion: `for_200_int_concat`, `for_200_loop_index_and_item`, `many_vars_80`, `nested_for_small`, `literal_string_upper_filter`, `attr_chain_three_depth`, `literal_string_length_filter` | [`benches/render_hotspots.rs`](native/crates/runjucks-core/benches/render_hotspots.rs) |
+| **Rust microbenches (render)** | Criterion: `for_200_int_concat`, `for_200_loop_index_and_item`, `many_vars_80`, `nested_for_small`, `literal_string_upper_filter`, `attr_chain_three_depth`, `literal_string_length_filter` | [`benches/render_hotspots.rs`](native/crates/runjucks-core/benches/render_hotspots.rs) |
+| **Rust microbenches (parse)** | `tokenize_*`, `parse_cold_*`, `parse_vs_render_*` — cold lex+parse vs `render_parsed` | [`benches/parse_hotspots.rs`](native/crates/runjucks-core/benches/parse_hotspots.rs), `npm run bench:rust:parse` |
+| **Lexer / parser pre-capacity** | `tokenize` output `Vec` heuristic; root `nodes` in `parse_template_tokens` | [`lexer.rs`](native/crates/runjucks-core/src/lexer.rs), [`parser/template.rs`](native/crates/runjucks-core/src/parser/template.rs) |
+| **Variable `upper` / `lower` / `length` fast path** | Plain `Expr::Variable` input + no args + no custom filter → `resolve_variable_ref` + dispatch (mirrors literal fast path semantics) | [`eval_to_value` / `eval_for_output` → `Expr::Filter`](native/crates/runjucks-core/src/renderer.rs) |
+| **`is` test borrow (empty args)** | Plain variable LHS + no test args → `resolve_variable_ref` + `apply_is_test` without an extra `eval_to_value` clone | [`BinOp::Is`](native/crates/runjucks-core/src/renderer.rs) |
+| **JSON string ingress (optional)** | `renderStringFromJson` parses JSON text then renders; build `runjucks-napi` with `--features fast-json` for `simd-json` parse | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
 | **`Node::Text` backing** | `Arc<str>` per segment; render copies into output string once | [`ast.rs`](native/crates/runjucks-core/src/ast.rs), [`parser/template.rs`](native/crates/runjucks-core/src/parser/template.rs) |
 | **`CtxStack` slots** | `ahash::AHashMap<String, Arc<Value>>` per frame (fast string-key lookup); `inject_loop` uses `Arc::make_mut` | [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs) (`CtxStack`, `inject_loop`) |
 | **Unary + `resolve_variable_ref`** | Plain `Expr::Variable` under unary `+` / `-` / `not` avoids extra `Value` clone where applicable | [`eval_to_value`](native/crates/runjucks-core/src/renderer.rs) |
@@ -156,8 +161,10 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 | **Node vs Nunjucks** | `npm run perf` — uses [`harness-env.mjs`](perf/harness-env.mjs); optional `npm run perf:cold` |
 | **N-API context sizing** | `npm run perf:context` — [`context-boundary.mjs`](perf/context-boundary.mjs) |
 | **Rust-only render cost** | `cd native && cargo bench -p runjucks_core --bench render_hotspots` or `npm run bench:rust` from package root |
-| **Flamegraph (Linux)** | `cargo install flamegraph && cd native && cargo flamegraph --bench render_hotspots -p runjucks_core` |
+| **Rust-only parse cost** | `cd native && cargo bench -p runjucks_core --bench parse_hotspots` or `npm run bench:rust:parse` |
+| **Flamegraph (Linux)** | `cargo install flamegraph && cd native && cargo flamegraph --bench render_hotspots -p runjucks_core` (same for `parse_hotspots`) |
 | **Regression gate** | `npm test`, `cargo test --manifest-path native/Cargo.toml -p runjucks_core`, `node --test __test__/parity.test.mjs` |
+| **Fast JSON parse (maintainers)** | `cargo build -p runjucks-napi --features fast-json` when profiling shows JSON parse dominates after using `renderStringFromJson` |
 
 **Interpretation:** `nj/rj` in [perf/run.mjs](perf/run.mjs) is **Nunjucks mean / Runjucks mean**; **`> 1`** means Runjucks faster. Compare **release** builds only. V8 vs Rust + FFI means **some rows will stay &lt; 1×** even when the engine is healthy.
 
@@ -173,7 +180,7 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 | Filters | [`filters.rs`](native/crates/runjucks-core/src/filters.rs) |
 | AST | [`ast.rs`](native/crates/runjucks-core/src/ast.rs) |
 | Parser | [`parser/`](native/crates/runjucks-core/src/parser/) |
-| NAPI, `Template`, env lock | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
+| NAPI, `Template`, env lock, `renderStringFromJson` | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
 | Perf harness | [`perf/run.mjs`](perf/run.mjs), [`perf/harness-env.mjs`](perf/harness-env.mjs), [`perf/synthetic.mjs`](perf/synthetic.mjs), [`perf/context-boundary.mjs`](perf/context-boundary.mjs) |
 | P1 regression tests | [`tests/perf_regressions.rs`](native/crates/runjucks-core/tests/perf_regressions.rs) |
 
@@ -189,3 +196,4 @@ When you ship a perf track, add a one-line bullet with **date + PR/ref + area** 
 - **2026-03 — P1 follow-on:** `GetAttr` / `GetItem` (literal index + slice) on plain variables use `resolve_variable_ref` where possible; literal `|length` on string/array literals; `eval_for_output` fast paths for literal `upper` / `lower` / `length` (same custom-filter overrides as `eval_to_value`).
 - **2026-03 — P1 follow-on (2):** `CtxStack` frame maps → `ahash::AHashMap` (faster variable lookups; see Criterion `many_vars_80`); dotted attribute chains on a plain variable root use a single `collect_attr_chain_from_getattr` walk; new Criterion cases `attr_chain_three_depth`, `literal_string_length_filter`. User-facing **Performance** guide: [`docs/src/content/docs/guides/performance.md`](docs/src/content/docs/guides/performance.md).
 - **2026-03 — P2 plan:** Node [`context-boundary.mjs`](perf/context-boundary.mjs) + `npm run perf:context`; PGO steps in [`perf/README.md`](perf/README.md); `CtxStack::revision` + extension merged-context cache + `flatten` pre-capacity; Criterion `for_200_loop_index_and_item`; Tier D/P3 **decision gate** in P2 section; faster JSON deferred pending profiles.
+- **2026-03 — Compile/render perf track:** Criterion [`parse_hotspots`](native/crates/runjucks-core/benches/parse_hotspots.rs) + `perf/README.md` table (parse vs render); lexer `tokenize` + template parser root `Vec` pre-capacity; `|upper` / `|lower` / `|length` on **plain variables** via `resolve_variable_ref`; `is` tests with **no args** borrow the LHS variable when it is a bare identifier; NAPI [`renderStringFromJson`](native/crates/runjucks-napi/src/lib.rs) + optional **`fast-json`** (`simd-json`) for Rust-side JSON parse; Node [`__test__/json-ingress.test.mjs`](__test__/json-ingress.test.mjs).

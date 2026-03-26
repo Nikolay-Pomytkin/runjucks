@@ -962,7 +962,7 @@ pub(crate) fn parse_template_tokens(
         ext_closing,
     };
     let mut i = 0usize;
-    let mut nodes = Vec::new();
+    let mut nodes = Vec::with_capacity(tokens.len().min(65536));
     while i < tokens.len() {
         nodes.push(parse_node(tokens, &mut i, &ctx)?);
     }
