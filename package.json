@@ -51,6 +51,7 @@
     "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",
     "test:pending": "node --test __test__/interpolation-pending.mjs",
     "test:rust": "cargo test --manifest-path native/Cargo.toml",
+    "bench:rust": "cargo bench --manifest-path native/Cargo.toml -p runjucks_core --bench render_hotspots",
     "rust:test": "npm run test:rust",
     "test:rust:green": "cargo test --manifest-path native/Cargo.toml --test environment --test errors --test filters --test lexer --test parser --test renderer --test value",
     "docs:dev": "npm run dev --prefix docs",

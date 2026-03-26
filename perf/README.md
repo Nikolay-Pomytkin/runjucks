@@ -13,7 +13,27 @@ npm run perf
 npm run perf:json
 ```
 
-A release build of the `.node` binary is required; otherwise results are meaningless.
+A **release** build of the `.node` binary is required (`npm run build`, not `build:debug`); otherwise Rust hot loops are massively skewed and comparisons to Nunjucks are meaningless.
+
+## Rust-only microbenches (Criterion)
+
+The Node harness includes JSON marshalling and N-API. For **pure renderer** throughput, use Criterion from the workspace root:
+
+```bash
+cd native && cargo bench -p runjucks_core --bench render_hotspots
+```
+
+Scenarios mirror [`synthetic.mjs`](synthetic.mjs): 200-iteration `{% for %}`, 80 interpolations, nested `for`.
+
+**Profiling (Linux, `perf`):** after `cargo install flamegraph`, from `native/`:
+
+```bash
+cargo flamegraph --bench render_hotspots -p runjucks_core
+```
+
+On macOS you can use Instruments or sample the same bench binary. Expected hotspots before tuning were: per-iteration `loop` object construction, `serde_json::Value` cloning on variable reads, and string buffer growth — the core now reuses the `loop` map in place, borrows context/globals for bare `{{ var }}` output, and **reserves** accumulation buffers where cheap heuristics exist.
+
+Optional npm alias from package root: `npm run bench:rust`.
 
 ## What it measures
 
@@ -39,6 +59,10 @@ Interpretation: **nj/rj > 1** means Nunjucks is slower on average for that case 
 - **Environment options match conformance fixtures:** [`run.mjs`](run.mjs) builds each engine with [`harness-env.mjs`](harness-env.mjs) — the same logic as [`__test__/parity.test.mjs`](../__test__/parity.test.mjs): `trimBlocks` / `lstripBlocks`, custom `tags`, `templateMap` loaders, `globals`, `randomSeed`, and (for Jinja-style slice cases) `nunjucks.installJinjaCompat()` while measuring. Older versions of the harness only toggled `autoescape`, which **skipped** most tag-parity cases and skewed numbers.
 - Nunjucks uses `new nunjucks.Environment(loader?, opts)` with the same flags and optional template-map loader as Runjucks’ `setTemplateMap`.
 - Context is **cloned** every iteration so neither engine can rely on in-place mutation across calls.
+
+## Mutex vs RwLock (N-API)
+
+The addon keeps a **`Mutex<Environment>`** around the Rust `Environment`. Node runs rendering on a single thread; an `RwLock` was not adopted — uncontended mutex cost is negligible, and migration would touch every mutating N-API method without proven gain on realistic workloads.
 
 ## Not in CI
 

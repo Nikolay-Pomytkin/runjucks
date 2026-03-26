@@ -14,6 +14,7 @@ use crate::parser::is_reserved_tag_keyword;
 use crate::value::{is_undefined_value, undefined_value, value_to_string};
 use crate::{lexer, parser, renderer};
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
@@ -441,16 +442,29 @@ impl Environment {
     /// Resolves a name: template context first (any frame), then [`Environment::globals`].
     ///
     /// Unbound names yield [`crate::value::undefined_value`] unless [`Environment::throw_on_undefined`] is set.
-    pub fn resolve_variable(&self, stack: &renderer::CtxStack, name: &str) -> Result<Value> {
+    ///
+    /// Borrows context/globals when possible to avoid cloning on hot paths (see [`Self::resolve_variable`]).
+    pub fn resolve_variable_ref<'a>(
+        &'a self,
+        stack: &'a renderer::CtxStack,
+        name: &str,
+    ) -> Result<Cow<'a, Value>> {
         if stack.defined(name) {
-            Ok(stack.get(name))
+            Ok(Cow::Borrowed(stack.get_ref(name).expect(
+                "internal error: variable marked defined but missing from stack",
+            )))
         } else if let Some(v) = self.globals.get(name) {
-            Ok(v.clone())
+            Ok(Cow::Borrowed(v))
         } else if self.throw_on_undefined {
             Err(RunjucksError::new(format!("undefined variable: `{name}`")))
         } else {
-            Ok(undefined_value())
+            Ok(Cow::Owned(undefined_value()))
         }
+    }
+
+    /// Unbound names yield [`crate::value::undefined_value`] unless [`Environment::throw_on_undefined`] is set.
+    pub fn resolve_variable(&self, stack: &renderer::CtxStack, name: &str) -> Result<Value> {
+        self.resolve_variable_ref(stack, name).map(|c| c.into_owned())
     }
 
     /// Returns the [`LexerOptions`] derived from this environment's configuration.

@@ -40,13 +40,18 @@ impl CtxStack {
         }
     }
 
-    pub fn get(&self, name: &str) -> Value {
+    /// Borrows the innermost binding for `name` across frames (template context shadows outer).
+    pub fn get_ref(&self, name: &str) -> Option<&Value> {
         for f in self.frames.iter().rev() {
             if let Some(v) = f.get(name) {
-                return v.clone();
+                return Some(v);
             }
         }
-        Value::Null
+        None
+    }
+
+    pub fn get(&self, name: &str) -> Value {
+        self.get_ref(name).cloned().unwrap_or(Value::Null)
     }
 
     pub fn defined(&self, name: &str) -> bool {
@@ -479,6 +484,7 @@ fn render_node(
                 state.push_macros(defs);
             }
             let mut out = String::new();
+            out.reserve(nodes.len().saturating_mul(32));
             for child in nodes.iter() {
                 if matches!(child, Node::MacroDef(_) | Node::Extends { .. }) {
                     continue;
@@ -811,17 +817,41 @@ fn iterable_empty(it: &Iterable) -> bool {
     }
 }
 
+fn fill_loop_object(m: &mut serde_json::Map<String, Value>, i: usize, len: usize) {
+    m.insert(
+        "index".to_string(),
+        Value::Number(((i + 1) as u64).into()),
+    );
+    m.insert("index0".to_string(), Value::Number((i as u64).into()));
+    m.insert("first".to_string(), Value::Bool(i == 0));
+    m.insert(
+        "last".to_string(),
+        Value::Bool(len > 0 && i + 1 == len),
+    );
+    m.insert("length".to_string(), Value::Number((len as u64).into()));
+    m.insert(
+        "revindex".to_string(),
+        Value::Number((len.saturating_sub(i) as u64).into()),
+    );
+    m.insert(
+        "revindex0".to_string(),
+        Value::Number((len.saturating_sub(1).saturating_sub(i) as u64).into()),
+    );
+}
+
+/// Reuses the same `loop` object map in the innermost frame when possible (avoids reallocating keys each iteration).
 fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
-    let m = json!({
-        "index": i + 1,
-        "index0": i,
-        "first": i == 0,
-        "last": len > 0 && i + 1 == len,
-        "length": len,
-        "revindex": len.saturating_sub(i),
-        "revindex0": len.saturating_sub(1).saturating_sub(i),
-    });
-    stack.set_local("loop", m);
+    let inner = stack
+        .frames
+        .last_mut()
+        .expect("inject_loop requires an active frame");
+    if let Some(Value::Object(m)) = inner.get_mut("loop") {
+        fill_loop_object(m, i, len);
+    } else {
+        let mut m = Map::with_capacity(7);
+        fill_loop_object(&mut m, i, len);
+        inner.insert("loop".to_string(), Value::Object(m));
+    }
 }
 
 fn render_for(
@@ -849,6 +879,7 @@ fn render_for(
     match (vars, it) {
         (ForVars::Single(x), Iterable::Rows(items)) => {
             let len = items.len();
+            acc.reserve(len.saturating_mul(16));
             for (i, item) in items.into_iter().enumerate() {
                 inject_loop(stack, i, len);
                 stack.set_local(x, item);
@@ -857,6 +888,7 @@ fn render_for(
         }
         (ForVars::Multi(names), Iterable::Rows(rows)) if names.len() >= 2 => {
             let len = rows.len();
+            acc.reserve(len.saturating_mul(16));
             for (i, row) in rows.into_iter().enumerate() {
                 inject_loop(stack, i, len);
                 if let Value::Array(cols) = row {
@@ -874,6 +906,7 @@ fn render_for(
         }
         (ForVars::Multi(names), Iterable::Pairs(pairs)) if names.len() == 2 => {
             let len = pairs.len();
+            acc.reserve(len.saturating_mul(16));
             for (i, (k, v)) in pairs.into_iter().enumerate() {
                 inject_loop(stack, i, len);
                 stack.set_local(&names[0], Value::String(k));
@@ -902,6 +935,7 @@ fn render_children(
     stack: &mut CtxStack,
 ) -> Result<String> {
     let mut out = String::new();
+    out.reserve(nodes.len().saturating_mul(32));
     for child in nodes {
         out.push_str(&render_node(env, state, child, stack)?);
     }
@@ -915,6 +949,7 @@ fn render_output(
     stack: &mut CtxStack,
 ) -> Result<String> {
     let mut out = String::new();
+    out.reserve(exprs.len().saturating_mul(24));
     for e in exprs {
         out.push_str(&eval_for_output(env, state, e, stack)?);
     }
@@ -930,6 +965,15 @@ fn eval_for_output(
 ) -> Result<String> {
     match e {
         Expr::Literal(v) => Ok(crate::value::value_to_string(v)),
+        Expr::Variable(name) => {
+            let v = env.resolve_variable_ref(stack, name)?;
+            let s = crate::value::value_to_string(v.as_ref());
+            if env.autoescape && !crate::value::is_marked_safe(v.as_ref()) {
+                Ok(crate::filters::escape_html(&s))
+            } else {
+                Ok(s)
+            }
+        }
         _ => {
             let v = eval_to_value(env, state, e, stack)?;
             let s = crate::value::value_to_string(&v);
@@ -1148,7 +1192,11 @@ fn json_num(x: f64) -> Value {
 
 fn can_dispatch_builtin(stack: &CtxStack, name: &str) -> bool {
     matches!(name, "range" | "cycler" | "joiner")
-        && (!stack.defined(name) || is_builtin_marker_value(&stack.get(name), name))
+        && (!stack.defined(name)
+            || stack
+                .get_ref(name)
+                .map(|v| is_builtin_marker_value(v, name))
+                .unwrap_or(false))
 }
 
 fn try_dispatch_builtin(
