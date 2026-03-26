@@ -65,7 +65,7 @@ fn parse_raw_nested_literal_matches_nunjucks() {
     let Node::Text(s) = &nodes[0] else {
         panic!("expected single text node");
     };
-    assert_eq!(s, "{% raw %}{{ x }}{% endraw %}");
+    assert_eq!(s.as_ref(), "{% raw %}{{ x }}{% endraw %}");
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn parse_raw_with_comment_lookalike_inside() {
     let Node::Text(s) = &nodes[0] else {
         panic!("expected text");
     };
-    assert_eq!(s, "{# test ");
+    assert_eq!(s.as_ref(), "{# test ");
 }
 
 #[test]

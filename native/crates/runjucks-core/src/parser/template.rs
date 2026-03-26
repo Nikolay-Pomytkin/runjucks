@@ -898,14 +898,14 @@ fn parse_raw_block(tokens: &[Token], i: &mut usize, close_tags: &[&str]) -> Resu
         *i += 1;
     }
     expect_tag(tokens, i, close_tags)?;
-    Ok(Node::Text(content))
+    Ok(Node::Text(content.into()))
 }
 
 fn parse_node(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     match &tokens[*i] {
         Token::Text(s) => {
             *i += 1;
-            Ok(Node::Text(s.clone()))
+            Ok(Node::Text(std::sync::Arc::from(s.clone())))
         }
         Token::Expression(inner) => {
             let e = parse_expr(inner)?;

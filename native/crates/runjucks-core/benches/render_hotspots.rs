@@ -54,5 +54,22 @@ fn nested_for(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, for_medium, many_vars, nested_for);
+fn literal_string_upper_filter(c: &mut Criterion) {
+    let tpl = "{{ 'hello' | upper }}".to_string();
+    let env = Environment::default();
+    c.bench_function("literal_string_upper_filter", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), json!({})).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+criterion_group!(
+    benches,
+    for_medium,
+    many_vars,
+    nested_for,
+    literal_string_upper_filter
+);
 criterion_main!(benches);

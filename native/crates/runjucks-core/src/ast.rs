@@ -4,6 +4,7 @@
 //! (aligned with Nunjucks [`parseExpression`](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/parser.js)).
 
 use serde_json::Value;
+use std::sync::Arc;
 
 /// One branch of an `{% if %}` / `{% elif %}` / `{% else %}` chain.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,8 +53,8 @@ pub struct SwitchCase {
 pub enum Node {
     /// Container for sibling template fragments.
     Root(Vec<Node>),
-    /// Raw text between (or outside) template tags.
-    Text(String),
+    /// Raw text between (or outside) template tags (shared across clones of the AST).
+    Text(Arc<str>),
     /// Content inside `{{` … `}}` after expression parsing.
     Output(Vec<Expr>),
     /// `{% if %}`, optional `{% elif %}`, optional `{% else %}`, `{% endif %}`.

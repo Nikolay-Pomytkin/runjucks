@@ -15,23 +15,31 @@ use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// `{% extends %}` parent expression plus block name → AST bodies.
 type ExtendsLayout = (Expr, HashMap<String, Vec<Node>>);
 
 /// Nunjucks-style frame stack: inner frames shadow outer; `set` updates the innermost existing binding.
+///
+/// Values are stored as [`Arc`] so repeated reads and shallow copies of bindings can share the same
+/// [`Value`] allocation when the stack is cloned or merged (see [`Self::flatten`]).
 #[derive(Debug, Clone)]
 pub struct CtxStack {
-    frames: Vec<Map<String, Value>>,
+    frames: Vec<HashMap<String, Arc<Value>>>,
 }
 
 impl CtxStack {
     pub fn from_root(root: Map<String, Value>) -> Self {
-        Self { frames: vec![root] }
+        let mapped: HashMap<String, Arc<Value>> = root
+            .into_iter()
+            .map(|(k, v)| (k, Arc::new(v)))
+            .collect();
+        Self { frames: vec![mapped] }
     }
 
     pub fn push_frame(&mut self) {
-        self.frames.push(Map::new());
+        self.frames.push(HashMap::new());
     }
 
     pub fn pop_frame(&mut self) {
@@ -44,7 +52,7 @@ impl CtxStack {
     pub fn get_ref(&self, name: &str) -> Option<&Value> {
         for f in self.frames.iter().rev() {
             if let Some(v) = f.get(name) {
-                return Some(v);
+                return Some(v.as_ref());
             }
         }
         None
@@ -59,21 +67,22 @@ impl CtxStack {
     }
 
     pub fn set(&mut self, name: &str, value: Value) {
+        let arc = Arc::new(value);
         for f in self.frames.iter_mut().rev() {
             if f.contains_key(name) {
-                f.insert(name.to_string(), value);
+                f.insert(name.to_string(), arc);
                 return;
             }
         }
         if let Some(inner) = self.frames.last_mut() {
-            inner.insert(name.to_string(), value);
+            inner.insert(name.to_string(), arc);
         }
     }
 
     /// Assign in the innermost frame only (for `for` / `loop.*` bindings so inner loops can shadow).
     pub fn set_local(&mut self, name: &str, value: Value) {
         if let Some(inner) = self.frames.last_mut() {
-            inner.insert(name.to_string(), value);
+            inner.insert(name.to_string(), Arc::new(value));
         }
     }
 
@@ -82,7 +91,7 @@ impl CtxStack {
         let mut m = Map::new();
         for f in &self.frames {
             for (k, v) in f {
-                m.insert(k.clone(), v.clone());
+                m.insert(k.clone(), v.as_ref().clone());
             }
         }
         m
@@ -496,7 +505,7 @@ fn render_node(
             }
             Ok(out)
         }
-        Node::Text(s) => Ok(s.clone()),
+        Node::Text(s) => Ok(s.to_string()),
         Node::Output(exprs) => render_output(env, state, exprs, stack),
         Node::If { branches } => {
             for br in branches {
@@ -845,12 +854,20 @@ fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
         .frames
         .last_mut()
         .expect("inject_loop requires an active frame");
-    if let Some(Value::Object(m)) = inner.get_mut("loop") {
-        fill_loop_object(m, i, len);
-    } else {
-        let mut m = Map::with_capacity(7);
-        fill_loop_object(&mut m, i, len);
-        inner.insert("loop".to_string(), Value::Object(m));
+    match inner.get_mut("loop") {
+        Some(arc) => match Arc::make_mut(arc) {
+            Value::Object(m) => fill_loop_object(m, i, len),
+            _ => {
+                let mut m = Map::with_capacity(7);
+                fill_loop_object(&mut m, i, len);
+                *arc = Arc::new(Value::Object(m));
+            }
+        },
+        None => {
+            let mut m = Map::with_capacity(7);
+            fill_loop_object(&mut m, i, len);
+            inner.insert("loop".to_string(), Arc::new(Value::Object(m)));
+        }
     }
 }
 
@@ -1326,16 +1343,40 @@ fn eval_to_value(
         Expr::Literal(v) => Ok(v.clone()),
         Expr::Variable(name) => env.resolve_variable(stack, name),
         Expr::Unary { op, expr } => {
-            let v = eval_to_value(env, state, expr, stack)?;
-            Ok(match op {
-                UnaryOp::Not => Value::Bool(!is_truthy(&v)),
+            match op {
+                UnaryOp::Not => {
+                    if let Expr::Variable(name) = expr.as_ref() {
+                        let v = env.resolve_variable_ref(stack, name)?;
+                        return Ok(Value::Bool(!is_truthy(v.as_ref())));
+                    }
+                    let v = eval_to_value(env, state, expr, stack)?;
+                    Ok(Value::Bool(!is_truthy(&v)))
+                }
                 UnaryOp::Neg => {
+                    if let Expr::Variable(name) = expr.as_ref() {
+                        let v = env.resolve_variable_ref(stack, name)?;
+                        let n = as_number(v.as_ref()).ok_or_else(|| {
+                            RunjucksError::new("unary '-' expects a numeric value")
+                        })?;
+                        return Ok(json_num(-n));
+                    }
+                    let v = eval_to_value(env, state, expr, stack)?;
                     let n = as_number(&v)
                         .ok_or_else(|| RunjucksError::new("unary '-' expects a numeric value"))?;
-                    json_num(-n)
+                    Ok(json_num(-n))
                 }
-                UnaryOp::Pos => v,
-            })
+                UnaryOp::Pos => {
+                    if let Expr::Variable(name) = expr.as_ref() {
+                        let v = env.resolve_variable_ref(stack, name)?;
+                        if let Some(n) = as_number(v.as_ref()) {
+                            return Ok(json_num(n));
+                        }
+                        return Ok(v.into_owned());
+                    }
+                    let v = eval_to_value(env, state, expr, stack)?;
+                    Ok(v)
+                }
+            }
         }
         Expr::Binary { op, left, right } => match op {
             BinOp::Add => Ok(add_like_js(
@@ -1650,6 +1691,15 @@ fn eval_to_value(
             ))
         }
         Expr::Filter { name, input, args } => {
+            if args.is_empty() && !env.custom_filters.contains_key(name) {
+                if let Expr::Literal(Value::String(s)) = input.as_ref() {
+                    match name.as_str() {
+                        "upper" => return Ok(Value::String(s.to_uppercase())),
+                        "lower" => return Ok(Value::String(s.to_lowercase())),
+                        _ => {}
+                    }
+                }
+            }
             let input_v = eval_to_value(env, state, input, stack)?;
             let arg_vals: Vec<Value> = args
                 .iter()

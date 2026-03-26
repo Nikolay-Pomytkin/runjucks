@@ -22,9 +22,9 @@ fn parse_concatenates_adjacent_text_tokens_into_sequential_nodes() {
     match ast {
         Node::Root(nodes) => {
             assert_eq!(nodes.len(), 3);
-            assert!(matches!(&nodes[0], Node::Text(s) if s == "a"));
-            assert!(matches!(&nodes[1], Node::Text(s) if s == "b"));
-            assert!(matches!(&nodes[2], Node::Text(s) if s == "c"));
+            assert!(matches!(&nodes[0], Node::Text(s) if s.as_ref() == "a"));
+            assert!(matches!(&nodes[1], Node::Text(s) if s.as_ref() == "b"));
+            assert!(matches!(&nodes[2], Node::Text(s) if s.as_ref() == "c"));
         }
         _ => panic!("expected Root"),
     }
