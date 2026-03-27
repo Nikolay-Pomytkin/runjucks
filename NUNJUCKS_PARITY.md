@@ -25,7 +25,7 @@ Features that are **mostly** implemented but differ from Nunjucks in edge cases 
 | Wave | Focus | Rationale |
 |------|--------|-----------|
 | **1 — P1** | **Live `addGlobal` callables** (JS functions from Node; Rust `add_global_callable` for tests) | **Shipped** — unblocks migrations (`{{ fn(…) }}`); see **P1 spec** below. |
-| **2** | **`{% import %}` / `{% from %}` exports** — multi-target `{% set %}`, block `{% set %}…{% endset %}` as exports | Library-style shared templates; subtle breakage when missing. |
+| **2** | **`{% import %}` / `{% from %}` exports** — multi-target `{% set %}`, block `{% set %}…{% endset %}` as exports | **Shipped** — [`eval_exported_top_level_sets`](native/crates/runjucks-core/src/renderer.rs) / [`collect_top_level_set_exports`](native/crates/runjucks-core/src/renderer.rs); Rust tests in [`import_from.rs`](native/crates/runjucks-core/tests/import_from.rs); **conformance** IDs `tag_import_multi_target_export`, `tag_import_block_set_export`, `tag_from_import_multi_and_block`, `tag_import_chained_top_level_sets` in [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (also on [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json)). |
 | **3 — P2** | Loaders, Express, perf allowlist expansion, optional `getExtension` | Ecosystem / DX, not language core. |
 | **Defer** | **ECMAScript `Map` / `Set`** in context, **full RegExp parity**, **macro SafeString** polish, **include** quirks vs nunjucks 3.x | Pursue when a **concrete** template or conformance ID demands it — often avoidable at the app layer. |
 | **Separate** | **`asyncEach` / `asyncAll` / `ifAsync`**, async `render`, precompile, browser bundle | **P3** — requires async pipeline or product decision; do not mix with wave 1–2 unless committing to async. |
@@ -73,9 +73,31 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 
 ### Test strategy (maintainers)
 
-- **Goldens:** [`native/fixtures/conformance/*.json`](native/fixtures/conformance/) — schema in [`README.md`](native/fixtures/conformance/README.md); use `skip: true` until Runjucks matches Nunjucks output.
-- **Rust:** [`native/crates/runjucks-core/tests/`](native/crates/runjucks-core/tests/) — integration tests by feature (e.g. [`is_tests.rs`](native/crates/runjucks-core/tests/is_tests.rs) for `is defined` / `is callable` on objects, arrays, imports).
-- **Node:** [`__test__/`](runjucks/__test__/) conformance + [`parity.test.mjs`](runjucks/__test__/parity.test.mjs); allowlist [`perf/conformance-allowlist.json`](runjucks/perf/conformance-allowlist.json) for npm vs runjucks gates.
+**Layers (bottom = most localized, top = broadest regression signal):**
+
+1. **Rust unit / integration** — [`native/crates/runjucks-core/tests/`](native/crates/runjucks-core/tests/) by feature (`filters.rs`, `import_from.rs`, `is_tests.rs`, …): fast, no NAPI; use for edge cases not worth a JSON golden.
+2. **Shared JSON goldens** — [`native/fixtures/conformance/*.json`](native/fixtures/conformance/): schema in [`README.md`](native/fixtures/conformance/README.md); `expected` is Nunjucks output; use `skip: true` until Runjucks matches.
+3. **Rust reads goldens** — [`tests/conformance.rs`](native/crates/runjucks-core/tests/conformance.rs), [`tests/tag_parity.rs`](native/crates/runjucks-core/tests/tag_parity.rs) assert core output vs fixtures.
+4. **Node vs Nunjucks** — [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) drives [`parity.test.mjs`](__test__/parity.test.mjs) (same `id`s as allowlisted); proves the **npm** addon matches **nunjucks** for those cases.
+5. **Node conformance** — [`__test__/conformance/run.mjs`](__test__/conformance/run.mjs) runs fixtures through NAPI without comparing to Nunjucks.
+6. **Perf** — [`perf/run.mjs`](perf/run.mjs) / [`perf/synthetic.mjs`](perf/synthetic.mjs): throughput only, not correctness.
+
+**Pointers:** API smoke and NAPI-only tests live under [`__test__/*.test.mjs`](__test__/); JSON ingress parity: [`json-ingress.test.mjs`](__test__/json-ingress.test.mjs).
+
+**Upstream-ported cases (maintainers):** [`__test__/upstream/README.md`](__test__/upstream/README.md) — scenarios inspired by vendored [`nunjucks/tests/`](../nunjucks/tests/) (`node:test`, not Mocha). Use for extra regression signal beyond JSON goldens; skipped tests document known partials (`is` tests not yet in core, `sameas` object identity, `int` vs `"3.5"` truncation, …). Does **not** replace the conformance allowlist or parity gate.
+
+**Follow-on epics (test-driven):**
+
+| Epic | Notes |
+|------|--------|
+| **`is callable` on filter names** | Port more cases from `nunjucks/tests/tests.js`; unskip when behavior matches Nunjucks. |
+| **SafeString / filter chains / macro output** | Extend [`filters-ported.test.mjs`](__test__/upstream/filters-ported.test.mjs) + Rust [`filters.rs`](native/crates/runjucks-core/tests/filters.rs). |
+| **`Map` / `Set` in context** | Explicit Node cases with `skip` until NAPI/model supports or product stays JSON-only. |
+| **Include `with` / `without` context** | Port only what `setTemplateMap` can express; compare to `nunjucks` in harness. |
+| **Extends / dynamic parent cycles** | Targeted `templateMap` scenarios; see **Tags → Partial**. |
+| **Regex** | Port string-only snippets from upstream; ECMAScript parity is non-goal except documented flags. |
+| **Conformance allowlist** | Append IDs in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) as vectors go green; avoid duplicating the same scenario in three places — prefer one canonical home. |
+| **Nunjucks `parse(parser, nodes)` extensions** | No upstream port; Runjucks [`addExtension`](__test__/extensions.test.mjs) stays declarative. |
 
 ---
 
@@ -121,7 +143,7 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 
 ### Implemented (parser + renderer)
 
-`if`/`elif`/`else`/`endif`, `for`/`else`/`endfor` (single, multi-var, k/v, `loop.*`), `switch`/`case`/`default`/`endswitch`, `set`/`endset` (multi-target, block capture, frame scoping), `include` (expression, `ignore missing`, `without context` / `with context`), `import`/`from` (top-level macros + top-level `{% set %}` exports, `with context` / `without context` for module scope), `extends` (expression, evaluated at render; see Partial), `block`/`endblock`, `macro`/`endmacro` (defaults + call kwargs), `{{ super() }}`, `{% call %}…{% endcall %}` / `caller()`, `{% filter %}…{% endfilter %}`, `{% raw %}`/`{% endraw %}`, `{% verbatim %}`/`{% endverbatim %}`.
+`if`/`elif`/`else`/`endif`, `for`/`else`/`endfor` (single, multi-var, k/v, `loop.*`), `switch`/`case`/`default`/`endswitch`, `set`/`endset` (multi-target, block capture, frame scoping), `include` (expression, `ignore missing`, `without context` / `with context`), `import`/`from` (top-level macros + top-level `{% set %}` exports: single-target, multi-target same-value assign, and block capture — `with context` / `without context` for module scope), `extends` (expression, evaluated at render; see Partial), `block`/`endblock`, `macro`/`endmacro` (defaults + call kwargs), `{{ super() }}`, `{% call %}…{% endcall %}` / `caller()`, `{% filter %}…{% endfilter %}`, `{% raw %}`/`{% endraw %}`, `{% verbatim %}`/`{% endverbatim %}`.
 
 ### Remaining
 
@@ -132,7 +154,6 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 
 - **`{% macro %}`**: macro body renders to string; no full `SafeString` handling. Default parameters and call-site keyword args are shipped.
 - **`{% include %}`**: **`without context`** supported; **`with context`** parses as no-op vs default. Stock **nunjucks 3.x** does not parse these on `include` (not on npm parity allowlist).
-- **`{% import %}` / `{% from %}`**: multi-target **`{% set a, b = … %}`** and **block** `{% set %}…{% endset %}` are not lifted into exports (only simple top-level `{% set name = expr %}`).
 - **`{% extends %}`**: dynamic parent at render time; literal-only static cycle detection not extended to extends (runtime still catches repeating resolved parents).
 
 ---
@@ -196,7 +217,7 @@ Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunj
 
 ### Current state
 
-- **117** JSON vectors: [`render_cases.json`](native/fixtures/conformance/render_cases.json) (44) + [`filter_cases.json`](native/fixtures/conformance/filter_cases.json) (24) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (49).
+- **121** JSON vectors: [`render_cases.json`](native/fixtures/conformance/render_cases.json) (44) + [`filter_cases.json`](native/fixtures/conformance/filter_cases.json) (24) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (53).
 - **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) vs `nunjucks` npm using [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json); env fixtures in [`__test__/conformance/run.mjs`](__test__/conformance/run.mjs).
 
 ### Next steps

@@ -47,6 +47,7 @@
     "napi:artifacts": "napi artifacts --output-dir artifacts --npm-dir npm",
     "napi:prepublish": "napi pre-publish -p npm --tag-style npm --no-gh-release",
     "test": "node --test __test__/*.test.mjs __test__/conformance/run.mjs",
+    "test:upstream": "node --test __test__/upstream/*.test.mjs",
     "test:conformance:node": "node --test __test__/conformance/run.mjs",
     "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",
     "test:pending": "node --test __test__/interpolation-pending.mjs",

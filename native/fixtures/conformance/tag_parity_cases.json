@@ -442,5 +442,53 @@
     "context": {},
     "env": { "trimBlocks": true },
     "expected": "x\nafter"
+  },
+  {
+    "id": "tag_import_multi_target_export",
+    "source": "nunjucks import namespace multi-target top-level set",
+    "template": "{% import \"lib.njk\" as lib %}{{ lib.a }}-{{ lib.b }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set a, b = \"ok\" %}"
+      }
+    },
+    "expected": "ok-ok"
+  },
+  {
+    "id": "tag_import_block_set_export",
+    "source": "nunjucks import namespace block set endset export",
+    "template": "{% import \"lib.njk\" as lib %}[{{ lib.cap }}]",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set cap %}a{{ 1 }}b{% endset %}"
+      }
+    },
+    "expected": "[a1b]"
+  },
+  {
+    "id": "tag_from_import_multi_and_block",
+    "source": "nunjucks from import multi-target and block exports",
+    "template": "{% from \"lib.njk\" import x, y, blk %}{{ x }}{{ y }}{{ blk }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set x, y = 7 %}{% set blk %}Z{% endset %}"
+      }
+    },
+    "expected": "77Z"
+  },
+  {
+    "id": "tag_import_chained_top_level_sets",
+    "source": "nunjucks import later set references earlier export",
+    "template": "{% import \"lib.njk\" as lib %}{{ lib.second }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "lib.njk": "{% set first = 1 %}{% set second = first %}"
+      }
+    },
+    "expected": "1"
   }
 ]

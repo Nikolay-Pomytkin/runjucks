@@ -139,8 +139,9 @@ pub struct RenderState<'a> {
     pub macro_scopes: Vec<HashMap<String, MacroDef>>,
     /// `{% import "x" as ns %}` — macros callable as `ns.macro_name()`.
     pub macro_namespaces: HashMap<String, HashMap<String, MacroDef>>,
-    /// Top-level `{% set %}` exports from each `import … as ns` namespace (`ns.name`), also the
-    /// lexical scope for macros defined in that namespace.
+    /// Top-level `{% set %}` exports from each `import … as ns` namespace (`ns.name`): single- and
+    /// multi-target `=` forms (same value per target) and block `{% set x %}…{% endset %}`, evaluated
+    /// in source order. Also used with `macro_namespaces` for resolving `ns.*`.
     pub macro_namespace_values: HashMap<String, HashMap<String, Value>>,
     /// Per-block inheritance: innermost template first (child → parent → …) for `{{ super() }}`.
     pub block_chains: Option<HashMap<String, Vec<Vec<Node>>>>,
@@ -431,22 +432,49 @@ fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
     m
 }
 
-/// Top-level `{% set name = expr %}` (single target, no `{% set %}…{% endset %}` block).
-fn collect_top_level_sets(root: &Node) -> Vec<(String, Expr)> {
+/// Top-level `{% set … %}` forms that participate in `{% import %}` / `{% from %}` exports (same
+/// order as source; mirrors [`Node::Set`] rendering for multi-target and block capture).
+enum TopLevelSetExport {
+    /// `{% set a = expr %}`, `{% set a, b = expr %}` (same value cloned to every target).
+    FromExpr {
+        targets: Vec<String>,
+        expr: Expr,
+    },
+    /// `{% set name %}…{% endset %}` (parser allows only one target for block form).
+    FromBlock {
+        target: String,
+        body: Vec<Node>,
+    },
+}
+
+fn collect_top_level_set_exports(root: &Node) -> Vec<TopLevelSetExport> {
     let mut out = Vec::new();
     let Node::Root(children) = root else {
         return out;
     };
     for n in children {
-        if let Node::Set {
-            targets,
-            value: Some(expr),
-            body: None,
-        } = n
-        {
-            if targets.len() == 1 {
-                out.push((targets[0].clone(), expr.clone()));
+        match n {
+            Node::Set {
+                targets,
+                value: Some(expr),
+                body: None,
+            } if !targets.is_empty() => {
+                out.push(TopLevelSetExport::FromExpr {
+                    targets: targets.clone(),
+                    expr: expr.clone(),
+                });
             }
+            Node::Set {
+                targets,
+                value: None,
+                body: Some(body),
+            } if targets.len() == 1 => {
+                out.push(TopLevelSetExport::FromBlock {
+                    target: targets[0].clone(),
+                    body: body.clone(),
+                });
+            }
+            _ => {}
         }
     }
     out
@@ -462,16 +490,30 @@ fn eval_exported_top_level_sets(
     with_context: Option<bool>,
 ) -> Result<HashMap<String, Value>> {
     let mut out = HashMap::new();
-    let sets = collect_top_level_sets(root);
+    let exports = collect_top_level_set_exports(root);
     let mut import_stack = if matches!(with_context, Some(true)) {
         CtxStack::from_root(ctx_stack.flatten())
     } else {
         CtxStack::from_root(Map::new())
     };
-    for (name, expr) in sets {
-        let v = eval_to_value(env, state, &expr, &mut import_stack)?;
-        import_stack.set(&name, v.clone());
-        out.insert(name, v);
+    for ex in exports {
+        match ex {
+            TopLevelSetExport::FromExpr { targets, expr } => {
+                let v = eval_to_value(env, state, &expr, &mut import_stack)?;
+                for t in &targets {
+                    import_stack.set(t, v.clone());
+                }
+                for t in &targets {
+                    out.insert(t.clone(), v.clone());
+                }
+            }
+            TopLevelSetExport::FromBlock { target, body } => {
+                let s = render_children(env, state, &body, &mut import_stack)?;
+                let val = Value::String(s);
+                import_stack.set(&target, val.clone());
+                out.insert(target, val);
+            }
+        }
     }
     Ok(out)
 }

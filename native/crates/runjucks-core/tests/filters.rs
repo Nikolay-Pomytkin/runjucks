@@ -282,6 +282,24 @@ fn escape_safe_chain_matches_nunjucks() {
 }
 
 #[test]
+fn escape_alias_e_in_output_matches_nunjucks() {
+    let env = Environment::default();
+    let out = env
+        .render_string(r#"{{ "<" | e }}"#.into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "&lt;");
+}
+
+#[test]
+fn safe_escape_e_chain_matches_nunjucks() {
+    let env = Environment::default();
+    let out = env
+        .render_string(r#"{{ "<x>" | safe | escape | e }}"#.into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "<x>");
+}
+
+#[test]
 fn length_filter_counts_object_keys() {
     let env = Environment::default();
     let out = env

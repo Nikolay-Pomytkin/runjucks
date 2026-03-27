@@ -113,6 +113,10 @@
     "tag_whitespace_trim_open_close",
     "tag_comment_removed",
     "tag_trim_blocks_comment_preserves_newline",
-    "tag_trim_blocks_endraw_preserves_newline"
+    "tag_trim_blocks_endraw_preserves_newline",
+    "tag_import_multi_target_export",
+    "tag_import_block_set_export",
+    "tag_from_import_multi_and_block",
+    "tag_import_chained_top_level_sets"
   ]
 }
