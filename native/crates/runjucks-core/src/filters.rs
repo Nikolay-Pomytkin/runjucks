@@ -2,8 +2,10 @@
 
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
+use crate::js_regex::compile_js_regex;
 use crate::value::{
-    is_marked_safe, is_undefined_value, mark_safe, value_to_string, value_to_string_raw,
+    is_marked_safe, is_undefined_value, mark_safe, regexp_pattern_flags, value_to_string,
+    value_to_string_raw,
 };
 use rand::Rng;
 use regex::Regex;
@@ -802,11 +804,22 @@ fn filter_replace_nunjucks(input: &Value, args: &[Value]) -> Result<Value> {
     let from_v = args
         .first()
         .ok_or_else(|| RunjucksError::new("replace filter needs from string"))?;
-    let from = match from_v {
-        Value::String(s) => s.clone(),
-        Value::Number(_) => value_to_string(from_v),
-        _ => {
-            return Ok(input.clone());
+    enum ReplaceNeedle {
+        Literal(String),
+        Regex { re: Regex, global: bool },
+    }
+    let needle = if let Some((pattern, flags)) = regexp_pattern_flags(from_v) {
+        ReplaceNeedle::Regex {
+            re: compile_js_regex(&pattern, &flags)?,
+            global: flags.contains('g'),
+        }
+    } else {
+        match from_v {
+            Value::String(s) => ReplaceNeedle::Literal(s.clone()),
+            Value::Number(_) => ReplaceNeedle::Literal(value_to_string(from_v)),
+            _ => {
+                return Ok(input.clone());
+            }
         }
     };
     let to = args.get(1).map(value_to_string).unwrap_or_default();
@@ -841,41 +854,70 @@ fn filter_replace_nunjucks(input: &Value, args: &[Value]) -> Result<Value> {
         }
     }
 
-    if from.is_empty() {
-        // Nunjucks / Python: `new + chars.join(new) + new` (no separator before the first char).
-        let chs: Vec<char> = hay.chars().collect();
-        let mut res = to.clone();
-        for (i, ch) in chs.iter().enumerate() {
-            res.push(*ch);
-            if i + 1 < chs.len() {
+    match needle {
+        ReplaceNeedle::Literal(from) => {
+            if from.is_empty() {
+                // Nunjucks / Python: `new + chars.join(new) + new` (no separator before the first char).
+                let chs: Vec<char> = hay.chars().collect();
+                let mut res = to.clone();
+                for (i, ch) in chs.iter().enumerate() {
+                    res.push(*ch);
+                    if i + 1 < chs.len() {
+                        res.push_str(&to);
+                    }
+                }
                 res.push_str(&to);
+                return Ok(copy_safeness(input, res));
             }
-        }
-        res.push_str(&to);
-        return Ok(copy_safeness(input, res));
-    }
 
-    let mut pos = 0usize;
-    let mut count = 0usize;
-    let mut next = hay.find(&from);
-    if max_rep == 0 || next.is_none() {
-        return Ok(copy_safeness(input, hay));
-    }
-    let mut out = String::new();
-    while let Some(idx) = next {
-        if count >= max_rep {
-            break;
+            let mut pos = 0usize;
+            let mut count = 0usize;
+            let mut next = hay.find(&from);
+            if max_rep == 0 || next.is_none() {
+                return Ok(copy_safeness(input, hay));
+            }
+            let mut out = String::new();
+            while let Some(idx) = next {
+                if count >= max_rep {
+                    break;
+                }
+                out.push_str(&hay[pos..idx]);
+                out.push_str(&to);
+                pos = idx + from.len();
+                count += 1;
+                next = hay[pos..].find(&from).map(|i| i + pos);
+            }
+            if pos < hay.len() {
+                out.push_str(&hay[pos..]);
+            }
+            Ok(copy_safeness(input, out))
         }
-        out.push_str(&hay[pos..idx]);
-        out.push_str(&to);
-        pos = idx + from.len();
-        count += 1;
-        next = hay[pos..].find(&from).map(|i| i + pos);
+        ReplaceNeedle::Regex { re, global } => {
+            let limit = if global { max_rep } else { max_rep.min(1) };
+            if limit == 0 {
+                return Ok(copy_safeness(input, hay));
+            }
+            let mut out = String::new();
+            let mut last = 0usize;
+            let mut count = 0usize;
+            for m in re.find_iter(&hay) {
+                if count >= limit {
+                    break;
+                }
+                out.push_str(&hay[last..m.start()]);
+                out.push_str(&to);
+                last = m.end();
+                count += 1;
+            }
+            if count == 0 {
+                return Ok(copy_safeness(input, hay));
+            }
+            if last < hay.len() {
+                out.push_str(&hay[last..]);
+            }
+            Ok(copy_safeness(input, out))
+        }
     }
-    if pos < hay.len() {
-        out.push_str(&hay[pos..]);
-    }
-    Ok(copy_safeness(input, out))
 }
 
 /// Applies a filter (`name`) to `input` with extra `args` (Nunjucks-style).

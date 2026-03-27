@@ -14,6 +14,7 @@ Types ship in `index.d.ts`; the [generated API reference](../../api/) is the sou
 | `render(name, context)` | Render a **named** template from the default env’s template map. |
 | `reset()` | Clear the module default environment (mainly for tests). |
 | `compile(src, env?, path?, eagerCompile?)` | Build a `Template` from source; optional env and eager validation. |
+| `serializeContextForRender` | From **`@zneep/runjucks/serialize-context`** — converts `Map` / `Set` (and nested values) to JSON-friendly data for `context`. |
 
 ## `Environment`
 
@@ -22,8 +23,11 @@ Create with `new Environment()` or use the instance returned by `configure()`.
 ### Rendering
 
 - **`renderString(template, context)`** — Render inline source. Context is a plain object; values should be JSON-serializable for predictable behavior. The environment **caches parsed templates** when the same source string is rendered again with unchanged lexer/parser settings (custom delimiters, `trimBlocks`, registered extensions, etc.).
-- **`setTemplateMap({ name: source, … })`** — Provide in-memory templates for `{% include %}`, `{% extends %}`, `{% import %}`, `{% from %}`, `renderTemplate`, and `getTemplate`. There is **no** built-in filesystem loader yet — see [Limitations](./limitations/). Replacing the map clears the named-template parse cache for that environment.
-- **`renderTemplate(name, context)`** — Render a template from the map. Named templates are cached by name when the loader is stable (the default in-memory map); repeated calls reuse the parsed AST if the source and parse settings are unchanged.
+- **`setTemplateMap({ name: source, … })`** — Provide in-memory templates for `{% include %}`, `{% extends %}`, `{% import %}`, `{% from %}`, `renderTemplate`, and `getTemplate`. Replacing the map clears the named-template parse cache for that environment.
+- **`setLoaderRoot(path)`** — Load named templates from a directory on disk. `path` should be absolute (or resolve it before calling). Template names use forward slashes; paths must stay under the root (no `..` escape). Replaces any previous loader (`setTemplateMap` or an earlier `setLoaderRoot`). See [Limitations](./limitations/) for Express and security notes.
+- **`setLoaderCallback(fn)`** — Sync **`(name: string) => string | null | { src: string }`** (main thread). `null` means missing template. Replaces any previous loader. Does not use per-name parse caching (always loads fresh source from JS). Useful for custom resolution or wrapping HTTP fetches in user code.
+- **`invalidateCache()`** — Clears **named** and **inline** parse caches (Nunjucks-style `invalidateCache`). Replacing the loader via `setTemplateMap` / `setLoaderRoot` / `setLoaderCallback` still clears the named cache.
+- **`renderTemplate(name, context)`** — Render a template from the active loader (map or disk).
 - **`getTemplate(name, eagerCompile?)`** — Obtain a `Template` instance; with `eagerCompile`, invalid source fails early.
 
 ### Options
@@ -52,6 +56,28 @@ env.addExtension(
 ```
 
 Tag **parsing** is fixed in the engine; your callback only **produces output** from the already-parsed arguments and optional inner body. This differs from Nunjucks’ JavaScript `parse()` hook for extensions.
+
+### `getExtension` (introspection)
+
+- **`getExtension(name)`** returns **`{ name, tags, blocks }`** when a custom extension is registered, or **`null`** if not. **`tags`** lists opening tag names; **`blocks`** maps an opening tag name to its closing tag name (for block-style tags only). This object is for **tooling and tests** — it does not expose the underlying Rust or JavaScript `process` callback, and it is **not** referentially equal to Nunjucks’ runtime extension objects.
+
+## Express (optional)
+
+```js
+const express = require('express')
+const { expressEngine } = require('@zneep/runjucks/express')
+
+const app = express()
+app.set('views', '/path/to/views')
+app.set('view engine', 'njk')
+expressEngine(app, { ext: 'njk' })
+
+app.get('/', (req, res) => {
+  res.render('home', { title: 'Hi' })
+})
+```
+
+`expressEngine` creates a new `Environment`, applies optional `configure(opts)`, calls `setLoaderRoot` from `opts.views` or `app.get('views')`, and registers the view engine. View locals are merged with `res.locals` and passed through **`JSON.parse(JSON.stringify(…))`** so only JSON-compatible data reaches the engine (Express often attaches functions; those are dropped). When **`app.get('view cache') === false`** (common in development), by default **`invalidateCache()`** runs before each render so the Rust parse cache does not hide edits to files on disk; set **`invalidateOnViewCacheOff: false`** on `expressEngine` opts to disable. Rendering is **synchronous**; there is no promise-based API.
 
 ## `Template`
 

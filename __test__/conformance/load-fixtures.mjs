@@ -18,6 +18,8 @@ export const FIXTURES_ROOT = join(__dirname, '../../native/fixtures/conformance'
  * @property {{ autoescape?: boolean, dev?: boolean, jinjaCompat?: boolean, randomSeed?: number, throwOnUndefined?: boolean, globals?: Record<string, unknown>, templateMap?: Record<string, string> }} [env]
  * @property {string} expected
  * @property {boolean} [skip] — when true, Rust and Node skip until implemented
+ * @property {boolean} [compareWithNunjucks] — default true; if false, [`parity.test.mjs`](../parity.test.mjs) only checks runjucks vs `expected` (requires `divergenceNote`).
+ * @property {string} [divergenceNote] — required when `compareWithNunjucks === false`; why this case is not compared to nunjucks 3.2.4.
  */
 
 /**

@@ -59,6 +59,15 @@ async function benchCase(case_) {
     }
   }
 
+  if (case_.compareWithNunjucks === false) {
+    return {
+      name,
+      skip: true,
+      reason:
+        'compareWithNunjucks false (runjucks-only golden; no nunjucks perf baseline)',
+    }
+  }
+
   let uninstallJinja = null
   if (case_.env?.jinjaCompat === true) {
     uninstallJinja = nunjucks.installJinjaCompat()

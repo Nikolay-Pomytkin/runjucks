@@ -26,5 +26,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: npm run build
+      - run: npm run check:conformance-allowlist
       - run: npm test
       - run: npm run test:upstream

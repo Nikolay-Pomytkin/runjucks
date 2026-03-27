@@ -21,6 +21,15 @@ test('Environment: include ignore missing + dynamic name via map', () => {
   assert.equal(env.renderTemplate('main.html', { name: 'missing.njk' }), '|ok')
 })
 
+test('Environment: include with context matches default include scope', () => {
+  const env = new Environment()
+  env.setTemplateMap({
+    'inner.html': '{{ x | default("inner") }}',
+    'main.html': '{% set x = "outer" %}{% include "inner.html" with context %}',
+  })
+  assert.equal(env.renderTemplate('main.html', {}), 'outer')
+})
+
 test('Environment: loop visible inside included template', () => {
   const env = new Environment()
   env.setTemplateMap({
@@ -54,6 +63,56 @@ test('Environment: multi-level extends with super()', () => {
       '{% extends parent %}{% block b %}C{{ super() }}{% endblock %}',
   })
   assert.equal(env.renderTemplate('c.html', { parent: 'p.html' }), 'CPG')
+})
+
+test('Environment: dynamic extends cycle errors at render time', () => {
+  const env = new Environment()
+  env.setTemplateMap({
+    'a.html': '{% extends parent %}{% block body %}A{{ super() }}{% endblock %}',
+    'b.html': '{% extends "a.html" %}{% block body %}B{{ super() }}{% endblock %}',
+  })
+  assert.throws(
+    () => env.renderTemplate('a.html', { parent: 'b.html' }),
+    /circular/,
+  )
+})
+
+test('Environment: super() output is not autoescaped twice', () => {
+  const env = new Environment()
+  env.setTemplateMap({
+    'base3.njk': '{% block block1 %}<b>Foo</b>{% endblock %}',
+    'child.njk': '{% extends "base3.njk" %}{% block block1 %}{{ super() }}{% endblock %}',
+  })
+  assert.equal(env.renderTemplate('child.njk', {}), '<b>Foo</b>')
+})
+
+test('Environment: macro output is not autoescaped twice', () => {
+  const env = new Environment()
+  assert.equal(
+    env.renderString(
+      '{% macro foo(x, y) %}{{ x }} and {{ y }}{% endmacro %}{{ foo("<>&", "<>") }}',
+      {},
+    ),
+    '&lt;&gt;&amp; and &lt;&gt;',
+  )
+  assert.equal(
+    env.renderString(
+      '{% macro foo(x, y) %}{{ x|safe }} and {{ y }}{% endmacro %}{{ foo("<>&", "<>") }}',
+      {},
+    ),
+    '<>& and &lt;&gt;',
+  )
+})
+
+test('Environment: caller() preserves rendered body without re-escaping', () => {
+  const env = new Environment()
+  assert.equal(
+    env.renderString(
+      '{% macro wrap() %}<div>{{ caller() }}</div>{% endmacro %}{% call wrap() %}<b>x</b>{% endcall %}',
+      {},
+    ),
+    '<div><b>x</b></div>',
+  )
 })
 
 test('renderString: unclosed if tag throws', () => {

@@ -57,6 +57,19 @@ fn super_child_only_super() {
 }
 
 #[test]
+fn super_output_is_not_autoescaped() {
+    let mut m = HashMap::new();
+    m.insert("base3.njk".into(), r#"{% block block1 %}<b>Foo</b>{% endblock %}"#.into());
+    m.insert(
+        "child.njk".into(),
+        r#"{% extends "base3.njk" %}{% block block1 %}{{ super() }}{% endblock %}"#.into(),
+    );
+    let env = env_map(m);
+    let out = env.render_template("child.njk", json!({})).unwrap();
+    assert_eq!(out, "<b>Foo</b>");
+}
+
+#[test]
 fn super_outside_block_errors() {
     let env = Environment::default();
     let err = env
@@ -150,6 +163,19 @@ fn call_wrap_with_caller() {
 }
 
 #[test]
+fn caller_output_is_not_autoescaped() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{% macro wrap() %}<div>{{ caller() }}</div>{% endmacro %}{% call wrap() %}<b>x</b>{% endcall %}"#
+                .into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "<div><b>x</b></div>");
+}
+
+#[test]
 fn call_caller_invoked_twice() {
     let env = Environment::default();
     let out = env
@@ -235,6 +261,32 @@ fn composition_extends_super_filter_call() {
     let env = env_map(m);
     let out = env.render_template("child.html", json!({})).unwrap();
     assert_eq!(out, "Cbase");
+}
+
+#[test]
+fn macro_output_is_not_autoescaped_twice() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{% macro foo(x, y) %}{{ x }} and {{ y }}{% endmacro %}{{ foo("<>&", "<>") }}"#
+                .into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "&lt;&gt;&amp; and &lt;&gt;");
+}
+
+#[test]
+fn macro_safe_filter_preserves_safe_output() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{% macro foo(x, y) %}{{ x|safe }} and {{ y }}{% endmacro %}{{ foo("<>&", "<>") }}"#
+                .into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "<>& and &lt;&gt;");
 }
 
 #[test]

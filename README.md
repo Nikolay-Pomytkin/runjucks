@@ -11,15 +11,14 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 - **Output** — `{{ … }}` with Nunjucks-oriented expressions: literals, variables, `.` / `[…]` / `(…)`, unary/binary operators, chained comparisons, `in`, inline `cond if a else b`, list and object literals, and `is` tests (including `equalto` / `sameas` call forms).
 - **Filters** — Pipelines `| name` / `| name(args)` with a growing built-in set: `upper`, `lower`, `length`, `join`, `replace`, `round`, `escape` / `e`, `default`, `abs`, `capitalize`, plus HTML auto-escaping when `autoescape` is on.
 - **Tags** — `{% if %}` / `{% elif %}` / `{% else %}` / `{% endif %}`, `{% switch %}…{% case %}…{% default %}…{% endswitch %}` (JS-style fall-through on empty `case` bodies), `{% for … in … %}` with **tuple unpack** (`a, b` / `a, b, c`) and **`k, v` over objects** (keys sorted for stable output), **`loop.*`** (`index`, `index0`, `first`, `last`, `length`, `revindex`, `revindex0`), optional `{% else %}{% endfor %}`, `{% set %}` (**multi-target** `a, b = expr`, **block** `{% set x %}…{% endset %}`, Nunjucks-like **frame scoping** with `for`), `{% include expr %}` with optional **`ignore missing`**, `{% extends "path" %}` with `{% block name %}…{% endblock %}`, and same-file `{% macro name(args) %}…{% endmacro %}` with `{{ macroName(args) }}` calls.
-- **Composition** — [`TemplateLoader`](native/crates/runjucks-core/src/loader.rs) on [`Environment`](native/crates/runjucks-core/src/environment.rs): `render_template(name, ctx)` in Rust; in Node, `setTemplateMap({ ... })` then `renderTemplate(name, ctx)`.
+- **Composition** — [`TemplateLoader`](native/crates/runjucks-core/src/loader.rs) on [`Environment`](native/crates/runjucks-core/src/environment.rs): `render_template(name, ctx)` in Rust; in Node, `setTemplateMap({ ... })` or **`setLoaderRoot(path)`** for disk-backed templates, then `renderTemplate(name, ctx)`. Optional **`require('@zneep/runjucks/express').expressEngine`** wires Express `app.engine` (see docs).
 - **Other** — Plain text, `{# comments #}`, JSON object context, and variable lookup through a **frame stack** (inner `for` bodies shadow outer names; `{% set %}` resolves assignments up the stack like Nunjucks).
 
 **Still missing or stubbed (typical next steps vs Nunjucks):**
 
-- **Templates** — `{% import %}`, `{% from %}`, `{% call %}` / `caller`, `{{ super() }}` in blocks, `{% raw %}` (partial: lexer may handle), etc.
-- **Loaders & async** — Async / filesystem loaders beyond an in-memory map; Nunjucks’ full async story.
-- **JS `addFilter`** — Registers JavaScript callbacks that run during render (same thread); overrides built-ins with the same name.
-- **Parity** — Many upstream golden tests still fail; see [`native/fixtures/conformance/`](native/fixtures/conformance/README.md). For a full prioritized backlog of remaining gaps (tags, filters, API, conformance), see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md).
+- **Loaders** — **`setTemplateMap`**, **`setLoaderRoot`**, and **`setLoaderCallback`** (sync JS) are supported; **URL / async** loaders and **`http(s):`** loading are not built-in (see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md)).
+- **Async / precompile / browser** — **P3**; intentionally deferred (see [`P3_ROADMAP.md`](P3_ROADMAP.md)).
+- **Parity** — Conformance JSON + [`__test__/parity.test.mjs`](__test__/parity.test.mjs) vs `nunjucks` 3.2.4; run **`npm run check:conformance-allowlist`** when adding fixture `id`s. Full backlog: [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md).
 
 Development continues against [Nunjucks](https://github.com/mozilla/nunjucks) behavior; if you keep a checkout next to this repo, the vendored tree is still useful as [`../nunjucks`](../nunjucks).
 
@@ -136,6 +135,7 @@ Integration tests live under [`native/crates/runjucks-core/tests/`](native/crate
 - **`npm test`** — Node tests: hand-written cases, **`__test__/parity.test.mjs`** (runjucks vs `nunjucks` npm on the perf allowlist), and JSON goldens for the NAPI layer (run `npm run build` first).
 - **`npm run test:rust:green`** — subset of Rust tests (see [`package.json`](package.json)).
 - **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — same as the JSON suite in `npm test` (split out for focused runs); skipped cases use `"skip": true` in the fixture until parity lands (see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md)).
+- **`npm run check:conformance-allowlist`** — verifies every non-skipped fixture `id` in [`native/fixtures/conformance/`](native/fixtures/conformance/) appears in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (runs in CI).
 - **`npm run perf`** / **`npm run perf:json`** — local-only speed comparison vs `nunjucks` (see [`perf/README.md`](perf/README.md); `perf:json` writes `perf/last-run.json`; run `npm run build` first).
 - **`npm run test:pending`** — optional Node checks in [`__test__/interpolation-pending.mjs`](__test__/interpolation-pending.mjs).
 - Optional Mocha-style harness notes: [`test-shim/README.md`](test-shim/README.md).

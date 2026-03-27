@@ -63,6 +63,14 @@ test.describe('upstream nunjucks/tests/filters.js (cherry-picked)', () => {
     assertRendered(assert, renderUpstream(env, tpl, ctx), 'abcdef')
   })
 
+  test('replace with regex literals and flags', () => {
+    const env = createUpstreamEnvironment()
+    assertRendered(assert, renderUpstream(env, '{{ "aabbbb" | replace(r/ab{2}/, "z") }}', {}), 'azbb')
+    assertRendered(assert, renderUpstream(env, '{{ "aaaAAA" | replace(r/a/i, "z") }}', {}), 'zaaAAA')
+    assertRendered(assert, renderUpstream(env, '{{ "aaaAAA" | replace(r/a/g, "z") }}', {}), 'zzzAAA')
+    assertRendered(assert, renderUpstream(env, '{{ "aaaAAA" | replace(r/a/gi, "z") }}', {}), 'zzzzzz')
+  })
+
   test('escape (autoescape off)', () => {
     const env = createUpstreamEnvironment({ autoescape: false })
     assertRendered(
@@ -95,6 +103,22 @@ test.describe('upstream nunjucks/tests/filters.js (cherry-picked)', () => {
     )
   })
 
+  test('safe and escape aliases preserve safeness across set/output', () => {
+    const autoEnv = createUpstreamEnvironment({ autoescape: true })
+    assertRendered(
+      assert,
+      renderUpstream(autoEnv, '{% set val = "<html>" | safe | e %}{{ val }}', {}),
+      '<html>',
+    )
+
+    const rawEnv = createUpstreamEnvironment({ autoescape: false })
+    assertRendered(
+      assert,
+      renderUpstream(rawEnv, '{% set val = "<html>" | e | safe %}{{ val }}', {}),
+      '&lt;html&gt;',
+    )
+  })
+
   test('first', () => {
     const env = createUpstreamEnvironment()
     assertRendered(assert, renderUpstream(env, '{{ [1,2,3] | first }}', {}), '1')
@@ -116,6 +140,15 @@ test.describe('upstream nunjucks/tests/filters.js (cherry-picked)', () => {
     assertRendered(
       assert,
       renderUpstream(env, '{{ "<html>" | safe | forceescape }}', {}),
+      '&lt;html&gt;',
+    )
+    assertRendered(
+      assert,
+      renderUpstream(
+        createUpstreamEnvironment({ autoescape: true }),
+        '{% set val = "<html>" | safe | forceescape %}{{ val }}',
+        {},
+      ),
       '&lt;html&gt;',
     )
   })
@@ -173,5 +206,10 @@ test.describe('upstream nunjucks/tests/filters.js (cherry-picked)', () => {
       }),
       'foo,bar,bear',
     )
+  })
+
+  test.skip('length of Map and Set in Node context (Runjucks stays JSON-only today)', () => {
+    // Nunjucks upstream expects Map -> 3 and Set -> 2 here, but Runjucks only receives JSON-shaped
+    // values across NAPI. Keep this skipped until product scope changes.
   })
 })

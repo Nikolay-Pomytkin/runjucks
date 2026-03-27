@@ -171,5 +171,19 @@
     "template": "{{ \"<x>\" | escape | safe }}",
     "context": {},
     "expected": "&lt;x&gt;"
+  },
+  {
+    "id": "filters_replace_regex_flags",
+    "source": "nunjucks/tests/filters.js replace with regex literals",
+    "template": "{{ \"aabbbb\" | replace(r/ab{2}/, \"z\") }}|{{ \"aaaAAA\" | replace(r/a/gi, \"z\") }}",
+    "context": {},
+    "expected": "azbb|zzzzzz"
+  },
+  {
+    "id": "filters_sum_array",
+    "source": "nunjucks sum filter",
+    "template": "{{ [1, 2, 3] | sum }}",
+    "context": {},
+    "expected": "6"
   }
 ]

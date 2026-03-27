@@ -43,7 +43,9 @@
     "env_add_global_callable_marker",
     "regex_literal_test_substring",
     "is_defined_missing_object_key",
-    "is_defined_array_oob"
+    "is_defined_array_oob",
+    "filters_not_callable_in_is_tests",
+    "macro_safe_output_not_autoescaped"
   ],
   "filter_cases": [
     "filters_join_simple",
@@ -55,6 +57,13 @@
     "filters_random_singleton",
     "filters_round",
     "filters_escape_autoescape_off",
+    "filters_safe_with_autoescape",
+    "filters_default_boolean_true",
+    "filters_trim_title",
+    "filters_reverse_string",
+    "filters_first_last",
+    "filters_urlencode_string",
+    "filters_dictsort_keys",
     "filters_select_odd",
     "filters_reject_even",
     "filters_abs_negative_int",
@@ -62,7 +71,9 @@
     "filters_striptags_upstream_flat",
     "filters_length_object",
     "filters_safe_then_escape",
-    "filters_escape_then_safe"
+    "filters_escape_then_safe",
+    "filters_replace_regex_flags",
+    "filters_sum_array"
   ],
   "tag_parity_cases": [
     "tag_switch_basic",
@@ -79,6 +90,9 @@
     "tag_call_macro_caller",
     "tag_call_caller_positional_args",
     "tag_include_from_map",
+    "tag_include_nested_map",
+    "tag_include_inner_ignore_missing",
+    "tag_include_without_context_divergent",
     "tag_extends_layout_map",
     "tag_trim_blocks_if",
     "tag_trim_blocks_for",

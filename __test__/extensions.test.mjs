@@ -87,3 +87,15 @@ test('hasExtension and removeExtension', () => {
   assert.equal(env.hasExtension('e'), false)
   assert.equal(env.removeExtension('e'), false)
 })
+
+test('getExtension returns a stub descriptor for introspection', () => {
+  const env = new Environment()
+  env.setAutoescape(false)
+  env.addExtension('wrap', ['show', 'wrap'], { wrap: 'endwrap' }, () => 'ok')
+  assert.deepEqual(env.getExtension('wrap'), {
+    name: 'wrap',
+    tags: ['show', 'wrap'],
+    blocks: { wrap: 'endwrap' },
+  })
+  assert.equal(env.getExtension('missing'), null)
+})

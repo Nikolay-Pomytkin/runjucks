@@ -20,6 +20,8 @@
 
 ## Executive summary
 
+**Correctness vs Nunjucks** is enforced by [`__test__/parity.test.mjs`](../__test__/parity.test.mjs) (and JSON goldens), not by this perf harness. `perf/run.mjs` measures throughput only; it skips fixtures marked `compareWithNunjucks: false` (Runjucks-only goldens).
+
 Runjucks time is spent in roughly four buckets:
 
 1. **Lex + parse** — mitigated by **parsed-template caching** on [`Environment`](native/crates/runjucks-core/src/environment.rs) (inline + named, `ParseSignature` invalidation) and **per-`Template` AST** in [runjucks-napi](native/crates/runjucks-napi/src/lib.rs).

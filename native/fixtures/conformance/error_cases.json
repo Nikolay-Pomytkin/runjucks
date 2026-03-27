@@ -1,0 +1,9 @@
+[
+  {
+    "id": "error_unclosed_if",
+    "source": "parser: unclosed if",
+    "template": "{% if true %}x",
+    "context": {},
+    "errorContains": "endif"
+  }
+]

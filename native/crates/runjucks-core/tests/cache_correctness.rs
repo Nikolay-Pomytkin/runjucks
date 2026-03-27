@@ -128,3 +128,20 @@ fn nested_include_renders_twice() {
         .unwrap();
     assert_eq!(out2, "44");
 }
+
+#[test]
+fn invalidate_cache_smoke_named_and_inline() {
+    let tpl = "Hello {{ x }}".to_string();
+    let mut env = Environment::default();
+    env.render_string(tpl.clone(), json!({ "x": 1 })).unwrap();
+
+    let mut m = HashMap::new();
+    m.insert("a.njk".into(), "{{ y }}".into());
+    env.loader = Some(map_loader(m));
+    env.render_template("a.njk", json!({ "y": 2 })).unwrap();
+
+    env.invalidate_cache();
+
+    assert_eq!(env.render_string(tpl, json!({ "x": 3 })).unwrap(), "Hello 3");
+    assert_eq!(env.render_template("a.njk", json!({ "y": 4 })).unwrap(), "4");
+}

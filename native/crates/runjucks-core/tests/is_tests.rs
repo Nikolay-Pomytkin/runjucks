@@ -4,6 +4,7 @@ use runjucks_core::loader::map_loader;
 use runjucks_core::Environment;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[test]
 fn is_defined_missing_object_key_is_false() {
@@ -67,4 +68,29 @@ fn import_namespace_missing_export_is_not_defined() {
     env.loader = Some(map_loader(m));
     let out = env.render_template("main.html", json!({})).unwrap();
     assert_eq!(out, "false");
+}
+
+#[test]
+fn built_in_filter_name_is_not_callable_or_defined() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{{ upper is callable }} {{ upper is defined }}"#.into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "false false");
+}
+
+#[test]
+fn custom_filter_name_is_not_callable_or_defined() {
+    let mut env = Environment::default();
+    env.add_filter("double", Arc::new(|value, _args| Ok(value.clone())));
+    let out = env
+        .render_string(
+            r#"{{ "x" | double }} {{ double is callable }} {{ double is defined }}"#.into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "x false false");
 }

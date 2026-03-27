@@ -13,5 +13,13 @@ JSON files are arrays of cases consumed by Rust (`native/crates/runjucks-core/te
 | `env` | no | `{ "autoescape": bool, "dev": bool }` — partial ok, defaults match `Environment::default()`. |
 | `expected` | yes | Exact string output Nunjucks produces (golden). |
 | `skip` | no | If `true`, Rust (`conformance` / `tag_parity` tests) and Node conformance skip the case until the engine matches (see [`NUNJUCKS_PARITY.md`](../../../NUNJUCKS_PARITY.md)). |
+| `compareWithNunjucks` | no | Default `true`. If `false`, [`__test__/parity.test.mjs`](../../../__test__/parity.test.mjs) checks runjucks output against `expected` only (must not compare to nunjucks 3.2.4). Requires **`divergenceNote`**. |
+| `divergenceNote` | when `compareWithNunjucks` is false | Human-readable reason (and pointer to `NUNJUCKS_PARITY.md`); enforced by **`npm run check:conformance-allowlist`**. |
 
 Scenarios are BSD-2-Clause Nunjucks test vectors; `source` should point to upstream for traceability.
+
+### Error fixtures (`error_cases.json`)
+
+Separate array for **Node-only** tests ([`__test__/error-cases.test.mjs`](../../../__test__/error-cases.test.mjs)): templates that must **throw**; each row has `errorContains` (substring of the Runjucks error message). Not on the **perf allowlist** and not compared to Nunjucks error text.
+
+When adding a case, append its `id` to [`perf/conformance-allowlist.json`](../../perf/conformance-allowlist.json) (unless `skip: true`). Run **`npm run check:conformance-allowlist`** from the package root to verify.

@@ -21,6 +21,12 @@ test.describe('upstream nunjucks/tests/tests.js (ported)', () => {
     assertRendered(assert, renderUpstream(env, '{{ bar is not callable }}', {}), 'true')
   })
 
+  test('filter names are not callable or defined values in Nunjucks 3.x', () => {
+    const env = createUpstreamEnvironment()
+    assertRendered(assert, renderUpstream(env, '{{ upper is callable }}', {}), 'false')
+    assertRendered(assert, renderUpstream(env, '{{ upper is defined }}', {}), 'false')
+  })
+
   test('defined should detect definedness', () => {
     const env = createUpstreamEnvironment()
     assertRendered(assert, renderUpstream(env, '{{ foo is defined }}', {}), 'false')

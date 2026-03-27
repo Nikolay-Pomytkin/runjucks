@@ -18,16 +18,31 @@ export declare class Environment {
   addExtension(extensionName: string, tags: Array<string>, blocks: Record<string, string> | undefined | null, process: unknown): void
   /** Returns whether a custom extension with this name is registered (Nunjucks `hasExtension`). */
   hasExtension(name: string): boolean
+  /** Returns an introspection-only descriptor for a registered extension (tags + block end tags). */
+  getExtension(name: string): ExtensionDescriptor | null
   /** Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed. */
   removeExtension(name: string): boolean
   /** Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `NUNJUCKS_PARITY.md` (P1). */
   addGlobal(name: string, value: unknown): void
   /** Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */
   configure(opts: ConfigureOptions): void
+  /**
+   * Sync callback `(name: string) => string | null | { src: string }`. `null` / `undefined` JSON as
+   * `null` means template not found. Replaces any previous loader (same as `setTemplateMap` /
+   * `setLoaderRoot`). Does not use the named parse cache per key (sources may change arbitrarily).
+   */
+  setLoaderCallback(callback: unknown): void
+  /** Clears parse caches for named templates and inline `renderString` / `Template` sources (Nunjucks `invalidateCache`). */
+  invalidateCache(): void
   /** Loads a named template from this environment’s loader (same idea as Nunjucks `getTemplate`). */
   getTemplate(name: string, eagerCompile?: boolean | undefined | null): Template
   /** Sets an in-memory template map (`name` → source). Enables `renderTemplate`, `{% include %}`, `{% extends %}`, etc. */
   setTemplateMap(map: Record<string, string>): void
+  /**
+   * Loads named templates from a directory on disk (relative paths under `root`). Replaces any
+   * previous loader. See [`runjucks_core::FileSystemLoader`].
+   */
+  setLoaderRoot(path: string): void
   /** Renders a named template from the map set via [`set_template_map`]. */
   renderTemplate(name: string, context: any): string
 }
@@ -56,6 +71,12 @@ export interface ConfigureOptions {
   trimBlocks?: boolean
   lstripBlocks?: boolean
   tags?: TagsOptions
+}
+
+export interface ExtensionDescriptor {
+  name: string
+  tags: Array<string>
+  blocks: Record<string, string>
 }
 
 /** Top-level `render(name, ctx)` using the environment from [`configure_default`]. */

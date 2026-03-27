@@ -7,10 +7,12 @@ use napi_derive::napi;
 use runjucks_core::ast::Node;
 use runjucks_core::value::value_to_string;
 use runjucks_core::{
-    map_loader, CustomFilter, CustomGlobalFn, CustomTest, Environment, RunjucksError, Tags,
+    file_system_loader, map_loader, loader::TemplateLoader, CustomFilter, CustomGlobalFn,
+    CustomTest, Environment, RunjucksError, Tags,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -101,6 +103,37 @@ impl Drop for JsFnRef {
         unsafe {
             let _ = sys::napi_delete_reference(self.env, self.inner);
         }
+    }
+}
+
+/// Nunjucks-style sync loader: JS `(name) => string | null | { src: string }` (main thread only).
+struct JsTemplateLoader {
+    get_source: Arc<JsFnRef>,
+}
+
+impl TemplateLoader for JsTemplateLoader {
+    fn load(&self, name: &str) -> runjucks_core::errors::Result<String> {
+        let v = self
+            .get_source
+            .call(&[serde_json::json!(name)])
+            .map_err(|e| RunjucksError::new(e.to_string()))?;
+        match v {
+            serde_json::Value::Null => Err(RunjucksError::new(format!("template not found: {name}"))),
+            serde_json::Value::String(s) => Ok(s),
+            serde_json::Value::Object(o) => match o.get("src") {
+                Some(serde_json::Value::String(s)) => Ok(s.clone()),
+                _ => Err(RunjucksError::new(
+                    "loader callback must return a string, null, or { src: string }",
+                )),
+            },
+            _ => Err(RunjucksError::new(
+                "loader callback must return a string, null, or { src: string }",
+            )),
+        }
+    }
+
+    fn cache_key(&self, _name: &str) -> Option<String> {
+        None
     }
 }
 
@@ -264,6 +297,14 @@ pub struct ConfigureOptions {
     pub trim_blocks: Option<bool>,
     pub lstrip_blocks: Option<bool>,
     pub tags: Option<TagsOptions>,
+}
+
+#[derive(Debug, Clone)]
+#[napi(object)]
+pub struct ExtensionDescriptor {
+    pub name: String,
+    pub tags: Vec<String>,
+    pub blocks: HashMap<String, String>,
 }
 
 fn validate_parse(env: &Environment, src: &str) -> std::result::Result<(), RunjucksError> {
@@ -551,6 +592,22 @@ impl JsEnvironment {
         Ok(env.has_extension(&name))
     }
 
+    /// Returns an introspection-only descriptor for a registered extension (tags + block end tags).
+    #[napi(js_name = "getExtension")]
+    pub fn get_extension(&self, name: String) -> Result<Option<ExtensionDescriptor>> {
+        let env = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(env
+            .get_extension_descriptor(&name)
+            .map(|desc| ExtensionDescriptor {
+                name: desc.name,
+                tags: desc.tags,
+                blocks: desc.blocks,
+            }))
+    }
+
     /// Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed.
     #[napi(js_name = "removeExtension")]
     pub fn remove_extension(&self, name: String) -> Result<bool> {
@@ -591,6 +648,33 @@ impl JsEnvironment {
         Ok(())
     }
 
+    /// Sync callback `(name: string) => string | null | { src: string }`. `null` / `undefined` JSON as
+    /// `null` means template not found. Replaces any previous loader (same as `setTemplateMap` /
+    /// `setLoaderRoot`). Does not use the named parse cache per key (sources may change arbitrarily).
+    #[napi(js_name = "setLoaderCallback")]
+    pub fn set_loader_callback(&self, env: Env, callback: Unknown) -> Result<()> {
+        let js = Arc::new(JsFnRef::new(&env, &callback)?);
+        let loader: Arc<dyn TemplateLoader + Send + Sync> = Arc::new(JsTemplateLoader { get_source: js });
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        inner.loader = Some(loader);
+        inner.clear_named_parse_cache();
+        Ok(())
+    }
+
+    /// Clears parse caches for named templates and inline `renderString` / `Template` sources (Nunjucks `invalidateCache`).
+    #[napi(js_name = "invalidateCache")]
+    pub fn invalidate_cache_js(&self) -> Result<()> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        inner.invalidate_cache();
+        Ok(())
+    }
+
     /// Loads a named template from this environment’s loader (same idea as Nunjucks `getTemplate`).
     #[napi(js_name = "getTemplate")]
     pub fn get_template(&self, name: String, eager_compile: Option<bool>) -> Result<JsTemplate> {
@@ -600,7 +684,9 @@ impl JsEnvironment {
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         let loader = inner.loader.as_ref().ok_or_else(|| {
-            Error::from_reason("no template loader configured (use setTemplateMap first)")
+            Error::from_reason(
+                "no template loader configured (use setTemplateMap, setLoaderRoot, or setLoaderCallback first)",
+            )
         })?;
         if eager_compile.unwrap_or(false) {
             let src = loader
@@ -626,6 +712,20 @@ impl JsEnvironment {
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         env.loader = Some(map_loader(map));
+        env.clear_named_parse_cache();
+        Ok(())
+    }
+
+    /// Loads named templates from a directory on disk (relative paths under `root`). Replaces any
+    /// previous loader. See [`runjucks_core::FileSystemLoader`].
+    #[napi(js_name = "setLoaderRoot")]
+    pub fn set_loader_root(&self, path: String) -> Result<()> {
+        let loader = file_system_loader(Path::new(&path)).map_err(|e| Error::from_reason(e.to_string()))?;
+        let mut env = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        env.loader = Some(loader);
         env.clear_named_parse_cache();
         Ok(())
     }

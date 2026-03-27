@@ -314,5 +314,19 @@
     "template": "{{ 'yes' if r/foo/.test('barfoobaz') else 'no' }}",
     "context": {},
     "expected": "yes"
+  },
+  {
+    "id": "filters_not_callable_in_is_tests",
+    "source": "nunjucks 3.2.4: filter names are not callable/defined values",
+    "template": "{{ upper is callable }} {{ upper is defined }}",
+    "context": {},
+    "expected": "false false"
+  },
+  {
+    "id": "macro_safe_output_not_autoescaped",
+    "source": "nunjucks/tests/compiler.js autoescape + macro safe output",
+    "template": "{% macro foo(x, y) %}{{ x|safe }} and {{ y }}{% endmacro %}{{ foo(\"<>&\", \"<>\") }}",
+    "context": {},
+    "expected": "<>& and &lt;&gt;"
   }
 ]

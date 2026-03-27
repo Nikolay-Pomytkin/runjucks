@@ -42,4 +42,4 @@ pub use environment::{CustomFilter, CustomGlobalFn, CustomTest, Environment};
 pub use errors::RunjucksError;
 pub use extension::{CustomExtensionHandler, ExtensionTagMeta};
 pub use lexer::{LexerOptions, Tags};
-pub use loader::{map_loader, FnLoader, TemplateLoader};
+pub use loader::{file_system_loader, map_loader, FileSystemLoader, FnLoader, TemplateLoader};

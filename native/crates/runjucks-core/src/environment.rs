@@ -56,6 +56,14 @@ pub type CustomTest = Arc<dyn Fn(&Value, &[Value]) -> Result<bool> + Send + Sync
 /// (Nunjucks keyword-argument convention), represented as `[(String, Value)]` before marshalling.
 pub type CustomGlobalFn = Arc<dyn Fn(&[Value], &[(String, Value)]) -> Result<Value> + Send + Sync>;
 
+/// Introspection-only descriptor for a registered extension (Nunjucks `getExtension` analog).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionDescriptor {
+    pub name: String,
+    pub tags: Vec<String>,
+    pub blocks: HashMap<String, String>,
+}
+
 /// Configuration and entry point for rendering templates.
 ///
 /// # Fields
@@ -273,6 +281,13 @@ impl Environment {
         self.named_parse_cache.lock().unwrap().clear();
     }
 
+    /// Clears **all** parse caches: named templates ([`load_and_parse_named`]) and inline
+    /// [`parse_or_cached_inline`] entries (Nunjucks `Environment#invalidateCache` analog).
+    pub fn invalidate_cache(&self) {
+        self.named_parse_cache.lock().unwrap().clear();
+        self.inline_parse_cache.lock().unwrap().clear();
+    }
+
     /// Renders a parsed AST without lexing/parsing (caller must use the same environment configuration as when the AST was produced).
     pub fn render_parsed(&self, ast: &Node, context: Value) -> Result<String> {
         let root = match context {
@@ -344,6 +359,29 @@ impl Environment {
     /// Returns whether a custom extension with this name is registered (Nunjucks `hasExtension`).
     pub fn has_extension(&self, name: &str) -> bool {
         self.custom_extensions.contains_key(name)
+    }
+
+    /// Returns metadata for a registered extension name without exposing the internal handler.
+    pub fn get_extension_descriptor(&self, name: &str) -> Option<ExtensionDescriptor> {
+        if !self.custom_extensions.contains_key(name) {
+            return None;
+        }
+        let mut tags = Vec::new();
+        let mut blocks = HashMap::new();
+        for (tag, meta) in &self.extension_tags {
+            if meta.extension_name == name {
+                tags.push(tag.clone());
+                if let Some(end) = &meta.end_tag {
+                    blocks.insert(tag.clone(), end.clone());
+                }
+            }
+        }
+        tags.sort();
+        Some(ExtensionDescriptor {
+            name: name.to_string(),
+            tags,
+            blocks,
+        })
     }
 
     /// Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed.
@@ -519,6 +557,7 @@ impl Environment {
         let mut stack = renderer::CtxStack::from_root(root);
         let mut state = renderer::RenderState::new(Some(loader.as_ref()), self.random_seed);
         state.push_template(name)?;
+        renderer::scan_literal_extends_graph(self, &mut state, ast.as_ref(), loader.as_ref())?;
         let out = renderer::render_entry(self, &mut state, ast.as_ref(), &mut stack)?;
         state.pop_template();
         Ok(out)

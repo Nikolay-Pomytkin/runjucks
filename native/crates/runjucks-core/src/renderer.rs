@@ -10,7 +10,7 @@ use crate::globals::{
     parse_cycler_id, parse_joiner_id, CyclerState, JoinerState, RJ_CALLABLE,
 };
 use crate::loader::TemplateLoader;
-use crate::value::{is_undefined_value, undefined_value};
+use crate::value::{is_undefined_value, mark_safe, undefined_value};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use ahash::AHashMap;
@@ -520,6 +520,27 @@ fn eval_exported_top_level_sets(
 
 /// Detects `{% import "x" %}` / `{% from "x" %}` cycles using **string-literal** paths only (matches
 /// typical macro libraries; dynamic names are not traced here).
+/// Detects `{% extends "x" %}` cycles using **string-literal** parents only (same idea as
+/// [`scan_literal_import_graph`]; dynamic `{% extends expr %}` is checked at render time).
+pub(crate) fn scan_literal_extends_graph(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    root: &Node,
+    loader: &(dyn TemplateLoader + Send + Sync),
+) -> Result<()> {
+    let Some(expr) = extends_parent_expr(root) else {
+        return Ok(());
+    };
+    let Expr::Literal(Value::String(path)) = expr else {
+        return Ok(());
+    };
+    state.push_template(path)?;
+    let nested = env.load_and_parse_named(path, loader)?;
+    let r = scan_literal_extends_graph(env, state, nested.as_ref(), loader);
+    state.pop_template();
+    r
+}
+
 fn scan_literal_import_graph(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -1884,7 +1905,7 @@ fn eval_to_value(
                     let prev = state.super_context.replace((block_name.clone(), next));
                     let s = render_children(env, state, &body_to_render, stack)?;
                     state.super_context = prev;
-                    return Ok(Value::String(s));
+                    return Ok(mark_safe(s));
                 }
                 if name == "caller" {
                     let frame = state.caller_stack.last().cloned().ok_or_else(|| {
@@ -1894,11 +1915,11 @@ fn eval_to_value(
                     })?;
                     let s =
                         render_caller_invocation(env, state, &frame, &arg_vals, &kw_vals, stack)?;
-                    return Ok(Value::String(s));
+                    return Ok(mark_safe(s));
                 }
                 if let Some(mdef) = state.lookup_macro(name).cloned() {
                     let s = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack, None)?;
-                    return Ok(Value::String(s));
+                    return Ok(mark_safe(s));
                 }
                 if arg_vals.is_empty() {
                     let v = env.resolve_variable(stack, name)?;
@@ -1928,7 +1949,7 @@ fn eval_to_value(
                             stack,
                             mc.as_ref(),
                         )?;
-                        return Ok(Value::String(s));
+                        return Ok(mark_safe(s));
                     }
                 }
             }

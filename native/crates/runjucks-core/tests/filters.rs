@@ -92,6 +92,31 @@ fn replace_max_count_and_empty_needle_match_nunjucks() {
 }
 
 #[test]
+fn replace_regex_matches_nunjucks_flags() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string(r#"{{ "aabbbb" | replace(r/ab{2}/, "z") }}"#.into(), json!({}))
+            .unwrap(),
+        "azbb"
+    );
+    assert_eq!(
+        env.render_string(r#"{{ "aaaAAA" | replace(r/a/i, "z") }}"#.into(), json!({}))
+            .unwrap(),
+        "zaaAAA"
+    );
+    assert_eq!(
+        env.render_string(r#"{{ "aaaAAA" | replace(r/a/g, "z") }}"#.into(), json!({}))
+            .unwrap(),
+        "zzzAAA"
+    );
+    assert_eq!(
+        env.render_string(r#"{{ "aaaAAA" | replace(r/a/gi, "z") }}"#.into(), json!({}))
+            .unwrap(),
+        "zzzzzz"
+    );
+}
+
+#[test]
 fn random_filter_single_element_is_stable() {
     let env = Environment::default();
     let mut rng = test_rng();

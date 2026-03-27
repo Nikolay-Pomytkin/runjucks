@@ -53,6 +53,16 @@ test('addFilter: overrides built-in upper', () => {
   assert.equal(env.renderString('{{ "x" | upper }}', {}), 'custom')
 })
 
+test('addFilter: filter names are not callable or defined values', () => {
+  const env = new Environment()
+  env.addFilter('double', (s) => String(s) + String(s))
+  assert.equal(
+    env.renderString('{{ "a" | double }} {{ double is callable }} {{ double is defined }}', {}),
+    'aa false false',
+  )
+  assert.equal(env.renderString('{{ upper is callable }} {{ upper is defined }}', {}), 'false false')
+})
+
 test('addGlobal: exposes JSON value to templates', () => {
   const env = new Environment()
   env.addGlobal('greeting', 'Hello')

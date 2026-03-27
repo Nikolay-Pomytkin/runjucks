@@ -52,22 +52,28 @@ for (const id of collectIds()) {
       uninstallJinja = nunjucks.installJinjaCompat()
     }
 
+    const compareNj = c.compareWithNunjucks !== false
+
     let rOut
     let nOut
     try {
       rOut = rjEnv.renderString(tpl, ctx)
-      nOut = njEnv.renderString(tpl, ctx)
+      if (compareNj) {
+        nOut = njEnv.renderString(tpl, ctx)
+      }
     } catch (e) {
       assert.fail(`render error for ${id}: ${e.message}`)
     } finally {
       if (uninstallJinja) uninstallJinja()
     }
 
-    assert.equal(
-      rOut,
-      nOut,
-      `runjucks vs nunjucks mismatch for ${id}`,
-    )
+    if (compareNj) {
+      assert.equal(
+        rOut,
+        nOut,
+        `runjucks vs nunjucks mismatch for ${id}`,
+      )
+    }
     assert.equal(
       rOut,
       c.expected,

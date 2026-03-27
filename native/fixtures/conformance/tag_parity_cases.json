@@ -103,6 +103,45 @@
     "expected": "Hello y"
   },
   {
+    "id": "tag_include_nested_map",
+    "source": "nunjucks nested include + template map",
+    "template": "{% include \"a.njk\" %}",
+    "context": { "v": "root" },
+    "env": {
+      "templateMap": {
+        "a.njk": "{% include \"b.njk\" %}",
+        "b.njk": "{{ v }}"
+      }
+    },
+    "expected": "root"
+  },
+  {
+    "id": "tag_include_inner_ignore_missing",
+    "source": "nunjucks nested include ignore missing",
+    "template": "{% include \"a.njk\" %}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "a.njk": "{% include \"miss.njk\" ignore missing %}ok"
+      }
+    },
+    "expected": "ok"
+  },
+  {
+    "id": "tag_include_without_context_divergent",
+    "source": "runjucks include without context (nunjucks 3.2.4 parse error)",
+    "template": "{% set x = 1 %}{% include \"p.njk\" without context %}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "p.njk": "{{ x }}"
+      }
+    },
+    "expected": "",
+    "compareWithNunjucks": false,
+    "divergenceNote": "Stock nunjucks 3.2.4 does not parse `without context` on include; see NUNJUCKS_PARITY.md Tags → Partial."
+  },
+  {
     "id": "tag_extends_layout_map",
     "source": "nunjucks extends + template map",
     "template": "{% extends \"layout.njk\" %}{% block main %}Hi{% endblock %}",

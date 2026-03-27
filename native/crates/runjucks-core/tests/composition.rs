@@ -40,6 +40,19 @@ fn include_without_context_sees_only_globals() {
 }
 
 #[test]
+fn include_with_context_matches_default_include_scope() {
+    let mut m = HashMap::new();
+    m.insert("inner.html".into(), r#"{{ x | default("inner") }}"#.into());
+    m.insert(
+        "main.html".into(),
+        r#"{% set x = "outer" %}{% include "inner.html" with context %}"#.into(),
+    );
+    let env = env_with_map(m);
+    let out = env.render_template("main.html", json!({})).unwrap();
+    assert_eq!(out, "outer");
+}
+
+#[test]
 fn include_cycle_errors() {
     let mut m = HashMap::new();
     m.insert("a.html".into(), r#"{% include "b.html" %}"#.into());
@@ -98,6 +111,40 @@ fn extends_dynamic_concat_template_name() {
         .render_template("child.html", json!({ "prefix": "main" }))
         .unwrap();
     assert_eq!(out, "CM");
+}
+
+#[test]
+fn extends_dynamic_parent_cycle_errors_at_render_time() {
+    let mut m = HashMap::new();
+    m.insert(
+        "a.html".into(),
+        r#"{% extends parent %}{% block body %}A{{ super() }}{% endblock %}"#.into(),
+    );
+    m.insert(
+        "b.html".into(),
+        r#"{% extends "a.html" %}{% block body %}B{{ super() }}{% endblock %}"#.into(),
+    );
+    let env = env_with_map(m);
+    let err = env
+        .render_template("a.html", json!({ "parent": "b.html" }))
+        .unwrap_err();
+    assert!(err.to_string().contains("circular"));
+}
+
+#[test]
+fn extends_literal_only_cycle_errors_before_render() {
+    let mut m = HashMap::new();
+    m.insert(
+        "a.html".into(),
+        r#"{% extends "b.html" %}{% block x %}A{% endblock %}"#.into(),
+    );
+    m.insert(
+        "b.html".into(),
+        r#"{% extends "a.html" %}{% block x %}B{% endblock %}"#.into(),
+    );
+    let env = env_with_map(m);
+    let err = env.render_template("a.html", json!({})).unwrap_err();
+    assert!(err.to_string().contains("circular"));
 }
 
 #[test]
