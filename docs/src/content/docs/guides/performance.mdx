@@ -1,7 +1,9 @@
 ---
 title: Performance
-description: How to get fast renders from Runjucks in Node.js — caching, builds, and practical tips.
+description: How to get fast renders from Runjucks in Node.js — caching, builds, practical tips, and a published vs-Nunjucks snapshot.
 ---
+
+import PerfReport from '../../../components/PerfReport.astro';
 
 Runjucks moves lexing, parsing, and rendering into **Rust**, then passes the result back to JavaScript. You still pay for **JSON serialization of the context** on each call and for the **N-API** boundary, so the wins show up most on **CPU-heavy templates** (large loops, many interpolations, deep attribute paths), not on tiny one-line snippets.
 
@@ -11,6 +13,14 @@ Runjucks moves lexing, parsing, and rendering into **Rust**, then passes the res
 - **Named template caching** — With `setTemplateMap`, templates are cached by name when the map and parse settings are stable; repeated `renderTemplate` / `getTemplate` work benefits.
 - **`Template` instances** — `compile()` / `new Template()` parse **once** per instance; reuse the instance across many `.render(context)` calls for the same file.
 - **Rust-side hot paths** — The core avoids unnecessary work where it can (for example, fast paths for common expression shapes and efficient context lookups). You do not need to configure these; they apply automatically.
+
+## Published vs Nunjucks snapshot
+
+The table below is generated from a **committed** JSON report ([`docs/src/data/perf/reports/`](https://github.com/Nikolay-Pomytkin/runjucks/tree/main/docs/src/data/perf/reports)) keyed to the **`latest`** entry in [`index.json`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/docs/src/data/perf/index.json). It is **not** recomputed on every docs CI run.
+
+**How to read it:** Each case is measured only after Runjucks and Nunjucks produce **identical output** for that template and context (same fairness setup as [`perf/run.mjs`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/run.mjs)). **nj / rj** is mean Nunjucks latency divided by mean Runjucks latency for that case; **&gt; 1×** means Nunjucks was slower on that row. Figures vary by CPU, OS, and Node version—use them as **directional**, not a guarantee for your hardware. For methodology and warm vs cold runs, see [Measuring](#measuring) below.
+
+<PerfReport />
 
 ## Recommendations
 
@@ -22,7 +32,7 @@ Runjucks moves lexing, parsing, and rendering into **Rust**, then passes the res
 
 ## Measuring
 
-- **Node vs Nunjucks** — From the package root: `npm run perf` (optional `npm run perf:cold` for a cold environment each iteration). See [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md) in the repo.
+- **Node vs Nunjucks** — From the package root: `npm run perf` (optional `npm run perf:cold` for a cold Runjucks environment each iteration). See [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md) in the repo. **`npm run perf:json`** writes `perf/last-run.json` including **`runjucksVersion`**, **`nunjucksVersion`**, **`mode`** (`warm` / `cold`), and **`platform`** metadata—copy into `docs/src/data/perf/reports/<version>.json` when refreshing the site snapshot ([`RELEASING.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/RELEASING.md)).
 - **Large vs small context (Runjucks only)** — `npm run perf:context` after `npm run build` compares the same template with a minimal context and a large unused nested object, so you can see whether end-to-end time is sensitive to JSON marshalling. Documented in [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md).
 - **Rust-only render cost** — `cargo bench -p runjucks_core --bench render_hotspots` from the `native/` directory (or `npm run bench:rust` from the package root). Steady-state runs mostly measure **evaluation** after the parse cache is warm.
 - **Rust-only parse cost** — `cargo bench -p runjucks_core --bench parse_hotspots` (or `npm run bench:rust:parse`) measures **lex + parse** (cold compilation) and includes a pair comparing **full render** vs **render-only** on a pre-parsed AST. See [`perf/README.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/perf/README.md).

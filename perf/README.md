@@ -112,6 +112,8 @@ Interpretation: **nj/rj > 1** means Nunjucks is slower on average for that case 
 
 **`npm run perf:json`** writes [`last-run.json`](last-run.json) (gitignored) with per-case latencies and skip reasons; useful for comparing runs on one machine, not for CI gates.
 
+The JSON payload includes **`runjucksVersion`** (root `package.json`), **`nunjucksVersion`** (resolved from the installed `nunjucks` package), **`mode`**: `"warm"` or `"cold"` (when using `perf:cold` / `run.mjs --cold`), **`node`**, **`platform`** (`platform`, `arch`), **`generatedAt`**, **`rows`**, and **`summary`** (`nonSkippedCount`, `avg_nj_over_rj`). Copy a tagged run into [`docs/src/data/perf/reports/`](../docs/src/data/perf/reports/) when publishing docs (see [`RELEASING.md`](../RELEASING.md)).
+
 ## Fairness notes
 
 - **Environment options match conformance fixtures:** [`run.mjs`](run.mjs) builds each engine with [`harness-env.mjs`](harness-env.mjs) — the same logic as [`__test__/parity.test.mjs`](../__test__/parity.test.mjs): `trimBlocks` / `lstripBlocks`, custom `tags`, `templateMap` loaders, `globals`, `randomSeed`, and (for Jinja-style slice cases) `nunjucks.installJinjaCompat()` while measuring. Older versions of the harness only toggled `autoescape`, which **skipped** most tag-parity cases and skewed numbers.

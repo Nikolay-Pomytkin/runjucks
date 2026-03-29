@@ -59,6 +59,18 @@ Do not use a granular token unless it explicitly allows automation / bypass 2FA 
 1. [crates.io/settings/tokens](https://crates.io/settings/tokens) → New Token.
 2. Add as **`CARGO_REGISTRY_TOKEN`**.
 
+## Documentation: performance report on the site
+
+The [Performance](docs/src/content/docs/guides/performance.mdx) guide embeds a **snapshot** of `npm run perf:json` (vs the `nunjucks` version in root `devDependencies`). Reports are **committed** under [`docs/src/data/perf/reports/`](docs/src/data/perf/reports/) so the published site shows numbers tied to **`@zneep/runjucks` version** without running benches on every CI build.
+
+After a release version bump (or when you intentionally refresh benchmarks):
+
+1. From the **package root**: `npm run build && npm run perf:json` (uses **warm** Runjucks parse cache by default; use `npm run perf:cold` if you want a cold snapshot—then save under a distinct filename or document `mode` in the report).
+2. Copy `perf/last-run.json` to `docs/src/data/perf/reports/<runjucksVersion>.json` (for example `0.1.7.json`).
+3. Update [`docs/src/data/perf/index.json`](docs/src/data/perf/index.json): set **`latest`** to that version and append it to **`reports`** if it is a new file (keep older versions in **`reports`** for optional history).
+
+Numbers are **machine-dependent**; treat them as directional. The JSON records **`platform`**, **`node`**, and timestamps so readers can see how the snapshot was produced.
+
 ## Version bump
 
 Keep these aligned on the same semver in **one commit** on `main` (so both registries release the same release):

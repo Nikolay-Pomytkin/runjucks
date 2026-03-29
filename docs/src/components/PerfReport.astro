@@ -1,0 +1,141 @@
+---
+import index from '../data/perf/index.json';
+
+type PerfPayload = {
+	runjucksVersion: string;
+	nunjucksVersion: string;
+	mode: string;
+	node: string;
+	platform: { platform: string; arch: string };
+	generatedAt: string;
+	rows: Array<
+		| { name: string; skip: true; reason: string }
+		| {
+				name: string;
+				skip: false;
+				runjucks_ms: number;
+				nunjucks_ms: number;
+				nj_over_rj: number;
+		  }
+	>;
+	summary: { nonSkippedCount: number; avg_nj_over_rj: number | null };
+};
+
+const suffix = `/${index.latest}.json`;
+const modules = import.meta.glob<PerfPayload>('../data/perf/reports/*.json', {
+	eager: true,
+	import: 'default',
+});
+
+let report: PerfPayload | undefined;
+for (const [path, data] of Object.entries(modules)) {
+	if (path.endsWith(suffix)) {
+		report = data;
+		break;
+	}
+}
+
+function fmtMs(n: number) {
+	return n.toFixed(4);
+}
+
+function fmtRatio(n: number) {
+	return `${n.toFixed(2)}x`;
+}
+
+const okRows =
+	report?.rows.flatMap((r) => (r.skip === false ? [r] : [])) ?? [];
+
+const skippedRows =
+	report?.rows.flatMap((r) => (r.skip === true ? [r] : [])) ?? [];
+---
+
+{
+	report ? (
+		<div class="perf-report">
+			<h3 id="published-benchmark-snapshot">Published benchmark snapshot</h3>
+			<p>
+				<strong>@zneep/runjucks</strong> {report.runjucksVersion} vs <strong>nunjucks</strong>{' '}
+				{report.nunjucksVersion}. Mode: <strong>{report.mode}</strong> (
+				{report.mode === 'cold'
+					? 'fresh Environment each iteration'
+					: 'one Environment per case; parsed templates cached'}
+				). Recorded {report.generatedAt} on {report.platform.platform}/{report.platform.arch},{' '}
+				{report.node}.
+			</p>
+			<p>
+				Average <strong>nunjucks / runjucks</strong> (non-skipped cases):{' '}
+				<strong>
+					{report.summary.avg_nj_over_rj != null
+						? fmtRatio(report.summary.avg_nj_over_rj)
+						: '—'}
+				</strong>{' '}
+				— values <strong>greater than 1x</strong> mean Nunjucks was slower on average for this run.
+			</p>
+			<details>
+				<summary>Per-case mean latency ({okRows.length} cases)</summary>
+				<div class="table-overflow">
+					<table class="perf-table">
+						<thead>
+							<tr>
+								<th scope="col">Case</th>
+								<th scope="col">Runjucks (ms)</th>
+								<th scope="col">Nunjucks (ms)</th>
+								<th scope="col">nj / rj</th>
+							</tr>
+						</thead>
+						<tbody>
+							{okRows.map((r) => (
+								<tr>
+									<td>
+										<code>{r.name}</code>
+									</td>
+									<td>{fmtMs(r.runjucks_ms)}</td>
+									<td>{fmtMs(r.nunjucks_ms)}</td>
+									<td>{fmtRatio(r.nj_over_rj)}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			</details>
+			{skippedRows.length > 0 ? (
+				<details>
+					<summary>Skipped cases</summary>
+					<ul>
+						{skippedRows.map((r) => (
+							<li>
+								<code>{r.name}</code> — {r.reason}
+							</li>
+						))}
+					</ul>
+				</details>
+			) : null}
+		</div>
+	) : (
+		<p>
+			<em>No report file found for version {index.latest} under docs data.</em>
+		</p>
+	)
+}
+
+<style>
+	.table-overflow {
+		overflow-x: auto;
+		margin-top: 0.75rem;
+	}
+	.perf-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.9em;
+	}
+	.perf-table th,
+	.perf-table td {
+		border: 1px solid var(--sl-color-gray-5);
+		padding: 0.35rem 0.5rem;
+		text-align: left;
+	}
+	.perf-table th {
+		background: var(--sl-color-gray-6);
+	}
+</style>

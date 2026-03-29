@@ -2,6 +2,23 @@
 
 **Runjucks** is a [Nunjucks](https://mozilla.github.io/nunjucks/)-compatible template engine whose **rendering core is implemented in Rust**, exposed to Node.js via [NAPI-RS](https://napi.rs/). The goal is the same JavaScript/TypeScript API surface as Nunjucks, with faster rendering for CPU-heavy templates.
 
+**If you use `nunjucks` on npm today:** you can often swap to **`@zneep/runjucks`** for sync Node apps—`renderString`, `Environment`, `configure`, maps and disk loaders, optional Express wiring. The docs site has a **[Migrating from Nunjucks](docs/src/content/docs/guides/migrating-from-nunjucks.md)** guide with an API mapping and an honest checklist (no async tags, no precompile/browser bundle yet).
+
+**If you want Jinja2-style templates and care about throughput:** the language follows the same family as Nunjucks and Jinja2; slices work without a separate compat shim. Read **[Jinja2 background](docs/src/content/docs/guides/jinja2-background.md)** and **[Performance](docs/src/content/docs/guides/performance.mdx)** (includes a version-stamped vs-Nunjucks snapshot on the live site).
+
+**Try it:**
+
+```bash
+npm install @zneep/runjucks
+```
+
+```js
+import { renderString } from '@zneep/runjucks'
+console.log(renderString('Hello {{ name }}', { name: 'Ada' }))
+```
+
+**Documentation:** run **`npm run docs:dev`** locally or browse the guides under [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/) (published via GitHub Pages from [`.github/workflows/docs.yml`](.github/workflows/docs.yml)).
+
 This repository also serves as a **learning project** for Rust: lexer, parser, tree-walk interpreter, and Node bindings are implemented incrementally.
 
 ## Status
@@ -104,11 +121,11 @@ npm run docs:dev      # local dev server
 npm run docs:build    # TypeDoc + rustdoc + Starlight → docs/dist/
 ```
 
-Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)). The site includes **Template language**, **JavaScript API**, **Performance**, and **Limitations** guides under [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/).
+Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/docs.yml`](.github/workflows/docs.yml). Set `ASTRO_BASE_PATH` if your Pages URL uses a project path (see [`docs/README.md`](docs/README.md)). The site includes **Migrating from Nunjucks**, **Jinja2 background**, **Template language**, **JavaScript API**, **Performance** (with versioned benchmarks), and **Limitations** under [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/).
 
 ## Performance
 
-- **User guide:** [Performance](docs/src/content/docs/guides/performance.md) (caching, release builds, measuring).
+- **User guide:** [Performance](docs/src/content/docs/guides/performance.mdx) (caching, release builds, measuring, published benchmarks).
 - **Maintainer backlog:** [`RUNJUCKS_PERF.md`](RUNJUCKS_PERF.md); **`npm run perf`** / **`npm run bench:rust`** compare workloads vs Nunjucks and Rust microbenches.
 
 ## Development

@@ -3,7 +3,7 @@ title: Runjucks
 description: Nunjucks-compatible templates with a Rust rendering core for Node.js.
 template: splash
 hero:
-  tagline: Fast, familiar Nunjucks-style templates for Node.js — same module and environment patterns you already know, with rendering done in Rust instead of compiling templates to JavaScript.
+  tagline: Fast, Jinja-flavored templates for Node — the Nunjucks-style API you already know, with rendering in Rust instead of compiling templates to JavaScript. Strong fit for sync servers and CLIs; CPU-heavy templates benefit most.
   image:
     file: ../../assets/houston.webp
   actions:
@@ -11,35 +11,54 @@ hero:
       link: guides/installation/
       icon: right-arrow
       variant: primary
-    - text: Template language
-      link: guides/syntax/
-      icon: open-book
+    - text: Migrate from Nunjucks
+      link: guides/migrating-from-nunjucks/
+      icon: rocket
       variant: minimal
-    - text: JavaScript API
-      link: guides/javascript-api/
-      icon: document
+    - text: From Jinja2
+      link: guides/jinja2-background/
+      icon: open-book
       variant: minimal
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
+## Example
+
+```jinja
+{% extends "base.njk" %}
+{% block title %}{{ page.title | upper }}{% endblock %}
+{% block body %}
+  <ul>
+    {% for id, item in items %}
+      <li>{{ id }}: {{ item.label }}</li>
+    {% endfor %}
+  </ul>
+{% endblock %}
+```
+
+For the full language and Node API, see the guides below.
+
 ## Why Runjucks?
 
 <CardGrid stagger>
-	<Card title="Nunjucks-shaped API" icon="star">
-		`renderString`, `Environment`, `configure`, `compile`, and `Template` follow the same ideas as [Nunjucks](https://mozilla.github.io/nunjucks/). See [JavaScript API](guides/javascript-api/).
+	<Card title="Leaving Nunjucks npm?" icon="rocket">
+		Same patterns: `renderString`, `Environment`, `configure`, `compile`, loaders via `setTemplateMap` / `setLoaderRoot`, optional Express helper. Follow the [migration guide](guides/migrating-from-nunjucks/) for a precise “drop-in” boundary (sync Node only — no async tags or precompile yet).
+	</Card>
+	<Card title="Jinja2-shaped & fast" icon="star">
+		Familiar filters, inheritance, and macros — see [Jinja2 background](guides/jinja2-background/). The core is **Rust** with parse caching; [Performance](guides/performance/) includes a **versioned** vs-Nunjucks snapshot for the published npm package.
+	</Card>
+	<Card title="Nunjucks-shaped API" icon="document">
+		Official [Nunjucks templating](https://mozilla.github.io/nunjucks/templating.html) remains a good syntax reference. Runjucks’ Node surface is documented in [JavaScript API](guides/javascript-api/).
 	</Card>
 	<Card title="Rust-powered engine" icon="rocket">
-		Templates are lexed, parsed, and rendered in Rust — no compile-to-JavaScript step or `eval` on the hot path. Custom delimiters, trim markers, and whitespace options match Nunjucks-style behavior.
+		No compile-to-JavaScript step or `eval` on the hot path. Custom delimiters, trim markers, and whitespace options match Nunjucks-oriented behavior.
 	</Card>
-	<Card title="TypeScript" icon="document">
-		Types ship with the package (`index.d.ts`). The full Node API reference is [generated on build](api/).
+	<Card title="TypeScript" icon="seti:typescript">
+		Types ship with the package (`index.d.ts`). The Node API reference is [generated on build](api/).
 	</Card>
-	<Card title="Tested against Nunjucks" icon="approve-check">
-		Golden fixtures and parity checks help keep behavior aligned with the `nunjucks` npm package. Contributors: see [Development](guides/development/) and the repo’s parity notes.
-	</Card>
-	<Card title="Performance" icon="rocket">
-		Reuse environments and `Template` instances, ship release native builds, and understand built-in parse caching — see [Performance](guides/performance/).
+	<Card title="Tested vs Nunjucks" icon="approve-check">
+		Golden fixtures and **`parity.test.mjs`** vs the `nunjucks` npm package reduce regressions. Contributor workflow: [Development](guides/development/).
 	</Card>
 </CardGrid>
 

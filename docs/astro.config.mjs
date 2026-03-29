@@ -43,6 +43,11 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'index' },
 						{ label: 'Installation', slug: 'guides/installation' },
+						{
+							label: 'Migrating from Nunjucks',
+							slug: 'guides/migrating-from-nunjucks',
+						},
+						{ label: 'Jinja2 background', slug: 'guides/jinja2-background' },
 					],
 				},
 				{

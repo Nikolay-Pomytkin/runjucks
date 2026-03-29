@@ -6,6 +6,7 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Bench } from 'tinybench'
@@ -18,6 +19,21 @@ import {
 } from './harness-env.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const require = createRequire(import.meta.url)
+
+function readRunjucksVersion() {
+  const pkgPath = join(__dirname, '..', 'package.json')
+  return JSON.parse(readFileSync(pkgPath, 'utf8')).version
+}
+
+function readNunjucksVersion() {
+  try {
+    const pkgPath = require.resolve('nunjucks/package.json')
+    return JSON.parse(readFileSync(pkgPath, 'utf8')).version
+  } catch {
+    return null
+  }
+}
 
 const allowlist = JSON.parse(
   readFileSync(join(__dirname, 'conformance-allowlist.json'), 'utf8'),
@@ -178,9 +194,13 @@ function collectAllowlistedCases(conformanceById) {
 }
 
 async function main() {
+  const njVer = readNunjucksVersion() ?? 'unknown'
+
   if (!jsonOut) {
     console.log('runjucks perf vs nunjucks (local only; noisy across machines)\n')
-    console.log(`Node ${process.version} | nunjucks 3.2.4`)
+    console.log(
+      `Node ${process.version} | @zneep/runjucks ${readRunjucksVersion()} | nunjucks ${njVer}`,
+    )
     if (coldRunjucks) {
       console.log('Runjucks: --cold (fresh Environment each iteration)')
     } else {
@@ -212,7 +232,14 @@ async function main() {
 
   if (jsonOut) {
     const payload = {
+      runjucksVersion: readRunjucksVersion(),
+      nunjucksVersion: njVer,
+      mode: coldRunjucks ? 'cold' : 'warm',
       node: process.version,
+      platform: {
+        platform: process.platform,
+        arch: process.arch,
+      },
       generatedAt: new Date().toISOString(),
       rows: rows.map((r) =>
         r.skip
