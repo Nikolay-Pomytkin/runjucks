@@ -2,6 +2,8 @@
 
 **Audience:** maintainers porting behavior and tracking gaps vs [Nunjucks](https://mozilla.github.io/nunjucks/). For **users**, see the Starlight site ([`docs/src/content/docs/guides/`](docs/src/content/docs/guides/)) — **Template language**, **JavaScript API**, **Limitations** — and the repo **README** for install/build. This file keeps **implementation references** and **checkboxes**; it is not the public product doc.
 
+**Scope vs mozilla.io docs:** The official site documents the **full Nunjucks product** — async tags (`asyncEach`, `asyncAll`), callback/promise APIs, **precompile**, **browser** bundles, and extension `parse()` hooks. Runjucks targets a **sync, Node-native** subset; those areas remain **P3** / non-goals unless the roadmap changes ([P3_ROADMAP.md](P3_ROADMAP.md)). Near–**100% parity** below means **that sync language + builtins + documented Node API subset**, not every feature on [templating.html](https://mozilla.github.io/nunjucks/templating.html) and [api.html](https://mozilla.github.io/nunjucks/api.html).
+
 **External references (language & API):**
 
 - [Templating](https://mozilla.github.io/nunjucks/templating.html) — tag/expression syntax.
@@ -57,7 +59,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 | **Expressions:** literals, math, comparisons, inline `if`, calls | Mostly shipped | **Partial:** arbitrary **function calls** from **context** (still JSON-only); **global** callables via **`addGlobal` (Node)** / [`add_global_callable`](native/crates/runjucks-core/src/environment.rs) (Rust) — see **Roadmap → P1 spec**. |
 | **Regex literals** `r/pattern/flags` | Shipped | Rust `regex` crate; flags **`g`** (find), **`i`**, **`m`**, **`y`** — not full ECMAScript semantics. See **Expressions → Regex**. |
 | **`for` over Map / Set / iterables** | Partial | Core uses JSON values; **object** iteration uses sorted keys. **`length`** on JSON objects counts keys. ECMAScript **`Map`/`Set`** in Node context are not first-class (serialize to JSON or use objects/arrays) — see **Map / Set / length** below. |
-| **`is` tests (`defined`, `callable`, …)** | Shipped | **Dotted lookups** (`o.a`, `items[0]`) use Nunjucks-style **missing → undefined** so `is defined` matches upstream; **`lib.mac` is callable** for import namespaces uses the same rules. See **Expressions → Implemented**. |
+| **`is` tests (`defined`, `callable`, `gt`, `mapping`, …)** | Shipped | **Dotted lookups** (`o.a`, `items[0]`) use Nunjucks-style **missing → undefined** so `is defined` matches upstream; **`lib.mac` is callable** for import namespaces uses the same rules. Builtin list: **Expressions → Builtin `is` tests**. |
 | **Builtin filters / globals** | Mostly shipped | Behavioral gaps — **Filters → Partial**; `range`, `cycler`, `joiner` shipped. |
 | **`installJinjaCompat()`** (Pythonic APIs, etc.) | Not an API | Slices work without shim; see **Node / NAPI API → Remaining**. |
 
@@ -114,6 +116,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 |------|----------------------|--------|
 | **Tags** | `{% asyncEach %}`, `{% asyncAll %}`, `{% ifAsync %}` | **P3** — need async render pipeline or stay documented non-goal. |
 | **Expressions** | `addGlobal` with **live JS callables** (`{{ fn(…) }}`) | **Shipped** (Node); context fields remain JSON — see **Roadmap → P1 spec**. |
+| **Expressions** | Builtin **`is`** tests (`gt`, `ne`, `escaped`, `mapping`, …) | **Shipped** — see **Expressions → Builtin `is` tests**; **`equalto` / `sameas`** use `===`-style rules for JSON context (same-variable vs distinct bindings). |
 | **Filters** | `length` on ECMAScript `Map`/`Set` in Node (not JSON-shaped) | Partial — core **`length`** on objects is key count; see **Map / Set / length**. **`safe`/`escape` chains** aligned for common cases — see **Filters → Partial**. |
 | **Node API** | **URL / async loaders** | **P2** — **`setTemplateMap`** + **`setLoaderRoot`** (sync disk); **`runjucks/express`** optional helper; no `http(s):` URL loader. |
 | **Node API** | **Async** `render` / `renderString` | **P3**. |
@@ -167,7 +170,19 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 
 ### Implemented
 
-`Literal`, `Variable`, `GetAttr`, `GetItem` (including Jinja-style `arr[start:stop:step]`) — **missing** keys / out-of-bounds indices yield the internal **undefined** sentinel (not JSON `null`) so `is defined` matches Nunjucks for `{{ o.missing }}`, `{{ arr[99] }}`, and **import namespaces** (`{{ lib.nope }}`). `Call` (macros, `super()`, `caller()`, built-in globals), `Filter`, `List`, `Dict`, `InlineIf`, `Unary`, `Binary`, `Compare`, `is` tests (`defined`, `equalto`, `sameas`, `null`/`none`, `falsy`, `truthy`, `number`, `string`, `lower`, `upper`, `callable`, `odd`, `even`, `divisibleby`, plus `add_test` / `addTest`). **`throwOnUndefined`**, unknown custom `is` tests throw, **`addGlobal`** with JSON values, default globals (`range`, `cycler`, `joiner`). **Import namespaces:** `lib.mac` as a value uses a `__runjucks_callable` marker so `is callable` / `is defined` work without calling the macro.
+`Literal`, `Variable`, `GetAttr`, `GetItem` (including Jinja-style `arr[start:stop:step]`) — **missing** keys / out-of-bounds indices yield the internal **undefined** sentinel (not JSON `null`) so `is defined` matches Nunjucks for `{{ o.missing }}`, `{{ arr[99] }}`, and **import namespaces** (`{{ lib.nope }}`). `Call` (macros, `super()`, `caller()`, built-in globals), `Filter`, `List`, `Dict`, `InlineIf`, `Unary`, `Binary`, `Compare`, builtin `is` tests (see table below), plus `add_test` / `addTest`. **`throwOnUndefined`**, unknown custom `is` tests throw, **`addGlobal`** with JSON values, default globals (`range`, `cycler`, `joiner`). **Import namespaces:** `lib.mac` as a value uses a `__runjucks_callable` marker so `is callable` / `is defined` work without calling the macro.
+
+### Builtin `is` tests (vs [nunjucks `tests.js`](../nunjucks/nunjucks/src/tests.js))
+
+| Test names | Status | Notes |
+|------------|--------|--------|
+| `defined`, `callable`, `null` / `none`, `undefined` | Shipped | `undefined` uses internal sentinel; JSON `null` is not undefined. |
+| `equalto`, **`eq`** (alias), **`sameas`** (alias of `equalto`) | Shipped | **`===` semantics** for values from **distinct** bindings: two objects/arrays from different context keys are **never** equal, even if structurally identical. **`{{ o is sameas(o) }}`** / **`{{ o is equalto(o) }}`** is **true** (same template variable). `select` / `reject` always use the “distinct binding” path. |
+| `truthy`, `falsy`, `number`, `string`, `lower`, `upper` | Shipped | |
+| `odd`, `even`, `divisibleby` | Shipped | |
+| **`greaterthan`**, **`gt`**, **`lessthan`**, **`lt`**, **`ge`**, **`le`**, **`ne`** | Shipped | Relational ops use JS-like numeric coercion where both sides parse as numbers; otherwise two **string** operands compare lexicographically; **`ne()`** with no arg → `!== undefined` (Nunjucks). |
+| **`escaped`** | Shipped | True for **`safe`** / marked-safe wrapper values. |
+| **`iterable`**, **`mapping`** | Shipped | JSON model: strings + arrays **iterable**; plain objects **mapping**; excludes undefined/safe/regexp markers. Not ECMAScript **`Map`/`Set`** (see below). |
 
 ### Partial
 
@@ -221,13 +236,19 @@ Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunj
 
 ### Current state
 
-- **128** JSON vectors (non-skipped): [`render_cases.json`](native/fixtures/conformance/render_cases.json) (46) + [`filter_cases.json`](native/fixtures/conformance/filter_cases.json) (26) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (56).
+- **142** allowlisted JSON vectors (non-skipped): [`render_cases.json`](native/fixtures/conformance/render_cases.json) (60) + [`filter_cases.json`](native/fixtures/conformance/filter_cases.json) (26) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (56).
 - **Allowlist hygiene** — run **`npm run check:conformance-allowlist`** so every non-skipped fixture `id` appears in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json).
 - **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) vs `nunjucks` npm using that allowlist. Env fixtures in [`__test__/conformance/run.mjs`](__test__/conformance/run.mjs).
 
 ### Next steps
 
 - [ ] **New conformance vectors** — when adding rows to the JSON fixtures, append the new `id` to [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) once Runjucks matches Nunjucks; `npm run perf` can include them for trends.
+
+### Behavioral follow-ups (incremental)
+
+- **Safe-string / `copySafeness`:** extend [`__test__/upstream/filters-ported.test.mjs`](__test__/upstream/filters-ported.test.mjs) and/or filter conformance rows when a real template finds a new chain; no blanket guarantee vs Nunjucks for every filter ordering.
+- **`Map` / `Set`:** policy unchanged — use [`serialize-context.js`](serialize-context.js) / **`serializeContextForRender`** or plain objects; see **Map / Set / length** above.
+- **Include / import / extends:** keep exercising edge cases in Rust ([`composition.rs`](native/crates/runjucks-core/tests/composition.rs)) and Node (`__test__/tags-extended.test.mjs`); promote to **`parity.test.mjs`** only when stock **nunjucks 3.2.4** accepts the same syntax.
 
 ---
 

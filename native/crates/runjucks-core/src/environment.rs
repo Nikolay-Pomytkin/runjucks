@@ -11,7 +11,9 @@ use crate::globals::{default_globals_map, value_is_callable, RJ_CALLABLE};
 use crate::lexer::{LexerOptions, Tags};
 use crate::loader::TemplateLoader;
 use crate::parser::is_reserved_tag_keyword;
-use crate::value::{is_undefined_value, undefined_value, value_to_string};
+use crate::value::{
+    is_marked_safe, is_regexp_value, is_undefined_value, undefined_value, value_to_string,
+};
 use crate::{lexer, parser, renderer};
 use serde_json::{Map, Value};
 use std::borrow::Cow;
@@ -155,6 +157,112 @@ fn as_is_test_integer(v: &Value) -> Result<i64> {
     v.as_i64()
         .or_else(|| v.as_f64().map(|x| x as i64))
         .ok_or_else(|| RunjucksError::new("test expected a number"))
+}
+
+/// `ToNumber`-style coercion for Nunjucks relational `is` tests (`gt`, `ge`, …).
+fn to_number_for_is_compare(v: &Value) -> Option<f64> {
+    if is_undefined_value(v) {
+        return None;
+    }
+    match v {
+        Value::Null => Some(0.0),
+        Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn relational_ordering(value: &Value, other: &Value) -> Option<std::cmp::Ordering> {
+    let (n1, n2) = (
+        to_number_for_is_compare(value),
+        to_number_for_is_compare(other),
+    );
+    if let (Some(a), Some(b)) = (n1, n2) {
+        if a.is_nan() || b.is_nan() {
+            return None;
+        }
+        return a.partial_cmp(&b);
+    }
+    if let (Value::String(s1), Value::String(s2)) = (value, other) {
+        return Some(s1.cmp(s2));
+    }
+    None
+}
+
+fn is_test_gt(value: &Value, arg_vals: &[Value]) -> bool {
+    let Some(other) = arg_vals.first() else {
+        return false;
+    };
+    relational_ordering(value, other)
+        .map(|o| o == std::cmp::Ordering::Greater)
+        .unwrap_or(false)
+}
+
+fn is_test_ge(value: &Value, arg_vals: &[Value]) -> bool {
+    let Some(other) = arg_vals.first() else {
+        return false;
+    };
+    relational_ordering(value, other)
+        .map(|o| o == std::cmp::Ordering::Greater || o == std::cmp::Ordering::Equal)
+        .unwrap_or(false)
+}
+
+fn is_test_lt(value: &Value, arg_vals: &[Value]) -> bool {
+    let Some(other) = arg_vals.first() else {
+        return false;
+    };
+    relational_ordering(value, other)
+        .map(|o| o == std::cmp::Ordering::Less)
+        .unwrap_or(false)
+}
+
+fn is_test_le(value: &Value, arg_vals: &[Value]) -> bool {
+    let Some(other) = arg_vals.first() else {
+        return false;
+    };
+    relational_ordering(value, other)
+        .map(|o| o == std::cmp::Ordering::Less || o == std::cmp::Ordering::Equal)
+        .unwrap_or(false)
+}
+
+fn is_test_iterable(v: &Value) -> bool {
+    match v {
+        Value::String(_) | Value::Array(_) => true,
+        Value::Object(_) if is_undefined_value(v) || is_marked_safe(v) || is_regexp_value(v) => {
+            false
+        }
+        Value::Object(_) => false,
+        _ => false,
+    }
+}
+
+fn is_test_mapping(v: &Value) -> bool {
+    if is_undefined_value(v) {
+        return false;
+    }
+    match v {
+        Value::Object(_) if is_marked_safe(v) || is_regexp_value(v) => false,
+        Value::Object(_) => true,
+        _ => false,
+    }
+}
+
+/// Nunjucks `equalto` / `sameas` (`===`): same template variable binding is always true; two object
+/// or array **values** from distinct bindings are never equal (reference semantics); primitives use
+/// JSON equality. Used from templates and from `select` / `reject` (always `same_binding: false`).
+pub(crate) fn equalto_sameas_pair(
+    left: &Value,
+    right: &Value,
+    same_template_variable: bool,
+) -> bool {
+    if same_template_variable {
+        return true;
+    }
+    match (left, right) {
+        (Value::Object(_), Value::Object(_)) | (Value::Array(_), Value::Array(_)) => false,
+        _ => left == right,
+    }
 }
 
 impl Default for Environment {
@@ -421,17 +529,13 @@ impl Environment {
         arg_vals: &[Value],
     ) -> Result<bool> {
         match test_name {
-            "equalto" => Ok(arg_vals.first().map(|a| a == value).unwrap_or(false)),
-            "sameas" => Ok(match arg_vals.first() {
-                Some(a) => match (value, a) {
-                    (Value::Object(_), Value::Object(_)) | (Value::Array(_), Value::Array(_)) => {
-                        false
-                    }
-                    _ => a == value,
-                },
+            "equalto" | "eq" | "sameas" => Ok(match arg_vals.first() {
+                Some(a) => equalto_sameas_pair(value, a, false),
                 None => false,
             }),
             "null" | "none" => Ok(value.is_null()),
+            "undefined" => Ok(is_undefined_value(value)),
+            "escaped" => Ok(is_marked_safe(value)),
             "falsy" => Ok(!is_truthy_value(value)),
             "truthy" => Ok(is_truthy_value(value)),
             "number" => Ok(value.is_number()),
@@ -469,6 +573,16 @@ impl Environment {
                 let n = as_is_test_integer(value)?;
                 Ok(n.rem_euclid(denom) == 0)
             }
+            "greaterthan" | "gt" => Ok(is_test_gt(value, arg_vals)),
+            "lessthan" | "lt" => Ok(is_test_lt(value, arg_vals)),
+            "ge" => Ok(is_test_ge(value, arg_vals)),
+            "le" => Ok(is_test_le(value, arg_vals)),
+            "ne" => Ok(match arg_vals.first() {
+                Some(a) => value != a,
+                None => !is_undefined_value(value),
+            }),
+            "iterable" => Ok(is_test_iterable(value)),
+            "mapping" => Ok(is_test_mapping(value)),
             _ => self.eval_user_is_test(test_name, value, arg_vals),
         }
     }

@@ -328,5 +328,103 @@
     "template": "{% macro foo(x, y) %}{{ x|safe }} and {{ y }}{% endmacro %}{{ foo(\"<>&\", \"<>\") }}",
     "context": {},
     "expected": "<>& and &lt;&gt;"
+  },
+  {
+    "id": "tests_js_is_gt_ge_lt_le",
+    "source": "nunjucks/src/tests.js relational tests",
+    "template": "{{ 5 is gt(3) }} {{ 5 is ge(5) }} {{ 2 is lt(5) }} {{ 3 is le(4) }}",
+    "context": {},
+    "expected": "true true true true"
+  },
+  {
+    "id": "tests_js_is_string_gt_coerce",
+    "source": "nunjucks relational ToNumber-style coercion",
+    "template": "{{ \"10\" is gt(2) }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_is_ne",
+    "source": "nunjucks/src/tests.js ne",
+    "template": "{{ 5 is ne(3) }} {{ 5 is ne(5) }}",
+    "context": {},
+    "expected": "true false"
+  },
+  {
+    "id": "tests_js_is_ne_no_arg",
+    "source": "nunjucks: `x !== undefined` when_rhs_missing",
+    "template": "{{ 5 is ne() }} {{ missing is ne() }}",
+    "context": {},
+    "expected": "true false"
+  },
+  {
+    "id": "tests_js_is_undefined_unbound",
+    "source": "nunjucks undefined test",
+    "template": "{{ missing is undefined }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_is_null_not_undefined",
+    "source": "nunjucks undefined vs null",
+    "template": "{{ n is undefined }}",
+    "context": { "n": null },
+    "expected": "false"
+  },
+  {
+    "id": "tests_js_is_escaped_safe",
+    "source": "nunjucks escaped test (SafeString)",
+    "template": "{{ (\"<\")|safe is escaped }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_is_not_escaped_raw",
+    "source": "nunjucks escaped test — plain string",
+    "template": "{{ \"<\" is escaped }}",
+    "context": {},
+    "expected": "false"
+  },
+  {
+    "id": "tests_js_is_eq_alias",
+    "source": "nunjucks equalto alias `eq`",
+    "template": "{{ 2 is eq(2) }} {{ 2 is eq(3) }}",
+    "context": {},
+    "expected": "true false"
+  },
+  {
+    "id": "tests_js_is_iterable_array_and_object",
+    "source": "nunjucks/src/tests.js iterable",
+    "template": "{{ items is iterable }} {{ obj is iterable }}",
+    "context": { "items": [1, 2], "obj": {} },
+    "expected": "true false"
+  },
+  {
+    "id": "tests_js_is_iterable_string",
+    "source": "nunjucks iterable — string",
+    "template": "{{ s is iterable }}",
+    "context": { "s": "hi" },
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_is_mapping",
+    "source": "nunjucks/src/tests.js mapping",
+    "template": "{{ o is mapping }} {{ items is mapping }}",
+    "context": { "o": {}, "items": [1] },
+    "expected": "true false"
+  },
+  {
+    "id": "tests_js_same_var_sameas_object",
+    "source": "nunjucks `===` same reference — `o is sameas(o)`",
+    "template": "{{ o is sameas(o) }}",
+    "context": { "o": { "a": 1 } },
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_distinct_objects_equalto",
+    "source": "nunjucks `===` distinct objects",
+    "template": "{{ a is equalto(b) }}",
+    "context": { "a": { "x": 1 }, "b": { "x": 1 } },
+    "expected": "false"
   }
 ]

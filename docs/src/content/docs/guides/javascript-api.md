@@ -32,8 +32,8 @@ Create with `new Environment()` or use the instance returned by `configure()`.
 
 ### Options
 
-- **`setAutoescape` / `setDev` / `setRandomSeed`** — Autoescape HTML in outputs, dev flag (reserved), and a fixed seed for `| random` in tests.
-- **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — Instance method; same flags as Nunjucks’ `configure`. **`tags`** sets custom delimiters (`blockStart`, `blockEnd`, `variableStart`, `variableEnd`, `commentStart`, `commentEnd`).
+- **`setAutoescape` / `setDev` / `setRandomSeed`** — Autoescape HTML in outputs, dev flag (reserved), and a fixed seed for `| random` in tests. **`setAutoescape` accepts only a boolean.** Nunjucks’ `configure` also allows **`autoescape` as a string** (e.g. escape only files with a given extension). Runjucks does not implement extension-based autoescape; use boolean on/off for the whole environment (see [Limitations](./limitations/)).
+- **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — Instance method; same flags as Nunjucks’ `configure`, except **`autoescape` is boolean-only** (see above). **`tags`** sets custom delimiters (`blockStart`, `blockEnd`, `variableStart`, `variableEnd`, `commentStart`, `commentEnd`).
 
 ### Globals, filters, tests
 

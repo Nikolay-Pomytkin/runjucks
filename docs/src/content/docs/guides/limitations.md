@@ -7,6 +7,7 @@ Runjucks targets **Node.js** and **synchronous** rendering. This page lists **pr
 
 ## Node.js and loaders
 
+- **`autoescape` option** — Nunjucks `configure({ autoescape: … })` accepts **`true`**, **`false`**, or a **string** (extension-based escaping, e.g. only `*.html`). Runjucks supports **boolean only** (`setAutoescape` / `configure({ autoescape })`): either all normal variable output is escaped or none is, per environment. There is no per-filename extension switch.
 - **Filesystem templates** — call **`setLoaderRoot(absolutePath)`** on an [`Environment`](./javascript-api/) so named templates load from disk (relative paths under that root; `..` traversal is rejected). Alternatively use **`setTemplateMap`** with an object of name → source strings, **`setLoaderCallback`** for a sync JS `getSource(name)` (no built-in **`http(s):`** loader — fetch in JS and return source, or use disk/map).
 - **Express** — optional helper **`require('@zneep/runjucks/express').expressEngine(app, opts?)`** registers `app.engine` for `.njk` (or your chosen `ext`) using `setLoaderRoot` from `app.get('views')` or `opts.views`. Rendering is **synchronous**; there is no async `render` callback like some Nunjucks setups.
 - **No browser / UMD bundle** as a first-class artifact — the runtime is a native addon for Node.

@@ -45,7 +45,21 @@
     "is_defined_missing_object_key",
     "is_defined_array_oob",
     "filters_not_callable_in_is_tests",
-    "macro_safe_output_not_autoescaped"
+    "macro_safe_output_not_autoescaped",
+    "tests_js_is_gt_ge_lt_le",
+    "tests_js_is_string_gt_coerce",
+    "tests_js_is_ne",
+    "tests_js_is_ne_no_arg",
+    "tests_js_is_undefined_unbound",
+    "tests_js_is_null_not_undefined",
+    "tests_js_is_escaped_safe",
+    "tests_js_is_not_escaped_raw",
+    "tests_js_is_eq_alias",
+    "tests_js_is_iterable_array_and_object",
+    "tests_js_is_iterable_string",
+    "tests_js_is_mapping",
+    "tests_js_same_var_sameas_object",
+    "tests_js_distinct_objects_equalto"
   ],
   "filter_cases": [
     "filters_join_simple",

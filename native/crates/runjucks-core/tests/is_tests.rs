@@ -94,3 +94,39 @@ fn custom_filter_name_is_not_callable_or_defined() {
         .unwrap();
     assert_eq!(out, "x false false");
 }
+
+#[test]
+fn equalto_same_variable_object_is_true() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{{ o is equalto(o) }} {{ o is sameas(o) }}"#.into(),
+            json!({ "o": { "a": 1 } }),
+        )
+        .unwrap();
+    assert_eq!(out, "true true");
+}
+
+#[test]
+fn equalto_distinct_object_keys_structurally_equal_is_false() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{{ a is equalto(b) }}"#.into(),
+            json!({ "a": { "x": 1 }, "b": { "x": 1 } }),
+        )
+        .unwrap();
+    assert_eq!(out, "false");
+}
+
+#[test]
+fn is_gt_and_escaped_match_nunjucks() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{{ 5 is gt(3) }} {{ ("<")|safe is escaped }}"#.into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "true true");
+}

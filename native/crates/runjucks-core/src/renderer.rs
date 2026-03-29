@@ -1872,6 +1872,15 @@ fn eval_to_value(
                     Expr::Variable(n) => env.resolve_variable_ref(stack, n)?,
                     _ => Cow::Owned(eval_to_value(env, state, left, stack)?),
                 };
+                if matches!(test_name, "equalto" | "eq" | "sameas") && arg_exprs.len() == 1 {
+                    if let Expr::Variable(lhs) = &**left {
+                        if let Expr::Variable(rhs) = &arg_exprs[0] {
+                            if lhs == rhs {
+                                return Ok(Value::Bool(true));
+                            }
+                        }
+                    }
+                }
                 Ok(Value::Bool(env.apply_is_test(
                     test_name,
                     v.as_ref(),
