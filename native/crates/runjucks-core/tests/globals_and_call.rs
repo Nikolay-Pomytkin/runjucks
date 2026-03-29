@@ -112,9 +112,7 @@ fn add_global_callable_invoked_from_template() {
         .render_string("{{ sum is callable }}".into(), json!({}))
         .unwrap();
     assert_eq!(out, "true");
-    let out = env
-        .render_string("{{ sum }}".into(), json!({}))
-        .unwrap();
+    let out = env.render_string("{{ sum }}".into(), json!({})).unwrap();
     assert_eq!(out, "");
 }
 
@@ -138,13 +136,8 @@ fn add_global_callable_receives_keyword_args() {
 #[test]
 fn add_global_json_clears_callable() {
     let mut env = Environment::default();
-    env.add_global_callable(
-        "dup",
-        Arc::new(|_, _| Ok(json!("should not appear"))),
-    );
+    env.add_global_callable("dup", Arc::new(|_, _| Ok(json!("should not appear"))));
     env.add_global("dup", json!(7));
-    let out = env
-        .render_string("{{ dup }}".into(), json!({}))
-        .unwrap();
+    let out = env.render_string("{{ dup }}".into(), json!({})).unwrap();
     assert_eq!(out, "7");
 }

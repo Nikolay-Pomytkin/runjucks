@@ -7,11 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn temp_dir(name: &str) -> PathBuf {
-    let p = std::env::temp_dir().join(format!(
-        "runjucks-fs-test-{}-{}",
-        name,
-        std::process::id()
-    ));
+    let p = std::env::temp_dir().join(format!("runjucks-fs-test-{}-{}", name, std::process::id()));
     let _ = fs::remove_dir_all(&p);
     fs::create_dir_all(&p).expect("mkdir");
     p

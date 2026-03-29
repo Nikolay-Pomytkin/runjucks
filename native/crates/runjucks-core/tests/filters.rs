@@ -95,8 +95,11 @@ fn replace_max_count_and_empty_needle_match_nunjucks() {
 fn replace_regex_matches_nunjucks_flags() {
     let env = Environment::default();
     assert_eq!(
-        env.render_string(r#"{{ "aabbbb" | replace(r/ab{2}/, "z") }}"#.into(), json!({}))
-            .unwrap(),
+        env.render_string(
+            r#"{{ "aabbbb" | replace(r/ab{2}/, "z") }}"#.into(),
+            json!({})
+        )
+        .unwrap(),
         "azbb"
     );
     assert_eq!(

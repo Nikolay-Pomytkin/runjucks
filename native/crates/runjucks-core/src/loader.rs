@@ -88,9 +88,9 @@ impl FileSystemLoader {
                 }
             }
         }
-        let canon = out.canonicalize().map_err(|_| {
-            RunjucksError::new(format!("template not found: {name}"))
-        })?;
+        let canon = out
+            .canonicalize()
+            .map_err(|_| RunjucksError::new(format!("template not found: {name}")))?;
         if !canon.starts_with(&self.root) {
             return Err(RunjucksError::new(format!(
                 "template path escapes loader root: {name}"
@@ -104,21 +104,18 @@ impl TemplateLoader for FileSystemLoader {
     fn load(&self, name: &str) -> Result<String> {
         let path = self.resolve_safe(name)?;
         std::fs::read_to_string(&path).map_err(|e| {
-            RunjucksError::new(format!(
-                "failed to read template {}: {e}",
-                path.display()
-            ))
+            RunjucksError::new(format!("failed to read template {}: {e}", path.display()))
         })
     }
 
     fn cache_key(&self, name: &str) -> Option<String> {
-        self.resolve_safe(name).ok().map(|p| p.to_string_lossy().into_owned())
+        self.resolve_safe(name)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
     }
 }
 
 /// Builds an `Arc` dyn loader for [`crate::Environment::loader`] from a filesystem root.
-pub fn file_system_loader(
-    root: impl AsRef<Path>,
-) -> Result<Arc<dyn TemplateLoader + Send + Sync>> {
+pub fn file_system_loader(root: impl AsRef<Path>) -> Result<Arc<dyn TemplateLoader + Send + Sync>> {
     Ok(Arc::new(FileSystemLoader::new(root)?))
 }

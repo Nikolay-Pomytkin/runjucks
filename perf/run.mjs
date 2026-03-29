@@ -30,6 +30,22 @@ function cloneCtx(ctx) {
   return structuredClone(ctx)
 }
 
+/** @param {object} case_ */
+function renderOutputs(rjEnv, njEnv, case_, ctx) {
+  if (case_.renderMode === 'template') {
+    const nm = case_.templateName
+    if (typeof nm !== 'string' || !nm) {
+      throw new Error('renderMode template requires non-empty templateName')
+    }
+    return [rjEnv.renderTemplate(nm, ctx), njEnv.render(nm, ctx)]
+  }
+  const tpl = case_.template
+  if (typeof tpl !== 'string') {
+    throw new Error('template string required unless renderMode is template')
+  }
+  return [rjEnv.renderString(tpl, ctx), njEnv.renderString(tpl, ctx)]
+}
+
 async function measureMeanMs(label, fn) {
   const bench = new Bench({
     name: label,
@@ -47,8 +63,8 @@ async function measureMeanMs(label, fn) {
 }
 
 async function benchCase(case_) {
-  const { name, template, context = {}, expected } = case_
-  const tpl = template
+  const { name, context = {}, expected } = case_
+  const tpl = case_.template
   const ctx = context
 
   if (case_.skip === true) {
@@ -80,8 +96,7 @@ async function benchCase(case_) {
     let rOut
     let nOut
     try {
-      rOut = rjEnv.renderString(tpl, cloneCtx(ctx))
-      nOut = njEnv.renderString(tpl, cloneCtx(ctx))
+      ;[rOut, nOut] = renderOutputs(rjEnv, njEnv, case_, cloneCtx(ctx))
     } catch (e) {
       return {
         name,
@@ -106,11 +121,19 @@ async function benchCase(case_) {
 
     const rjMs = await measureMeanMs(`rj:${name}`, () => {
       const env = coldRunjucks ? makeRunjucksEnv(case_) : rjEnv
-      env.renderString(tpl, cloneCtx(ctx))
+      if (case_.renderMode === 'template') {
+        env.renderTemplate(case_.templateName, cloneCtx(ctx))
+      } else {
+        env.renderString(tpl, cloneCtx(ctx))
+      }
     })
 
     const njMs = await measureMeanMs(`nj:${name}`, () => {
-      njEnv.renderString(tpl, cloneCtx(ctx))
+      if (case_.renderMode === 'template') {
+        njEnv.render(case_.templateName, cloneCtx(ctx))
+      } else {
+        njEnv.renderString(tpl, cloneCtx(ctx))
+      }
     })
 
     const speedup = njMs / rjMs

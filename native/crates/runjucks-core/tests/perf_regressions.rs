@@ -47,12 +47,131 @@ fn chained_filters_on_literal_still_apply_in_order() {
 }
 
 #[test]
+fn chained_upper_lower_on_variable_matches_sequential_filters() {
+    let env = Environment::default();
+    let ctx = json!({ "s": "aBc" });
+    assert_eq!(
+        env.render_string("{{ s | upper | lower }}".into(), ctx.clone())
+            .unwrap(),
+        "abc"
+    );
+}
+
+#[test]
+fn variable_upper_then_length_counts_uppercased_string() {
+    let env = Environment::default();
+    let ctx = json!({ "s": "aBc" });
+    assert_eq!(
+        env.render_string("{{ s | upper | length }}".into(), ctx)
+            .unwrap(),
+        "3"
+    );
+}
+
+#[test]
+fn fused_filter_chain_trim_upper_variable() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string("{{ s | trim | upper }}".into(), json!({ "s": "  hello  " }),)
+            .unwrap(),
+        "HELLO"
+    );
+    assert_eq!(
+        env.render_string("{{ s | upper | trim }}".into(), json!({ "s": "  hello  " }),)
+            .unwrap(),
+        "HELLO"
+    );
+}
+
+#[test]
+fn fused_filter_chain_trim_capitalize_variable() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string(
+            "{{ s | trim | capitalize }}".into(),
+            json!({ "s": "  hELLO  " }),
+        )
+        .unwrap(),
+        "Hello"
+    );
+}
+
+#[test]
+fn capitalize_fusion_skipped_when_custom_capitalize_registered() {
+    let mut env = Environment::default();
+    env.add_filter(
+        "capitalize",
+        Arc::new(|input, _args| Ok(Value::String(format!("custom:{}", value_to_string(input))))),
+    );
+    let out = env
+        .render_string("{{ 'ab' | capitalize }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "custom:ab");
+}
+
+#[test]
+fn single_filter_capitalize_fast_path_literal_and_variable() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string("{{ 'heLLo' | capitalize }}".into(), json!({}))
+            .unwrap(),
+        "Hello"
+    );
+    assert_eq!(
+        env.render_string("{{ s | capitalize }}".into(), json!({ "s": "heLLo" }))
+            .unwrap(),
+        "Hello"
+    );
+}
+
+#[test]
+fn fused_compare_single_step_avoids_redundant_clone_smoke() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string("{{ a == b }}".into(), json!({ "a": 1, "b": 1 }))
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        env.render_string("{{ a == b }}".into(), json!({ "a": 1, "b": 2 }))
+            .unwrap(),
+        "false"
+    );
+}
+
+#[test]
+fn trim_fusion_skipped_when_custom_trim_registered() {
+    let mut env = Environment::default();
+    env.add_filter(
+        "trim",
+        Arc::new(|input, _args| Ok(Value::String(format!("custom:{}", value_to_string(input))))),
+    );
+    let out = env
+        .render_string("{{ 'x' | trim }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "custom:x");
+}
+
+#[test]
+fn is_divisibleby_borrows_variable_lhs_with_arg() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string("{{ v is divisibleby(2) }}".into(), json!({ "v": 8 }))
+            .unwrap(),
+        "true"
+    );
+    assert_eq!(
+        env.render_string("{{ v is divisibleby(3) }}".into(), json!({ "v": 8 }))
+            .unwrap(),
+        "false"
+    );
+}
+
+#[test]
 fn get_attr_on_plain_variable_reads_one_field() {
     let env = Environment::default();
     let ctx = json!({ "user": { "name": "Ada", "noise": "ignore" } });
-    let out = env
-        .render_string("{{ user.name }}".into(), ctx)
-        .unwrap();
+    let out = env.render_string("{{ user.name }}".into(), ctx).unwrap();
     assert_eq!(out, "Ada");
 }
 
@@ -86,7 +205,10 @@ fn get_item_literal_index_and_key_on_variable_base() {
 fn slice_on_variable_base_matches_expectation() {
     let env = Environment::default();
     let out = env
-        .render_string("{{ arr[0:2] | join(',') }}".into(), json!({ "arr": [1, 2, 3] }))
+        .render_string(
+            "{{ arr[0:2] | join(',') }}".into(),
+            json!({ "arr": [1, 2, 3] }),
+        )
         .unwrap();
     assert_eq!(out, "1,2");
 }
@@ -111,11 +233,13 @@ fn is_test_empty_args_uses_variable_lhs() {
     let env = Environment::default();
     let ctx = json!({ "v": Value::Null });
     assert_eq!(
-        env.render_string("{{ v is none }}".into(), ctx.clone()).unwrap(),
+        env.render_string("{{ v is none }}".into(), ctx.clone())
+            .unwrap(),
         "true"
     );
     assert_eq!(
-        env.render_string("{{ missing is defined }}".into(), ctx).unwrap(),
+        env.render_string("{{ missing is defined }}".into(), ctx)
+            .unwrap(),
         "false"
     );
 }
@@ -129,19 +253,23 @@ fn variable_builtin_upper_lower_length_matches_expectation() {
         "obj": { "a": 1, "b": 2 }
     });
     assert_eq!(
-        env.render_string("{{ s | upper }}".into(), ctx.clone()).unwrap(),
+        env.render_string("{{ s | upper }}".into(), ctx.clone())
+            .unwrap(),
         "HELLO"
     );
     assert_eq!(
-        env.render_string("{{ s | lower }}".into(), ctx.clone()).unwrap(),
+        env.render_string("{{ s | lower }}".into(), ctx.clone())
+            .unwrap(),
         "hello"
     );
     assert_eq!(
-        env.render_string("{{ s | length }}".into(), ctx.clone()).unwrap(),
+        env.render_string("{{ s | length }}".into(), ctx.clone())
+            .unwrap(),
         "5"
     );
     assert_eq!(
-        env.render_string("{{ arr | length }}".into(), ctx.clone()).unwrap(),
+        env.render_string("{{ arr | length }}".into(), ctx.clone())
+            .unwrap(),
         "3"
     );
     assert_eq!(
@@ -204,10 +332,7 @@ fn nested_for_loop_objects_independent_per_inner_iteration() {
         "{% endfor %}",
     );
     let out = env
-        .render_string(
-            tpl.into(),
-            json!({ "outer": [["x", "y"], ["z"]] }),
-        )
+        .render_string(tpl.into(), json!({ "outer": [["x", "y"], ["z"]] }))
         .unwrap();
     assert_eq!(out, "1/0/2|2/1/2|1/0/1|");
 }
@@ -215,9 +340,7 @@ fn nested_for_loop_objects_independent_per_inner_iteration() {
 #[test]
 fn plain_text_preserves_unicode_and_empty_adjacent_segments() {
     let env = Environment::default();
-    let out = env
-        .render_string("日本語🙂".into(), json!({}))
-        .unwrap();
+    let out = env.render_string("日本語🙂".into(), json!({})).unwrap();
     assert_eq!(out, "日本語🙂");
     assert_eq!(env.render_string("".into(), json!({})).unwrap(), "");
 }

@@ -1,6 +1,8 @@
 /**
  * Hand-written scenarios for throughput vs template size / structure.
- * Each case: { name, template, context?, env? } — same shape as conformance fixtures.
+ * Each case: { name, template?, context?, env?, renderMode?, templateName? } — same shape as
+ * conformance fixtures when using inline `template`. Use `renderMode: 'template'` +
+ * `templateName` + `env.templateMap` to benchmark `renderTemplate` / Nunjucks `env.render`.
  */
 
 const nums = Array.from({ length: 200 }, (_, i) => i)
@@ -36,6 +38,16 @@ export function syntheticCases() {
       context: {},
     },
     {
+      name: 'synth_var_trim_upper',
+      template: '{{ msg | trim | upper }}',
+      context: { msg: '  hello  ' },
+    },
+    {
+      name: 'synth_var_trim_capitalize',
+      template: '{{ msg | trim | capitalize }}',
+      context: { msg: '  hELLO  ' },
+    },
+    {
       name: 'synth_if_nested',
       template: `{% if a %}{% if b %}{{ x }}{% else %}no{% endif %}{% else %}outer{% endif %}`,
       context: { a: true, b: true, x: 'ok' },
@@ -56,6 +68,17 @@ export function syntheticCases() {
       template:
         '{% if a %}{% if b %}{% if c %}x{% endif %}{% endif %}{% endif %}',
       context: { a: true, b: true, c: true },
+    },
+    {
+      name: 'synth_named_template_interp',
+      renderMode: 'template',
+      templateName: 'main.njk',
+      env: {
+        templateMap: {
+          'main.njk': '{{ a }},{{ b }}',
+        },
+      },
+      context: { a: 'x', b: 'y' },
     },
   ]
 }

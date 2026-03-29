@@ -208,12 +208,36 @@ fn filter_reverse(input: &Value) -> Value {
     }
 }
 
-fn filter_trim(input: &Value) -> Value {
+/// First character uppercased, remainder lowercased (matches `apply_builtin` `capitalize`).
+pub(crate) fn capitalize_string_slice(s: &str) -> String {
+    let mut it = s.chars();
+    if let Some(c) = it.next() {
+        format!(
+            "{}{}",
+            c.to_uppercase().collect::<String>(),
+            it.as_str().to_lowercase()
+        )
+    } else {
+        String::new()
+    }
+}
+
+/// Built-in `capitalize` for fused chains (same as `apply_builtin` `capitalize`).
+pub(crate) fn chain_capitalize_like_builtin(input: &Value) -> Value {
+    Value::String(capitalize_string_slice(&value_to_string(input)))
+}
+
+/// Built-in `trim` body; shared with fused filter chains in [`crate::renderer`].
+pub(crate) fn chain_trim_like_builtin(input: &Value) -> Value {
     Value::String(
         value_to_string_raw(input)
             .trim_matches(|c: char| c.is_whitespace())
             .to_string(),
     )
+}
+
+fn filter_trim(input: &Value) -> Value {
+    chain_trim_like_builtin(input)
 }
 
 fn filter_sum(input: &Value, args: &[Value]) -> Result<Value> {
@@ -1049,17 +1073,7 @@ pub fn apply_builtin(
                 },
             )
         }
-        "capitalize" => {
-            let s = value_to_string(input);
-            let mut it = s.chars();
-            if let Some(c) = it.next() {
-                let head: String = c.to_uppercase().collect();
-                let tail = it.as_str().to_lowercase();
-                Ok(Value::String(format!("{head}{tail}")))
-            } else {
-                Ok(Value::String(String::new()))
-            }
-        }
+        "capitalize" => Ok(chain_capitalize_like_builtin(input)),
         _ => Err(RunjucksError::new(format!("unknown filter `{name}`"))),
     }
 }

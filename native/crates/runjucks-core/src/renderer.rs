@@ -11,9 +11,9 @@ use crate::globals::{
 };
 use crate::loader::TemplateLoader;
 use crate::value::{is_undefined_value, mark_safe, undefined_value};
+use ahash::AHashMap;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
-use ahash::AHashMap;
 use serde_json::{json, Map, Value};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -38,10 +38,8 @@ pub struct CtxStack {
 
 impl CtxStack {
     pub fn from_root(root: Map<String, Value>) -> Self {
-        let mapped: AHashMap<String, Arc<Value>> = root
-            .into_iter()
-            .map(|(k, v)| (k, Arc::new(v)))
-            .collect();
+        let mapped: AHashMap<String, Arc<Value>> =
+            root.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
         Self {
             frames: vec![mapped],
             revision: 0,
@@ -436,15 +434,9 @@ fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
 /// order as source; mirrors [`Node::Set`] rendering for multi-target and block capture).
 enum TopLevelSetExport {
     /// `{% set a = expr %}`, `{% set a, b = expr %}` (same value cloned to every target).
-    FromExpr {
-        targets: Vec<String>,
-        expr: Expr,
-    },
+    FromExpr { targets: Vec<String>, expr: Expr },
     /// `{% set name %}…{% endset %}` (parser allows only one target for block form).
-    FromBlock {
-        target: String,
-        body: Vec<Node>,
-    },
+    FromBlock { target: String, body: Vec<Node> },
 }
 
 fn collect_top_level_set_exports(root: &Node) -> Vec<TopLevelSetExport> {
@@ -925,16 +917,10 @@ fn iterable_empty(it: &Iterable) -> bool {
 }
 
 fn fill_loop_object(m: &mut serde_json::Map<String, Value>, i: usize, len: usize) {
-    m.insert(
-        "index".to_string(),
-        Value::Number(((i + 1) as u64).into()),
-    );
+    m.insert("index".to_string(), Value::Number(((i + 1) as u64).into()));
     m.insert("index0".to_string(), Value::Number((i as u64).into()));
     m.insert("first".to_string(), Value::Bool(i == 0));
-    m.insert(
-        "last".to_string(),
-        Value::Bool(len > 0 && i + 1 == len),
-    );
+    m.insert("last".to_string(), Value::Bool(len > 0 && i + 1 == len));
     m.insert("length".to_string(), Value::Number((len as u64).into()));
     m.insert(
         "revindex".to_string(),
@@ -1075,6 +1061,137 @@ fn render_output(
 /// Template output for `{{ expr }}`: bare literals are not auto-escaped; variable output and
 /// non-literal expressions (including literal `|upper` / `|lower` / `|length` fast paths) respect
 /// [`Environment::autoescape`] like the `eval_to_value` + stringify path.
+/// Peels a chain of built-in `upper` / `lower` / `capitalize` / `trim` / `length` filters (empty
+/// args, no custom overrides) through [`Expr::Filter`]. Returns filter names in **application**
+/// order (innermost / closest to leaf first) and the leaf expression.
+fn peel_builtin_upper_lower_length_chain<'a>(
+    mut e: &'a Expr,
+    env: &Environment,
+) -> Option<(Vec<&'a str>, &'a Expr)> {
+    let mut names: Vec<&'a str> = Vec::new();
+    loop {
+        match e {
+            Expr::Filter { name, input, args }
+                if args.is_empty() && !env.custom_filters.contains_key(name) =>
+            {
+                let n = name.as_str();
+                if !matches!(n, "upper" | "lower" | "length" | "trim" | "capitalize") {
+                    return None;
+                }
+                names.push(n);
+                e = input.as_ref();
+            }
+            _ => break,
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    names.reverse();
+    if !builtin_filter_chain_application_order_valid(&names) {
+        return None;
+    }
+    Some((names, e))
+}
+
+/// `length` may only appear as the final step; all other filters here are string normalizers.
+/// Allows any interleaving of `upper`/`lower`/`trim`/`capitalize` (e.g. `trim` then `upper`).
+fn builtin_filter_chain_application_order_valid(rev_names: &[&str]) -> bool {
+    if rev_names.is_empty() {
+        return false;
+    }
+    let last = rev_names.len() - 1;
+    for (i, &name) in rev_names.iter().enumerate() {
+        match name {
+            "upper" | "lower" | "trim" | "capitalize" => {}
+            "length" => {
+                if i != last {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn apply_builtin_filter_chain_on_cow_value(
+    mut current: Cow<'_, Value>,
+    rev_names: &[&str],
+) -> Result<Value> {
+    for n in rev_names {
+        match *n {
+            "upper" => {
+                let t = crate::value::value_to_string(current.as_ref()).to_uppercase();
+                current = Cow::Owned(Value::String(t));
+            }
+            "lower" => {
+                let t = crate::value::value_to_string(current.as_ref()).to_lowercase();
+                current = Cow::Owned(Value::String(t));
+            }
+            "trim" => {
+                let t = crate::filters::chain_trim_like_builtin(current.as_ref());
+                current = Cow::Owned(t);
+            }
+            "capitalize" => {
+                let t = crate::filters::chain_capitalize_like_builtin(current.as_ref());
+                current = Cow::Owned(t);
+            }
+            "length" => {
+                return Ok(match current.as_ref() {
+                    Value::String(s) => json!(s.chars().count()),
+                    Value::Array(a) => json!(a.len()),
+                    Value::Object(o) => json!(o.len()),
+                    x if is_undefined_value(x) => json!(0),
+                    _ => json!(0),
+                });
+            }
+            _ => unreachable!(),
+        }
+    }
+    Ok(current.into_owned())
+}
+
+/// Fused `upper`/`lower`/`length` chains on variables or string/array literals (see peel helper).
+fn try_apply_peeled_builtin_filter_chain_value(
+    env: &Environment,
+    stack: &mut CtxStack,
+    e: &Expr,
+) -> Option<Result<Value>> {
+    let (rev_names, leaf) = peel_builtin_upper_lower_length_chain(e, env)?;
+    match leaf {
+        Expr::Variable(var_name) => {
+            let v = match env.resolve_variable_ref(stack, var_name) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+            Some(apply_builtin_filter_chain_on_cow_value(v, &rev_names))
+        }
+        Expr::Literal(Value::String(s)) => {
+            let mut current = s.clone();
+            for n in &rev_names {
+                match *n {
+                    "upper" => current = current.to_uppercase(),
+                    "lower" => current = current.to_lowercase(),
+                    "trim" => {
+                        current = current
+                            .trim_matches(|c: char| c.is_whitespace())
+                            .to_string();
+                    }
+                    "capitalize" => {
+                        current = crate::filters::capitalize_string_slice(&current);
+                    }
+                    "length" => return Some(Ok(json!(current.chars().count()))),
+                    _ => unreachable!(),
+                }
+            }
+            Some(Ok(Value::String(current)))
+        }
+        Expr::Literal(Value::Array(a)) if rev_names == ["length"] => Some(Ok(json!(a.len()))),
+        _ => None,
+    }
+}
+
 fn eval_for_output(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -1093,13 +1210,83 @@ fn eval_for_output(
             }
         }
         Expr::Filter { name, input, args } => {
+            if args.is_empty() {
+                if let Some((rev_names, leaf)) = peel_builtin_upper_lower_length_chain(e, env) {
+                    match leaf {
+                        Expr::Variable(var_name) => {
+                            let v = env.resolve_variable_ref(stack, var_name)?;
+                            let input_safe = crate::value::is_marked_safe(v.as_ref());
+                            match apply_builtin_filter_chain_on_cow_value(v, &rev_names) {
+                                Ok(val) => {
+                                    let s = crate::value::value_to_string(&val);
+                                    let escape = env.autoescape
+                                        && match &val {
+                                            Value::String(_) => !input_safe,
+                                            _ => true,
+                                        };
+                                    if escape {
+                                        return Ok(crate::filters::escape_html(&s));
+                                    }
+                                    return Ok(s);
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
+                        Expr::Literal(Value::String(s)) => {
+                            let mut current = s.clone();
+                            for n in &rev_names {
+                                match *n {
+                                    "upper" => current = current.to_uppercase(),
+                                    "lower" => current = current.to_lowercase(),
+                                    "trim" => {
+                                        current = current
+                                            .trim_matches(|c: char| c.is_whitespace())
+                                            .to_string();
+                                    }
+                                    "capitalize" => {
+                                        current = crate::filters::capitalize_string_slice(&current);
+                                    }
+                                    "length" => {
+                                        let s = current.chars().count().to_string();
+                                        let escape = env.autoescape;
+                                        return Ok(if escape {
+                                            crate::filters::escape_html(&s)
+                                        } else {
+                                            s
+                                        });
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            let escape = env.autoescape;
+                            return Ok(if escape {
+                                crate::filters::escape_html(&current)
+                            } else {
+                                current
+                            });
+                        }
+                        Expr::Literal(Value::Array(a)) if rev_names == ["length"] => {
+                            let s = a.len().to_string();
+                            let escape = env.autoescape;
+                            return Ok(if escape {
+                                crate::filters::escape_html(&s)
+                            } else {
+                                s
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
             if args.is_empty() && !env.custom_filters.contains_key(name) {
                 if let Expr::Variable(var_name) = input.as_ref() {
                     let input_v = env.resolve_variable_ref(stack, var_name)?;
                     match name.as_str() {
                         "upper" => {
-                            let out = crate::value::value_to_string(input_v.as_ref()).to_uppercase();
-                            return if env.autoescape && !crate::value::is_marked_safe(input_v.as_ref())
+                            let out =
+                                crate::value::value_to_string(input_v.as_ref()).to_uppercase();
+                            return if env.autoescape
+                                && !crate::value::is_marked_safe(input_v.as_ref())
                             {
                                 Ok(crate::filters::escape_html(&out))
                             } else {
@@ -1107,8 +1294,10 @@ fn eval_for_output(
                             };
                         }
                         "lower" => {
-                            let out = crate::value::value_to_string(input_v.as_ref()).to_lowercase();
-                            return if env.autoescape && !crate::value::is_marked_safe(input_v.as_ref())
+                            let out =
+                                crate::value::value_to_string(input_v.as_ref()).to_lowercase();
+                            return if env.autoescape
+                                && !crate::value::is_marked_safe(input_v.as_ref())
                             {
                                 Ok(crate::filters::escape_html(&out))
                             } else {
@@ -1124,6 +1313,18 @@ fn eval_for_output(
                                 _ => 0,
                             };
                             return Ok(n.to_string());
+                        }
+                        "capitalize" => {
+                            let out =
+                                crate::filters::chain_capitalize_like_builtin(input_v.as_ref());
+                            let s = crate::value::value_to_string(&out);
+                            return if env.autoescape
+                                && !crate::value::is_marked_safe(input_v.as_ref())
+                            {
+                                Ok(crate::filters::escape_html(&s))
+                            } else {
+                                Ok(s)
+                            };
                         }
                         _ => {}
                     }
@@ -1148,6 +1349,14 @@ fn eval_for_output(
                         }
                         "length" => {
                             return Ok(s.chars().count().to_string());
+                        }
+                        "capitalize" => {
+                            let out = crate::filters::capitalize_string_slice(s);
+                            return if env.autoescape {
+                                Ok(crate::filters::escape_html(&out))
+                            } else {
+                                Ok(out)
+                            };
                         }
                         _ => {}
                     }
@@ -1521,42 +1730,39 @@ fn eval_to_value(
     match e {
         Expr::Literal(v) => Ok(v.clone()),
         Expr::Variable(name) => env.resolve_variable(stack, name),
-        Expr::Unary { op, expr } => {
-            match op {
-                UnaryOp::Not => {
-                    if let Expr::Variable(name) = expr.as_ref() {
-                        let v = env.resolve_variable_ref(stack, name)?;
-                        return Ok(Value::Bool(!is_truthy(v.as_ref())));
-                    }
-                    let v = eval_to_value(env, state, expr, stack)?;
-                    Ok(Value::Bool(!is_truthy(&v)))
+        Expr::Unary { op, expr } => match op {
+            UnaryOp::Not => {
+                if let Expr::Variable(name) = expr.as_ref() {
+                    let v = env.resolve_variable_ref(stack, name)?;
+                    return Ok(Value::Bool(!is_truthy(v.as_ref())));
                 }
-                UnaryOp::Neg => {
-                    if let Expr::Variable(name) = expr.as_ref() {
-                        let v = env.resolve_variable_ref(stack, name)?;
-                        let n = as_number(v.as_ref()).ok_or_else(|| {
-                            RunjucksError::new("unary '-' expects a numeric value")
-                        })?;
-                        return Ok(json_num(-n));
-                    }
-                    let v = eval_to_value(env, state, expr, stack)?;
-                    let n = as_number(&v)
-                        .ok_or_else(|| RunjucksError::new("unary '-' expects a numeric value"))?;
-                    Ok(json_num(-n))
-                }
-                UnaryOp::Pos => {
-                    if let Expr::Variable(name) = expr.as_ref() {
-                        let v = env.resolve_variable_ref(stack, name)?;
-                        if let Some(n) = as_number(v.as_ref()) {
-                            return Ok(json_num(n));
-                        }
-                        return Ok(v.into_owned());
-                    }
-                    let v = eval_to_value(env, state, expr, stack)?;
-                    Ok(v)
-                }
+                let v = eval_to_value(env, state, expr, stack)?;
+                Ok(Value::Bool(!is_truthy(&v)))
             }
-        }
+            UnaryOp::Neg => {
+                if let Expr::Variable(name) = expr.as_ref() {
+                    let v = env.resolve_variable_ref(stack, name)?;
+                    let n = as_number(v.as_ref())
+                        .ok_or_else(|| RunjucksError::new("unary '-' expects a numeric value"))?;
+                    return Ok(json_num(-n));
+                }
+                let v = eval_to_value(env, state, expr, stack)?;
+                let n = as_number(&v)
+                    .ok_or_else(|| RunjucksError::new("unary '-' expects a numeric value"))?;
+                Ok(json_num(-n))
+            }
+            UnaryOp::Pos => {
+                if let Expr::Variable(name) = expr.as_ref() {
+                    let v = env.resolve_variable_ref(stack, name)?;
+                    if let Some(n) = as_number(v.as_ref()) {
+                        return Ok(json_num(n));
+                    }
+                    return Ok(v.into_owned());
+                }
+                let v = eval_to_value(env, state, expr, stack)?;
+                Ok(v)
+            }
+        },
         Expr::Binary { op, left, right } => match op {
             BinOp::Add => Ok(add_like_js(
                 &eval_to_value(env, state, left, stack)?,
@@ -1652,20 +1858,46 @@ fn eval_to_value(
                         Expr::Variable(n) => env.resolve_variable_ref(stack, n)?,
                         _ => Cow::Owned(eval_to_value(env, state, left, stack)?),
                     };
-                    return Ok(Value::Bool(env.apply_is_test(test_name, v.as_ref(), &[])?));
+                    return Ok(Value::Bool(env.apply_is_test(
+                        test_name,
+                        v.as_ref(),
+                        &[],
+                    )?));
                 }
                 let arg_vals: Vec<Value> = arg_exprs
                     .iter()
                     .map(|e| eval_to_value(env, state, e, stack))
                     .collect::<Result<_>>()?;
                 let v = match &**left {
-                    Expr::Variable(n) => env.resolve_variable_ref(stack, n)?.into_owned(),
-                    _ => eval_to_value(env, state, left, stack)?,
+                    Expr::Variable(n) => env.resolve_variable_ref(stack, n)?,
+                    _ => Cow::Owned(eval_to_value(env, state, left, stack)?),
                 };
-                Ok(Value::Bool(env.apply_is_test(test_name, &v, &arg_vals)?))
+                Ok(Value::Bool(env.apply_is_test(
+                    test_name,
+                    v.as_ref(),
+                    &arg_vals,
+                )?))
             }
         },
         Expr::Compare { head, rest } => {
+            if rest.len() == 1 {
+                let (op, rhs_e) = &rest[0];
+                match head.as_ref() {
+                    Expr::Variable(n) => {
+                        // RHS first: `resolve_variable_ref` borrows `stack` immutably while
+                        // `eval_to_value` needs `&mut` — evaluate RHS before LHS (same result for
+                        // pure compare expressions).
+                        let r = eval_to_value(env, state, rhs_e, stack)?;
+                        let left = env.resolve_variable_ref(stack, n)?;
+                        return Ok(Value::Bool(compare_values(left.as_ref(), *op, &r)));
+                    }
+                    _ => {
+                        let left = eval_to_value(env, state, head, stack)?;
+                        let r = eval_to_value(env, state, rhs_e, stack)?;
+                        return Ok(Value::Bool(compare_values(&left, *op, &r)));
+                    }
+                }
+            }
             let mut acc = eval_to_value(env, state, head, stack)?;
             for (op, rhs_e) in rest.iter() {
                 let r = eval_to_value(env, state, rhs_e, stack)?;
@@ -1715,7 +1947,8 @@ fn eval_to_value(
                         }
                         match cur.as_ref() {
                             Value::Object(o) => {
-                                cur = Cow::Owned(o.get(*a).cloned().unwrap_or_else(undefined_value));
+                                cur =
+                                    Cow::Owned(o.get(*a).cloned().unwrap_or_else(undefined_value));
                             }
                             _ => return Ok(undefined_value()),
                         }
@@ -1732,100 +1965,82 @@ fn eval_to_value(
                 _ => Ok(undefined_value()),
             }
         }
-        Expr::GetItem { base, index } => {
-            match index.as_ref() {
-                Expr::Slice {
-                    start: s,
-                    stop: st,
-                    step: step_e,
-                } => {
-                    let start_v = eval_slice_bound(env, state, s.as_deref(), stack)?;
-                    let stop_v = eval_slice_bound(env, state, st.as_deref(), stack)?;
-                    let step_v = eval_slice_bound(env, state, step_e.as_deref(), stack)?;
-                    if let Expr::Variable(name) = base.as_ref() {
-                        let base_val = env.resolve_variable_ref(stack, name)?;
-                        if is_undefined_value(base_val.as_ref()) || base_val.as_ref().is_null() {
-                            return Ok(undefined_value());
-                        }
-                        if let Value::Array(a) = base_val.as_ref() {
-                            return Ok(Value::Array(jinja_slice_array(
-                                a,
-                                start_v,
-                                stop_v,
-                                step_v,
-                            )));
-                        }
-                        return Ok(Value::Null);
-                    }
-                    let b = eval_to_value(env, state, base, stack)?;
-                    if is_undefined_value(&b) || b.is_null() {
+        Expr::GetItem { base, index } => match index.as_ref() {
+            Expr::Slice {
+                start: s,
+                stop: st,
+                step: step_e,
+            } => {
+                let start_v = eval_slice_bound(env, state, s.as_deref(), stack)?;
+                let stop_v = eval_slice_bound(env, state, st.as_deref(), stack)?;
+                let step_v = eval_slice_bound(env, state, step_e.as_deref(), stack)?;
+                if let Expr::Variable(name) = base.as_ref() {
+                    let base_val = env.resolve_variable_ref(stack, name)?;
+                    if is_undefined_value(base_val.as_ref()) || base_val.as_ref().is_null() {
                         return Ok(undefined_value());
                     }
-                    let Value::Array(a) = &b else {
-                        return Ok(Value::Null);
-                    };
-                    Ok(Value::Array(jinja_slice_array(
-                        a,
-                        start_v,
-                        stop_v,
-                        step_v,
-                    )))
+                    if let Value::Array(a) = base_val.as_ref() {
+                        return Ok(Value::Array(jinja_slice_array(a, start_v, stop_v, step_v)));
+                    }
+                    return Ok(Value::Null);
                 }
-                idx_e => {
-                    if let Expr::Variable(name) = base.as_ref() {
-                        let base_val = env.resolve_variable_ref(stack, name)?;
-                        if is_undefined_value(base_val.as_ref()) || base_val.as_ref().is_null() {
-                            return Ok(undefined_value());
-                        }
-                        match idx_e {
-                            Expr::Literal(Value::Number(n)) => {
-                                let idx = n
-                                    .as_u64()
-                                    .or_else(|| n.as_f64().map(|x| x as u64))
-                                    .unwrap_or(0) as usize;
-                                match base_val.as_ref() {
-                                    Value::Array(a) => {
-                                        return Ok(
-                                            a.get(idx).cloned().unwrap_or_else(undefined_value),
-                                        );
-                                    }
-                                    _ => return Ok(undefined_value()),
-                                }
-                            }
-                            Expr::Literal(Value::String(k)) => {
-                                match base_val.as_ref() {
-                                    Value::Object(o) => {
-                                        return Ok(
-                                            o.get(k).cloned().unwrap_or_else(undefined_value),
-                                        );
-                                    }
-                                    _ => return Ok(undefined_value()),
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let b = eval_to_value(env, state, base, stack)?;
-                    if is_undefined_value(&b) || b.is_null() {
+                let b = eval_to_value(env, state, base, stack)?;
+                if is_undefined_value(&b) || b.is_null() {
+                    return Ok(undefined_value());
+                }
+                let Value::Array(a) = &b else {
+                    return Ok(Value::Null);
+                };
+                Ok(Value::Array(jinja_slice_array(a, start_v, stop_v, step_v)))
+            }
+            idx_e => {
+                if let Expr::Variable(name) = base.as_ref() {
+                    let base_val = env.resolve_variable_ref(stack, name)?;
+                    if is_undefined_value(base_val.as_ref()) || base_val.as_ref().is_null() {
                         return Ok(undefined_value());
                     }
-                    let i = eval_to_value(env, state, idx_e, stack)?;
-                    match (&b, &i) {
-                        (Value::Array(a), Value::Number(n)) => {
+                    match idx_e {
+                        Expr::Literal(Value::Number(n)) => {
                             let idx = n
                                 .as_u64()
                                 .or_else(|| n.as_f64().map(|x| x as u64))
                                 .unwrap_or(0) as usize;
-                            Ok(a.get(idx).cloned().unwrap_or_else(undefined_value))
+                            match base_val.as_ref() {
+                                Value::Array(a) => {
+                                    return Ok(a.get(idx).cloned().unwrap_or_else(undefined_value));
+                                }
+                                _ => return Ok(undefined_value()),
+                            }
                         }
-                        (Value::Object(o), Value::String(k)) => {
-                            Ok(o.get(k).cloned().unwrap_or_else(undefined_value))
-                        }
-                        _ => Ok(undefined_value()),
+                        Expr::Literal(Value::String(k)) => match base_val.as_ref() {
+                            Value::Object(o) => {
+                                return Ok(o.get(k).cloned().unwrap_or_else(undefined_value));
+                            }
+                            _ => return Ok(undefined_value()),
+                        },
+                        _ => {}
                     }
                 }
+                let b = eval_to_value(env, state, base, stack)?;
+                if is_undefined_value(&b) || b.is_null() {
+                    return Ok(undefined_value());
+                }
+                let i = eval_to_value(env, state, idx_e, stack)?;
+                match (&b, &i) {
+                    (Value::Array(a), Value::Number(n)) => {
+                        let idx = n
+                            .as_u64()
+                            .or_else(|| n.as_f64().map(|x| x as u64))
+                            .unwrap_or(0) as usize;
+                        Ok(a.get(idx).cloned().unwrap_or_else(undefined_value))
+                    }
+                    (Value::Object(o), Value::String(k)) => {
+                        Ok(o.get(k).cloned().unwrap_or_else(undefined_value))
+                    }
+                    _ => Ok(undefined_value()),
+                }
             }
-        }
+        },
         Expr::Slice { .. } => Err(RunjucksError::new(
             "slice expression is only valid inside `[ ]`",
         )),
@@ -1958,6 +2173,11 @@ fn eval_to_value(
             ))
         }
         Expr::Filter { name, input, args } => {
+            if args.is_empty() {
+                if let Some(r) = try_apply_peeled_builtin_filter_chain_value(env, stack, e) {
+                    return r;
+                }
+            }
             if args.is_empty() && !env.custom_filters.contains_key(name) {
                 if let Expr::Variable(var_name) = input.as_ref() {
                     let input_v = env.resolve_variable_ref(stack, var_name)?;
@@ -1981,6 +2201,11 @@ fn eval_to_value(
                                 _ => json!(0),
                             });
                         }
+                        "capitalize" => {
+                            return Ok(crate::filters::chain_capitalize_like_builtin(
+                                input_v.as_ref(),
+                            ));
+                        }
                         _ => {}
                     }
                 }
@@ -1989,6 +2214,9 @@ fn eval_to_value(
                         "upper" => return Ok(Value::String(s.to_uppercase())),
                         "lower" => return Ok(Value::String(s.to_lowercase())),
                         "length" => return Ok(json!(s.chars().count())),
+                        "capitalize" => {
+                            return Ok(Value::String(crate::filters::capitalize_string_slice(s)));
+                        }
                         _ => {}
                     }
                 }

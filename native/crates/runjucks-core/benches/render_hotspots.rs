@@ -40,10 +40,7 @@ fn many_vars(c: &mut Criterion) {
     let mut tpl = String::with_capacity(80 * 12);
     for i in 0..80 {
         tpl.push_str(&format!("{{{{ v{} }}}}", i));
-        ctx.insert(
-            format!("v{i}"),
-            serde_json::Value::String(i.to_string()),
-        );
+        ctx.insert(format!("v{i}"), serde_json::Value::String(i.to_string()));
     }
     let env = Environment::default();
     c.bench_function("many_vars_80", |b| {
@@ -102,6 +99,42 @@ fn literal_length_filter(c: &mut Criterion) {
     });
 }
 
+fn variable_chained_upper_lower(c: &mut Criterion) {
+    let tpl = "{{ s | upper | lower }}".to_string();
+    let env = Environment::default();
+    let ctx = json!({ "s": "Hello World" });
+    c.bench_function("variable_chained_upper_lower_filters", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+fn variable_trim_then_upper(c: &mut Criterion) {
+    let tpl = "{{ s | trim | upper }}".to_string();
+    let env = Environment::default();
+    let ctx = json!({ "s": "  hello  " });
+    c.bench_function("variable_trim_upper_filters", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+fn variable_trim_capitalize_chain(c: &mut Criterion) {
+    let tpl = "{{ s | trim | capitalize }}".to_string();
+    let env = Environment::default();
+    let ctx = json!({ "s": "  hELLO  " });
+    c.bench_function("variable_trim_capitalize_filters", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     for_medium,
@@ -110,6 +143,9 @@ criterion_group!(
     nested_for,
     literal_string_upper_filter,
     attr_chain_three,
-    literal_length_filter
+    literal_length_filter,
+    variable_chained_upper_lower,
+    variable_trim_then_upper,
+    variable_trim_capitalize_chain
 );
 criterion_main!(benches);

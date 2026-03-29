@@ -59,7 +59,10 @@ fn super_child_only_super() {
 #[test]
 fn super_output_is_not_autoescaped() {
     let mut m = HashMap::new();
-    m.insert("base3.njk".into(), r#"{% block block1 %}<b>Foo</b>{% endblock %}"#.into());
+    m.insert(
+        "base3.njk".into(),
+        r#"{% block block1 %}<b>Foo</b>{% endblock %}"#.into(),
+    );
     m.insert(
         "child.njk".into(),
         r#"{% extends "base3.njk" %}{% block block1 %}{{ super() }}{% endblock %}"#.into(),

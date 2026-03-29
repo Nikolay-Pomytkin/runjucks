@@ -49,7 +49,9 @@ fn signature_invalidation_trim_blocks() {
 fn signature_invalidation_custom_delimiters() {
     let mut env = Environment::default();
     let tpl = "<$ x $>".to_string();
-    let as_text = env.render_string(tpl.clone(), json!({ "x": "hi" })).unwrap();
+    let as_text = env
+        .render_string(tpl.clone(), json!({ "x": "hi" }))
+        .unwrap();
     assert_eq!(as_text, "<$ x $>");
     env.tags = Some(runjucks_core::Tags {
         variable_start: "<$".into(),
@@ -119,13 +121,9 @@ fn nested_include_renders_twice() {
         r#"{% include "p.njk" %}{% include "p.njk" %}"#.into(),
     );
     let env = env_with_map(m);
-    let out = env
-        .render_template("main.njk", json!({ "n": 3 }))
-        .unwrap();
+    let out = env.render_template("main.njk", json!({ "n": 3 })).unwrap();
     assert_eq!(out, "33");
-    let out2 = env
-        .render_template("main.njk", json!({ "n": 4 }))
-        .unwrap();
+    let out2 = env.render_template("main.njk", json!({ "n": 4 })).unwrap();
     assert_eq!(out2, "44");
 }
 
@@ -142,6 +140,12 @@ fn invalidate_cache_smoke_named_and_inline() {
 
     env.invalidate_cache();
 
-    assert_eq!(env.render_string(tpl, json!({ "x": 3 })).unwrap(), "Hello 3");
-    assert_eq!(env.render_template("a.njk", json!({ "y": 4 })).unwrap(), "4");
+    assert_eq!(
+        env.render_string(tpl, json!({ "x": 3 })).unwrap(),
+        "Hello 3"
+    );
+    assert_eq!(
+        env.render_template("a.njk", json!({ "y": 4 })).unwrap(),
+        "4"
+    );
 }

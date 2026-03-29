@@ -222,16 +222,16 @@ fn import_exports_top_level_set() {
 #[test]
 fn import_exports_multi_target_top_level_set() {
     let mut m = HashMap::new();
-    m.insert(
-        "lib.html".into(),
-        r#"{% set a, b = "ok" %}"#.into(),
-    );
+    m.insert("lib.html".into(), r#"{% set a, b = "ok" %}"#.into());
     m.insert(
         "main.html".into(),
         r#"{% import "lib.html" as lib %}{{ lib.a }}-{{ lib.b }}"#.into(),
     );
     let env = env_with_map(m);
-    assert_eq!(env.render_template("main.html", json!({})).unwrap(), "ok-ok");
+    assert_eq!(
+        env.render_template("main.html", json!({})).unwrap(),
+        "ok-ok"
+    );
 }
 
 #[test]
@@ -246,7 +246,10 @@ fn import_exports_block_set_endset() {
         r#"{% import "lib.html" as lib %}[{{ lib.cap }}]"#.into(),
     );
     let env = env_with_map(m);
-    assert_eq!(env.render_template("main.html", json!({})).unwrap(), "[a1b]");
+    assert_eq!(
+        env.render_template("main.html", json!({})).unwrap(),
+        "[a1b]"
+    );
 }
 
 #[test]
@@ -269,11 +272,7 @@ fn from_import_multi_target_and_block_exports() {
     let mut m = HashMap::new();
     m.insert(
         "lib.html".into(),
-        concat!(
-            r#"{% set x, y = 7 %}"#,
-            r#"{% set blk %}Z{% endset %}"#,
-        )
-        .into(),
+        concat!(r#"{% set x, y = 7 %}"#, r#"{% set blk %}Z{% endset %}"#,).into(),
     );
     m.insert(
         "main.html".into(),

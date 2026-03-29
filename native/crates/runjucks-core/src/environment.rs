@@ -312,11 +312,7 @@ impl Environment {
     /// Registers a global **function** implemented in Rust (tests / embedders). Node callers use NAPI `addGlobal` with a JS function.
     ///
     /// The template sees a [`crate::globals::RJ_CALLABLE`] marker for `is callable` / variable resolution; invocation uses `f`.
-    pub fn add_global_callable(
-        &mut self,
-        name: impl Into<String>,
-        f: CustomGlobalFn,
-    ) -> &mut Self {
+    pub fn add_global_callable(&mut self, name: impl Into<String>, f: CustomGlobalFn) -> &mut Self {
         let name = name.into();
         let mut m = Map::new();
         m.insert(RJ_CALLABLE.to_string(), Value::Bool(true));
@@ -502,7 +498,8 @@ impl Environment {
 
     /// Unbound names yield [`crate::value::undefined_value`] unless [`Environment::throw_on_undefined`] is set.
     pub fn resolve_variable(&self, stack: &renderer::CtxStack, name: &str) -> Result<Value> {
-        self.resolve_variable_ref(stack, name).map(|c| c.into_owned())
+        self.resolve_variable_ref(stack, name)
+            .map(|c| c.into_owned())
     }
 
     /// Returns the [`LexerOptions`] derived from this environment's configuration.

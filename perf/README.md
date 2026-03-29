@@ -46,6 +46,8 @@ cd native && cargo bench -p runjucks_core --bench render_hotspots
 
 `render_hotspots` scenarios mirror [`synthetic.mjs`](synthetic.mjs): 200-iteration `{% for %}`, 80 interpolations, nested `for`.
 
+Some synthetics in [`synthetic.mjs`](synthetic.mjs) use `renderMode: 'template'` so [`run.mjs`](run.mjs) calls `renderTemplate` / `env.render` instead of `renderString` (named-template path + parse cache).
+
 **Profiling (Linux, `perf`):** after `cargo install flamegraph`, from `native/`:
 
 ```bash

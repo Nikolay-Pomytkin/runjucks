@@ -7,7 +7,7 @@ use napi_derive::napi;
 use runjucks_core::ast::Node;
 use runjucks_core::value::value_to_string;
 use runjucks_core::{
-    file_system_loader, map_loader, loader::TemplateLoader, CustomFilter, CustomGlobalFn,
+    file_system_loader, loader::TemplateLoader, map_loader, CustomFilter, CustomGlobalFn,
     CustomTest, Environment, RunjucksError, Tags,
 };
 use std::cell::Cell;
@@ -118,7 +118,9 @@ impl TemplateLoader for JsTemplateLoader {
             .call(&[serde_json::json!(name)])
             .map_err(|e| RunjucksError::new(e.to_string()))?;
         match v {
-            serde_json::Value::Null => Err(RunjucksError::new(format!("template not found: {name}"))),
+            serde_json::Value::Null => {
+                Err(RunjucksError::new(format!("template not found: {name}")))
+            }
             serde_json::Value::String(s) => Ok(s),
             serde_json::Value::Object(o) => match o.get("src") {
                 Some(serde_json::Value::String(s)) => Ok(s.clone()),
@@ -629,9 +631,7 @@ impl JsEnvironment {
             let js = Arc::new(JsFnRef::new(&env, &value)?);
             inner.add_global_callable(name, napi_custom_global(js));
         } else {
-            let v = unsafe {
-                serde_json::Value::from_napi_value(env.raw(), value.value().value)?
-            };
+            let v = unsafe { serde_json::Value::from_napi_value(env.raw(), value.value().value)? };
             inner.add_global(name, v);
         }
         Ok(())
@@ -654,7 +654,8 @@ impl JsEnvironment {
     #[napi(js_name = "setLoaderCallback")]
     pub fn set_loader_callback(&self, env: Env, callback: Unknown) -> Result<()> {
         let js = Arc::new(JsFnRef::new(&env, &callback)?);
-        let loader: Arc<dyn TemplateLoader + Send + Sync> = Arc::new(JsTemplateLoader { get_source: js });
+        let loader: Arc<dyn TemplateLoader + Send + Sync> =
+            Arc::new(JsTemplateLoader { get_source: js });
         let mut inner = self
             .inner
             .lock()
@@ -720,7 +721,8 @@ impl JsEnvironment {
     /// previous loader. See [`runjucks_core::FileSystemLoader`].
     #[napi(js_name = "setLoaderRoot")]
     pub fn set_loader_root(&self, path: String) -> Result<()> {
-        let loader = file_system_loader(Path::new(&path)).map_err(|e| Error::from_reason(e.to_string()))?;
+        let loader =
+            file_system_loader(Path::new(&path)).map_err(|e| Error::from_reason(e.to_string()))?;
         let mut env = self
             .inner
             .lock()
