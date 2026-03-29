@@ -130,6 +130,7 @@ cargo publish
 1. Merge or push to **`main`** with the version fields above updated.
 2. **[Publish npm](.github/workflows/npm-publish.yml)** runs when `package.json` / `package-lock.json` change. It only publishes if the **`version`** in `package.json` is **higher** than on the parent commit **and** that version is **not** already on npm (so dependency-only edits to `package.json` do not publish).
 3. **[Publish crates.io](.github/workflows/crates-publish.yml)** runs when `native/crates/runjucks-core/Cargo.toml` changes. It only publishes if the crate **`version`** increased versus the parent commit **and** that version is not already on crates.io.
+4. After a successful npm publish, the same workflow creates a **GitHub Release** named `v<version>` on the triggering commit. Notes list **non-merge commits** since the previous `v*` tag (version-sorted), or the last 500 commits if no tag exists yet. If the tag already exists, the step **skips** (safe reruns). If npm succeeded but this step failed, create the release manually or fix permissions; rerunning the workflow will usually **not** redo the release when npm skips as “already published.”
 
 If you bump **only** `package.json` or **only** `runjucks-core/Cargo.toml`, only the matching workflow will try to publish — keep versions aligned and touch both files in the same commit for a coordinated release.
 

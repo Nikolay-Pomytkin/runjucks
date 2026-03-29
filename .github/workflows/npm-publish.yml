@@ -197,3 +197,53 @@ jobs:
         run: |
           npm config set provenance true
           npm run napi:prepublish
+
+  github-release:
+    name: GitHub release
+    needs: [check, publish-npm]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag and create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(jq -r .version package.json)
+          TAG="v${VERSION}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; skipping release (idempotent retry)."
+            exit 0
+          fi
+
+          PREV=$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)
+          if [ -n "$PREV" ]; then
+            NOTES=$(git log --no-merges --pretty=format:'- %s (%h)' "${PREV}..${GITHUB_SHA}")
+          else
+            NOTES=$(git log --no-merges --pretty=format:'- %s (%h)' --max-count=500 "${GITHUB_SHA}")
+          fi
+          if [ -z "${NOTES}" ]; then
+            NOTES="- (no commits in range)"
+          fi
+
+          NOTES_FILE=$(mktemp)
+          {
+            echo "Commits since ${PREV:-repository root}:"
+            echo ""
+            printf '%s\n' "$NOTES"
+          } > "$NOTES_FILE"
+
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE"
+          rm -f "$NOTES_FILE"
+          echo "Created GitHub Release $TAG"
