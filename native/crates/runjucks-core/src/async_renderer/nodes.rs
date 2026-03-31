@@ -226,6 +226,17 @@ async fn render_node_inner(
                 }
                 v
             };
+            // Check async filters first, then fall back to sync/builtin
+            #[cfg(feature = "async")]
+            if let Some(af) = env.async_custom_filters.get(name.as_str()) {
+                let v = af(&Value::String(s), &arg_vals).await?;
+                let out = crate::value::value_to_string(&v);
+                return if env.autoescape && !crate::value::is_marked_safe(&v) {
+                    Ok(crate::filters::escape_html(&out))
+                } else {
+                    Ok(out)
+                };
+            }
             let v = crate::filters::apply_builtin(
                 env,
                 &mut state.rng,

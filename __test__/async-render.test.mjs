@@ -46,6 +46,20 @@ describe('addAsyncFilter', () => {
     const result = await env.renderStringAsync('{{ name | shout }}', { name: 'hello' });
     assert.equal(result, 'HELLO');
   });
+
+  it('async filter overrides builtin fast-path (e.g. upper)', async () => {
+    const env = new Environment();
+    env.addAsyncFilter('upper', (val) => String(val).toUpperCase() + '!');
+    const result = await env.renderStringAsync('{{ name | upper }}', { name: 'hello' });
+    assert.equal(result, 'HELLO!');
+  });
+
+  it('async filter works in filter block tag', async () => {
+    const env = new Environment();
+    env.addAsyncFilter('shout', (val) => String(val).toUpperCase());
+    const result = await env.renderStringAsync('{% filter shout %}hello world{% endfilter %}', {});
+    assert.equal(result, 'HELLO WORLD');
+  });
 });
 
 describe('addAsyncGlobal', () => {

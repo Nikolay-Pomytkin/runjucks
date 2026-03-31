@@ -48,11 +48,7 @@ const TAG_KEYWORDS: &[&str] = &[
 /// Built-in tag names that cannot be used as custom extension tags.
 pub(crate) fn is_reserved_tag_keyword(s: &str) -> bool {
     TAG_KEYWORDS.iter().any(|&k| k == s)
-        || matches!(
-            s,
-            "raw" | "verbatim" | "endraw" | "endverbatim" | "asyncEach" | "asyncAll" | "ifAsync"
-                | "endeach" | "endall"
-        )
+        || matches!(s, "raw" | "verbatim" | "endraw" | "endverbatim")
 }
 
 pub(crate) struct ParseCtx<'a> {

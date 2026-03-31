@@ -33,11 +33,32 @@ fn try_dispatch_builtin(
     )
 }
 
+/// Check whether any filter name in an expression chain has an async override registered.
+#[cfg(feature = "async")]
+fn filter_chain_has_async_override(env: &Environment, e: &Expr) -> bool {
+    let mut cur = e;
+    loop {
+        match cur {
+            Expr::Filter { name, input, .. } => {
+                if env.async_custom_filters.contains_key(name) {
+                    return true;
+                }
+                cur = input.as_ref();
+            }
+            _ => return false,
+        }
+    }
+}
+
 fn try_apply_peeled_builtin_filter_chain_value(
     env: &Environment,
     stack: &mut CtxStack,
     e: &Expr,
 ) -> Option<Result<Value>> {
+    #[cfg(feature = "async")]
+    if filter_chain_has_async_override(env, e) {
+        return None;
+    }
     let (rev_names, leaf) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters)?;
     match leaf {
         Expr::Variable(var_name) => {
@@ -585,7 +606,7 @@ async fn eval_to_value_inner(
                     return r;
                 }
             }
-            if args.is_empty() && !env.custom_filters.contains_key(name) {
+            if args.is_empty() && !env.custom_filters.contains_key(name) && !env.async_custom_filters.contains_key(name) {
                 if let Expr::Variable(var_name) = input.as_ref() {
                     let input_v = env.resolve_variable_ref(stack, var_name)?;
                     match name.as_str() {
@@ -697,7 +718,7 @@ pub(super) async fn eval_for_output_async(
             }
         }
         Expr::Filter { name, input, args } => {
-            if args.is_empty() {
+            if args.is_empty() && !filter_chain_has_async_override(env, e) {
                 if let Some((rev_names, leaf)) =
                     peel_builtin_upper_lower_length_chain(e, &env.custom_filters)
                 {
@@ -768,7 +789,7 @@ pub(super) async fn eval_for_output_async(
                     }
                 }
             }
-            if args.is_empty() && !env.custom_filters.contains_key(name) {
+            if args.is_empty() && !env.custom_filters.contains_key(name) && !env.async_custom_filters.contains_key(name) {
                 if let Expr::Variable(var_name) = input.as_ref() {
                     let input_v = env.resolve_variable_ref(stack, var_name)?;
                     match name.as_str() {
