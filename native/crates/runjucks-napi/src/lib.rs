@@ -96,8 +96,54 @@ impl JsFnRef {
                     &mut ret,
                 )
             )?;
+            // Detect Promise returns from async JS functions and reject with a
+            // clear error — we cannot await Promises on the synchronous render thread.
+            if Self::is_promise(self.env, ret) {
+                return Err(Error::from_reason(
+                    "async filter/global returned a Promise. Callbacks registered via \
+                     addAsyncFilter/addAsyncGlobal must be synchronous functions, not \
+                     async functions. The 'async' in the API name refers to the async \
+                     rendering mode, not the callback itself.",
+                ));
+            }
             serde_json::Value::from_napi_value(self.env, ret)
         }
+    }
+
+    /// Check whether a napi_value is a Promise (object with a callable `then` property).
+    unsafe fn is_promise(env: sys::napi_env, value: sys::napi_value) -> bool {
+        let mut vtype = 0i32;
+        if sys::napi_typeof(env, value, &mut vtype) != sys::Status::napi_ok {
+            return false;
+        }
+        // napi_object = 6
+        if vtype != 6 {
+            return false;
+        }
+        let key = "then\0";
+        let mut key_val = ptr::null_mut();
+        if sys::napi_create_string_utf8(env, key.as_ptr().cast(), 4isize, &mut key_val)
+            != sys::Status::napi_ok
+        {
+            return false;
+        }
+        let mut has = false;
+        if sys::napi_has_property(env, value, key_val, &mut has) != sys::Status::napi_ok {
+            return false;
+        }
+        if !has {
+            return false;
+        }
+        let mut then_val = ptr::null_mut();
+        if sys::napi_get_property(env, value, key_val, &mut then_val) != sys::Status::napi_ok {
+            return false;
+        }
+        let mut then_type = 0i32;
+        if sys::napi_typeof(env, then_val, &mut then_type) != sys::Status::napi_ok {
+            return false;
+        }
+        // napi_function = 7
+        then_type == 7
     }
 }
 

@@ -744,6 +744,17 @@ impl Environment {
             .as_ref()
             .ok_or_else(|| RunjucksError::new("no template loader configured"))?;
         let ast = self.load_and_parse_named(name, loader.as_ref())?;
-        crate::async_renderer::render_async(self, ast.as_ref(), context).await
+        let root = match context {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        let mut stack = renderer::CtxStack::from_root(root);
+        let loader_ref = self.loader.as_ref().map(|l| l.as_ref());
+        let mut state = renderer::RenderState::new(loader_ref, self.random_seed);
+        state.push_template(name)?;
+        renderer::scan_literal_extends_graph(self, &mut state, ast.as_ref(), loader.as_ref())?;
+        let out = crate::async_renderer::entry::render_entry_async(self, &mut state, ast.as_ref(), &mut stack).await?;
+        state.pop_template();
+        Ok(out)
     }
 }

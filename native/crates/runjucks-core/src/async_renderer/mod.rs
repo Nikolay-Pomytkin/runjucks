@@ -4,7 +4,7 @@
 //! [`crate::renderer::CtxStack`] and [`crate::renderer::RenderState`] (owned, on the same thread).
 //! Shared pure-computation helpers come from [`crate::render_common`].
 
-mod entry;
+pub mod entry;
 mod eval;
 mod loops;
 mod macros;

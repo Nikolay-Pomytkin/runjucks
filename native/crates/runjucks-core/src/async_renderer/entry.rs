@@ -22,7 +22,7 @@ pub async fn render_async(env: &Environment, root: &Node, context: Value) -> Res
 }
 
 /// Entry: handle `{% extends %}` child templates, otherwise normal render.
-pub(super) async fn render_entry_async(
+pub async fn render_entry_async(
     env: &Environment,
     state: &mut RenderState<'_>,
     root: &Node,

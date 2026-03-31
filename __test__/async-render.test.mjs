@@ -71,6 +71,32 @@ describe('addAsyncGlobal', () => {
   });
 });
 
+describe('async callback Promise detection', () => {
+  it('rejects when addAsyncFilter callback returns a Promise', async () => {
+    const env = new Environment();
+    env.addAsyncFilter('asyncUpper', async (val) => String(val).toUpperCase());
+    await assert.rejects(
+      () => env.renderStringAsync('{{ name | asyncUpper }}', { name: 'hello' }),
+      (err) => {
+        assert.ok(err.message.includes('Promise'));
+        return true;
+      }
+    );
+  });
+
+  it('rejects when addAsyncGlobal callback returns a Promise', async () => {
+    const env = new Environment();
+    env.addAsyncGlobal('fetchData', async () => 'result');
+    await assert.rejects(
+      () => env.renderStringAsync('{{ fetchData() }}', {}),
+      (err) => {
+        assert.ok(err.message.includes('Promise'));
+        return true;
+      }
+    );
+  });
+});
+
 describe('async template tags', () => {
   it('asyncEach renders in async mode (via sync bridge)', async () => {
     const env = new Environment();
