@@ -34,7 +34,6 @@ fn try_dispatch_builtin(
 }
 
 /// Check whether any filter name in an expression chain has an async override registered.
-#[cfg(feature = "async")]
 fn filter_chain_has_async_override(env: &Environment, e: &Expr) -> bool {
     let mut cur = e;
     loop {
@@ -55,7 +54,6 @@ fn try_apply_peeled_builtin_filter_chain_value(
     stack: &mut CtxStack,
     e: &Expr,
 ) -> Option<Result<Value>> {
-    #[cfg(feature = "async")]
     if filter_chain_has_async_override(env, e) {
         return None;
     }

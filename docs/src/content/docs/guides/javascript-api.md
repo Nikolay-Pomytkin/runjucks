@@ -60,7 +60,7 @@ const result = await env.renderTemplateAsync('page.html', { items: ['a', 'b', 'c
 // => "ABC"
 ```
 
-> **Note:** JS callbacks registered via `addAsyncFilter` / `addAsyncGlobal` currently run synchronously on the main thread. The Promise-returning API matches Nunjucks' surface for forward compatibility.
+> **Note:** Rendering executes synchronously on the calling thread; the result is wrapped in an already-resolved Promise. This matches the Nunjucks callback API surface but does not yield the event loop during render. JS callbacks registered via `addAsyncFilter` / `addAsyncGlobal` must be **synchronous** functions (not `async` functions) — the "async" refers to the render mode, not the callback. Passing an `async` function will produce a clear error at render time.
 
 ### Custom tags (`addExtension`) {#custom-tags-addextension}
 
