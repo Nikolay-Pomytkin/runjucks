@@ -1,15 +1,19 @@
 //! Walks [`crate::ast::Node`] trees and produces output strings using an [`crate::Environment`] and JSON context.
 
 use crate::ast::{
-    BinOp, CompareOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp,
+    BinOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp,
 };
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
 use crate::globals::{
-    builtin_range, cycler_handle_value, is_builtin_marker_value, joiner_handle_value,
     parse_cycler_id, parse_joiner_id, CyclerState, JoinerState, RJ_CALLABLE,
 };
 use crate::loader::TemplateLoader;
+use crate::render_common::{
+    add_like_js, apply_builtin_filter_chain_on_cow_value, as_number, collect_attr_chain_from_getattr,
+    compare_values, eval_in, is_test_parts, is_truthy, iterable_empty, iterable_from_value,
+    jinja_slice_array, json_num, peel_builtin_upper_lower_length_chain, ExtendsLayout, Iterable,
+};
 use crate::value::{is_undefined_value, mark_safe, undefined_value};
 use ahash::AHashMap;
 use rand::rngs::SmallRng;
@@ -19,9 +23,6 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// `{% extends %}` parent expression plus block name → AST bodies.
-type ExtendsLayout = (Expr, HashMap<String, Vec<Node>>);
-
 /// Nunjucks-style frame stack: inner frames shadow outer; `set` updates the innermost existing binding.
 ///
 /// Values are stored as [`Arc`] so repeated reads and shallow copies of bindings can share the same
@@ -30,7 +31,7 @@ type ExtendsLayout = (Expr, HashMap<String, Vec<Node>>);
 /// Frame maps use [`ahash::AHashMap`] for faster string-key lookup on hot paths (many distinct variables).
 #[derive(Debug, Clone)]
 pub struct CtxStack {
-    frames: Vec<AHashMap<String, Arc<Value>>>,
+    pub(crate) frames: Vec<AHashMap<String, Arc<Value>>>,
     /// Incremented on any binding change (frames, `set`, `set_local`, `loop` injection).
     /// Used to reuse merged extension context snapshots when the stack is unchanged.
     revision: u64,
@@ -253,7 +254,7 @@ pub fn render_entry(
     }
 }
 
-fn extract_layout_if_any(root: &Node) -> Result<Option<ExtendsLayout>> {
+pub(crate) fn extract_layout_if_any(root: &Node) -> Result<Option<ExtendsLayout>> {
     let Node::Root(children) = root else {
         return Ok(None);
     };
@@ -286,7 +287,7 @@ fn extract_layout_if_any(root: &Node) -> Result<Option<ExtendsLayout>> {
     Ok(None)
 }
 
-fn collect_blocks_in_root(root: &Node) -> HashMap<String, Vec<Node>> {
+pub(crate) fn collect_blocks_in_root(root: &Node) -> HashMap<String, Vec<Node>> {
     let Node::Root(children) = root else {
         return HashMap::new();
     };
@@ -299,7 +300,7 @@ fn collect_blocks_in_root(root: &Node) -> HashMap<String, Vec<Node>> {
     m
 }
 
-fn extends_parent_expr(root: &Node) -> Option<&Expr> {
+pub(crate) fn extends_parent_expr(root: &Node) -> Option<&Expr> {
     let Node::Root(children) = root else {
         return None;
     };
@@ -417,7 +418,7 @@ fn render_with_state(
 }
 
 /// Top-level `{% macro %}` definitions only (Nunjucks `getExported` surface for macro libraries).
-fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
+pub(crate) fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
     let mut m = HashMap::new();
     let Node::Root(children) = root else {
         return m;
@@ -432,14 +433,14 @@ fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
 
 /// Top-level `{% set … %}` forms that participate in `{% import %}` / `{% from %}` exports (same
 /// order as source; mirrors [`Node::Set`] rendering for multi-target and block capture).
-enum TopLevelSetExport {
+pub(crate) enum TopLevelSetExport {
     /// `{% set a = expr %}`, `{% set a, b = expr %}` (same value cloned to every target).
     FromExpr { targets: Vec<String>, expr: Expr },
     /// `{% set name %}…{% endset %}` (parser allows only one target for block form).
     FromBlock { target: String, body: Vec<Node> },
 }
 
-fn collect_top_level_set_exports(root: &Node) -> Vec<TopLevelSetExport> {
+pub(crate) fn collect_top_level_set_exports(root: &Node) -> Vec<TopLevelSetExport> {
     let mut out = Vec::new();
     let Node::Root(children) = root else {
         return out;
@@ -533,7 +534,7 @@ pub(crate) fn scan_literal_extends_graph(
     r
 }
 
-fn scan_literal_import_graph(
+pub(crate) fn scan_literal_import_graph(
     env: &Environment,
     state: &mut RenderState<'_>,
     root: &Node,
@@ -844,6 +845,15 @@ fn render_node(
                 out
             })
         }
+        Node::AsyncEach { .. } => Err(RunjucksError::new(
+            "`{% asyncEach %}` requires async render mode; use `renderStringAsync()` or `renderTemplateAsync()`",
+        )),
+        Node::AsyncAll { .. } => Err(RunjucksError::new(
+            "`{% asyncAll %}` requires async render mode; use `renderStringAsync()` or `renderTemplateAsync()`",
+        )),
+        Node::IfAsync { .. } => Err(RunjucksError::new(
+            "`{% ifAsync %}` requires async render mode; use `renderStringAsync()` or `renderTemplateAsync()`",
+        )),
         Node::MacroDef(_) => Ok(String::new()),
     }
 }
@@ -884,75 +894,8 @@ fn render_switch(
     Ok(acc)
 }
 
-enum Iterable {
-    Rows(Vec<Value>),
-    Pairs(Vec<(String, Value)>),
-}
-
-fn iterable_from_value(v: Value) -> Iterable {
-    match v {
-        Value::Null => Iterable::Rows(vec![]),
-        Value::Array(a) => Iterable::Rows(a),
-        Value::Object(o) => {
-            let mut keys: Vec<String> = o.keys().cloned().collect();
-            keys.sort();
-            let pairs: Vec<(String, Value)> = keys
-                .into_iter()
-                .map(|k| {
-                    let val = o.get(&k).cloned().unwrap_or(Value::Null);
-                    (k, val)
-                })
-                .collect();
-            Iterable::Pairs(pairs)
-        }
-        _ => Iterable::Rows(vec![]),
-    }
-}
-
-fn iterable_empty(it: &Iterable) -> bool {
-    match it {
-        Iterable::Rows(a) => a.is_empty(),
-        Iterable::Pairs(p) => p.is_empty(),
-    }
-}
-
-fn fill_loop_object(m: &mut serde_json::Map<String, Value>, i: usize, len: usize) {
-    m.insert("index".to_string(), Value::Number(((i + 1) as u64).into()));
-    m.insert("index0".to_string(), Value::Number((i as u64).into()));
-    m.insert("first".to_string(), Value::Bool(i == 0));
-    m.insert("last".to_string(), Value::Bool(len > 0 && i + 1 == len));
-    m.insert("length".to_string(), Value::Number((len as u64).into()));
-    m.insert(
-        "revindex".to_string(),
-        Value::Number((len.saturating_sub(i) as u64).into()),
-    );
-    m.insert(
-        "revindex0".to_string(),
-        Value::Number((len.saturating_sub(1).saturating_sub(i) as u64).into()),
-    );
-}
-
-/// Reuses the same `loop` object map in the innermost frame when possible (avoids reallocating keys each iteration).
 fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
-    let inner = stack
-        .frames
-        .last_mut()
-        .expect("inject_loop requires an active frame");
-    match inner.get_mut("loop") {
-        Some(arc) => match Arc::make_mut(arc) {
-            Value::Object(m) => fill_loop_object(m, i, len),
-            _ => {
-                let mut m = Map::with_capacity(7);
-                fill_loop_object(&mut m, i, len);
-                *arc = Arc::new(Value::Object(m));
-            }
-        },
-        None => {
-            let mut m = Map::with_capacity(7);
-            fill_loop_object(&mut m, i, len);
-            inner.insert("loop".to_string(), Arc::new(Value::Object(m)));
-        }
-    }
+    crate::render_common::inject_loop(&mut stack.frames, i, len);
     stack.bump_revision();
 }
 
@@ -1058,107 +1001,12 @@ fn render_output(
     Ok(out)
 }
 
-/// Template output for `{{ expr }}`: bare literals are not auto-escaped; variable output and
-/// non-literal expressions (including literal `|upper` / `|lower` / `|length` fast paths) respect
-/// [`Environment::autoescape`] like the `eval_to_value` + stringify path.
-/// Peels a chain of built-in `upper` / `lower` / `capitalize` / `trim` / `length` filters (empty
-/// args, no custom overrides) through [`Expr::Filter`]. Returns filter names in **application**
-/// order (innermost / closest to leaf first) and the leaf expression.
-fn peel_builtin_upper_lower_length_chain<'a>(
-    mut e: &'a Expr,
-    env: &Environment,
-) -> Option<(Vec<&'a str>, &'a Expr)> {
-    let mut names: Vec<&'a str> = Vec::new();
-    loop {
-        match e {
-            Expr::Filter { name, input, args }
-                if args.is_empty() && !env.custom_filters.contains_key(name) =>
-            {
-                let n = name.as_str();
-                if !matches!(n, "upper" | "lower" | "length" | "trim" | "capitalize") {
-                    return None;
-                }
-                names.push(n);
-                e = input.as_ref();
-            }
-            _ => break,
-        }
-    }
-    if names.is_empty() {
-        return None;
-    }
-    names.reverse();
-    if !builtin_filter_chain_application_order_valid(&names) {
-        return None;
-    }
-    Some((names, e))
-}
-
-/// `length` may only appear as the final step; all other filters here are string normalizers.
-/// Allows any interleaving of `upper`/`lower`/`trim`/`capitalize` (e.g. `trim` then `upper`).
-fn builtin_filter_chain_application_order_valid(rev_names: &[&str]) -> bool {
-    if rev_names.is_empty() {
-        return false;
-    }
-    let last = rev_names.len() - 1;
-    for (i, &name) in rev_names.iter().enumerate() {
-        match name {
-            "upper" | "lower" | "trim" | "capitalize" => {}
-            "length" => {
-                if i != last {
-                    return false;
-                }
-            }
-            _ => return false,
-        }
-    }
-    true
-}
-
-fn apply_builtin_filter_chain_on_cow_value(
-    mut current: Cow<'_, Value>,
-    rev_names: &[&str],
-) -> Result<Value> {
-    for n in rev_names {
-        match *n {
-            "upper" => {
-                let t = crate::value::value_to_string(current.as_ref()).to_uppercase();
-                current = Cow::Owned(Value::String(t));
-            }
-            "lower" => {
-                let t = crate::value::value_to_string(current.as_ref()).to_lowercase();
-                current = Cow::Owned(Value::String(t));
-            }
-            "trim" => {
-                let t = crate::filters::chain_trim_like_builtin(current.as_ref());
-                current = Cow::Owned(t);
-            }
-            "capitalize" => {
-                let t = crate::filters::chain_capitalize_like_builtin(current.as_ref());
-                current = Cow::Owned(t);
-            }
-            "length" => {
-                return Ok(match current.as_ref() {
-                    Value::String(s) => json!(s.chars().count()),
-                    Value::Array(a) => json!(a.len()),
-                    Value::Object(o) => json!(o.len()),
-                    x if is_undefined_value(x) => json!(0),
-                    _ => json!(0),
-                });
-            }
-            _ => unreachable!(),
-        }
-    }
-    Ok(current.into_owned())
-}
-
-/// Fused `upper`/`lower`/`length` chains on variables or string/array literals (see peel helper).
 fn try_apply_peeled_builtin_filter_chain_value(
     env: &Environment,
     stack: &mut CtxStack,
     e: &Expr,
 ) -> Option<Result<Value>> {
-    let (rev_names, leaf) = peel_builtin_upper_lower_length_chain(e, env)?;
+    let (rev_names, leaf) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters)?;
     match leaf {
         Expr::Variable(var_name) => {
             let v = match env.resolve_variable_ref(stack, var_name) {
@@ -1211,7 +1059,7 @@ fn eval_for_output(
         }
         Expr::Filter { name, input, args } => {
             if args.is_empty() {
-                if let Some((rev_names, leaf)) = peel_builtin_upper_lower_length_chain(e, env) {
+                if let Some((rev_names, leaf)) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters) {
                     match leaf {
                         Expr::Variable(var_name) => {
                             let v = env.resolve_variable_ref(stack, var_name)?;
@@ -1387,48 +1235,6 @@ fn eval_for_output(
     }
 }
 
-fn is_truthy(v: &Value) -> bool {
-    if crate::value::is_undefined_value(v) {
-        return false;
-    }
-    match v {
-        Value::Null | Value::Bool(false) => false,
-        Value::Bool(true) => true,
-        Value::Number(n) => n.as_f64().map(|x| x != 0.0 && !x.is_nan()).unwrap_or(true),
-        Value::String(s) => !s.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
-    }
-}
-
-fn compare_values(left: &Value, op: CompareOp, right: &Value) -> bool {
-    match op {
-        CompareOp::Eq | CompareOp::StrictEq => left == right,
-        CompareOp::Ne | CompareOp::StrictNe => left != right,
-        CompareOp::Lt => json_partial_cmp(left, right) == Some(std::cmp::Ordering::Less),
-        CompareOp::Gt => json_partial_cmp(left, right) == Some(std::cmp::Ordering::Greater),
-        CompareOp::Le => matches!(
-            json_partial_cmp(left, right),
-            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-        ),
-        CompareOp::Ge => matches!(
-            json_partial_cmp(left, right),
-            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
-        ),
-    }
-}
-
-fn json_partial_cmp(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
-    match (a, b) {
-        (Value::Number(x), Value::Number(y)) => {
-            let xf = x.as_f64()?;
-            let yf = y.as_f64()?;
-            xf.partial_cmp(&yf)
-        }
-        (Value::String(x), Value::String(y)) => Some(x.cmp(y)),
-        _ => None,
-    }
-}
-
 fn eval_slice_bound(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -1452,178 +1258,20 @@ fn eval_slice_bound(
     }
 }
 
-/// Jinja-compat slice (`nunjucks` `sliceLookup`).
-fn jinja_slice_array(
-    obj: &[Value],
-    start: Option<i64>,
-    stop: Option<i64>,
-    step: Option<i64>,
-) -> Vec<Value> {
-    let len = obj.len() as i64;
-    let step = step.unwrap_or(1);
-    if step == 0 {
-        return vec![];
-    }
-    let mut start = start;
-    let mut stop = stop;
-    if start.is_none() {
-        start = Some(if step < 0 { (len - 1).max(0) } else { 0 });
-    }
-    if stop.is_none() {
-        stop = Some(if step < 0 { -1 } else { len });
-    } else if let Some(s) = stop {
-        if s < 0 {
-            stop = Some(s + len);
-        }
-    }
-    if let Some(s) = start {
-        if s < 0 {
-            start = Some(s + len);
-        }
-    }
-    let start = start.unwrap_or(0);
-    let stop = stop.unwrap_or(len);
-    let mut results = Vec::new();
-    let mut i = start;
-    loop {
-        if i < 0 || i > len {
-            break;
-        }
-        if step > 0 && i >= stop {
-            break;
-        }
-        if step < 0 && i <= stop {
-            break;
-        }
-        if let Some(item) = obj.get(i as usize) {
-            results.push(item.clone());
-        }
-        i += step;
-    }
-    results
-}
-
-fn eval_in(key: &Value, container: &Value) -> Result<bool> {
-    match container {
-        Value::Array(a) => Ok(a.iter().any(|v| v == key)),
-        Value::String(s) => {
-            let frag = match key {
-                Value::String(k) => k.as_str(),
-                _ => return Ok(false),
-            };
-            Ok(s.contains(frag))
-        }
-        Value::Object(o) => match key {
-            Value::String(k) => Ok(o.contains_key(k)),
-            _ => Ok(false),
-        },
-        _ => Err(RunjucksError::new(
-            "Cannot use \"in\" operator to search in unexpected type",
-        )),
-    }
-}
-
-/// Right-hand side of `is`: identifier, string/null literal, or call (`equalto(3)`).
-fn is_test_parts(e: &Expr) -> Option<(&str, &[Expr])> {
-    match e {
-        Expr::Variable(n) => Some((n.as_str(), &[])),
-        Expr::Literal(Value::String(s)) => Some((s.as_str(), &[])),
-        Expr::Literal(Value::Null) => Some(("null", &[])),
-        Expr::Call {
-            callee,
-            args,
-            kwargs,
-        } => {
-            if !kwargs.is_empty() {
-                return None;
-            }
-            if let Expr::Variable(n) = callee.as_ref() {
-                Some((n.as_str(), args.as_slice()))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
-fn as_number(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.parse().ok(),
-        Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
-        _ => None,
-    }
-}
-
-fn add_like_js(a: &Value, b: &Value) -> Value {
-    if let (Some(x), Some(y)) = (as_number(a), as_number(b)) {
-        json_num(x + y)
-    } else {
-        Value::String(format!(
-            "{}{}",
-            crate::value::value_to_string(a),
-            crate::value::value_to_string(b)
-        ))
-    }
-}
-
-fn json_num(x: f64) -> Value {
-    if x.fract() == 0.0 && x >= i64::MIN as f64 && x <= i64::MAX as f64 {
-        json!(x as i64)
-    } else {
-        json!(x)
-    }
-}
-
-fn can_dispatch_builtin(stack: &CtxStack, name: &str) -> bool {
-    matches!(name, "range" | "cycler" | "joiner")
-        && (!stack.defined(name)
-            || stack
-                .get_ref(name)
-                .map(|v| is_builtin_marker_value(v, name))
-                .unwrap_or(false))
-}
-
 fn try_dispatch_builtin(
     state: &mut RenderState<'_>,
     stack: &CtxStack,
     name: &str,
     arg_vals: &[Value],
 ) -> Option<Result<Value>> {
-    if !can_dispatch_builtin(stack, name) {
-        return None;
-    }
-    match name {
-        "range" => Some(builtin_range(arg_vals)),
-        "cycler" => {
-            let id = state.cyclers.len();
-            state.cyclers.push(CyclerState::new(arg_vals.to_vec()));
-            Some(Ok(cycler_handle_value(id)))
-        }
-        "joiner" => {
-            let sep = match arg_vals.len() {
-                0 => ",".to_string(),
-                1 => {
-                    let s = crate::value::value_to_string(&arg_vals[0]);
-                    if s.is_empty() {
-                        ",".to_string()
-                    } else {
-                        s
-                    }
-                }
-                _ => {
-                    return Some(Err(RunjucksError::new(
-                        "`joiner` expects at most one argument",
-                    )));
-                }
-            };
-            let id = state.joiners.len();
-            state.joiners.push(JoinerState::new(sep));
-            Some(Ok(joiner_handle_value(id)))
-        }
-        _ => None,
-    }
+    crate::render_common::try_dispatch_builtin(
+        &mut state.cyclers,
+        &mut state.joiners,
+        stack.defined(name),
+        stack.get_ref(name),
+        name,
+        arg_vals,
+    )
 }
 
 fn render_macro_body(
@@ -1700,25 +1348,6 @@ fn render_caller_invocation(
     let out = render_children(env, state, &frame.body, stack)?;
     stack.pop_frame();
     Ok(out)
-}
-
-/// If `e` is a chain of `.attr` segments on a plain variable (`foo.bar.baz`), returns the root
-/// name and path segments in order. Otherwise `None` (dynamic base, call expression, etc.).
-fn collect_attr_chain_from_getattr<'a>(mut e: &'a Expr) -> Option<(&'a str, Vec<&'a str>)> {
-    let mut attrs: Vec<&'a str> = Vec::new();
-    loop {
-        match e {
-            Expr::GetAttr { base, attr } => {
-                attrs.push(attr.as_str());
-                e = base.as_ref();
-            }
-            Expr::Variable(name) => {
-                attrs.reverse();
-                return Some((name.as_str(), attrs));
-            }
-            _ => return None,
-        }
-    }
 }
 
 fn eval_to_value(

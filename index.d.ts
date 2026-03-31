@@ -45,6 +45,28 @@ export declare class Environment {
   setLoaderRoot(path: string): void
   /** Renders a named template from the map set via [`set_template_map`]. */
   renderTemplate(name: string, context: any): string
+  /**
+   * Registers an async filter `(input, ...args) => any`.
+   * The function is called synchronously on the main thread during render, but registered
+   * as an async filter so it's available in `renderStringAsync` / `renderTemplateAsync`.
+   */
+  addAsyncFilter(name: string, func: unknown): void
+  /** Registers an async global callable `(...args) => any`. */
+  addAsyncGlobal(name: string, func: unknown): void
+  /**
+   * Async render of an inline template string. Returns a `Promise<string>`.
+   *
+   * The render happens on the tokio runtime. Async filters/globals registered via
+   * `addAsyncFilter` / `addAsyncGlobal` are called back to JS via ThreadsafeFunction.
+   * Sync filters/globals and the sync loader are also available during async render.
+   * Async render of an inline template string. Returns a `Promise<string>`.
+   *
+   * Uses the async renderer path which supports async filters and globals. JS callbacks
+   * run synchronously on the main thread; the Promise-returning API matches Nunjucks' surface.
+   */
+  renderStringAsync(template: string, context: any): Promise<string>
+  /** Async render of a named template. Returns a `Promise<string>`. */
+  renderTemplateAsync(name: string, context: any): Promise<string>
 }
 export type JsEnvironment = Environment
 

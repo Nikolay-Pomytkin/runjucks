@@ -121,6 +121,24 @@ pub enum Node {
         callee: Expr,
         body: Vec<Node>,
     },
+    /// `{% asyncEach var in iter %} … {% endeach %}` — sequential async iteration.
+    /// Each iteration body is awaited sequentially; async filters/globals within the body can suspend.
+    AsyncEach {
+        vars: ForVars,
+        iter: Expr,
+        body: Vec<Node>,
+        else_body: Option<Vec<Node>>,
+    },
+    /// `{% asyncAll var in iter %} … {% endall %}` — parallel async iteration.
+    /// All iteration bodies are rendered concurrently; results are concatenated in iteration order.
+    AsyncAll {
+        vars: ForVars,
+        iter: Expr,
+        body: Vec<Node>,
+        else_body: Option<Vec<Node>>,
+    },
+    /// `{% ifAsync cond %} … {% endif %}` — async condition evaluation.
+    IfAsync { branches: Vec<IfBranch> },
     /// Custom extension tag (`addExtension` / [`Environment::register_extension`](crate::environment::Environment::register_extension)).
     ExtensionTag {
         extension_name: String,

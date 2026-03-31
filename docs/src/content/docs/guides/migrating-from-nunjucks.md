@@ -5,7 +5,7 @@ description: Swap nunjucks for @zneep/runjucks on Node.js — what maps cleanly,
 
 [Runjucks](https://github.com/Nikolay-Pomytkin/runjucks) targets the **same mental model** as [Nunjucks](https://mozilla.github.io/nunjucks/): familiar `{{ }}` / `{% %}` syntax, `Environment`, `configure`, `renderString`, and composition with `extends`, `include`, `import`, and macros. The engine is a **Rust** tree-walker behind N-API instead of compile-to-JavaScript + `eval`.
 
-**“Drop-in” here means:** typical **synchronous** Node servers and CLIs that render strings or disk-backed templates—**not** every feature on the [Nunjucks API](https://mozilla.github.io/nunjucks/api.html) page (async rendering, precompile, browser bundles, and some loaders are out of scope today). See [Limitations](./limitations/) and the repo’s [`NUNJUCKS_PARITY.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/NUNJUCKS_PARITY.md) for the full matrix.
+**”Drop-in” here means:** typical Node servers and CLIs that render strings or disk-backed templates—**not** every feature on the [Nunjucks API](https://mozilla.github.io/nunjucks/api.html) page (precompile, browser bundles, and some loaders are out of scope today). Async rendering (`renderStringAsync`, `renderTemplateAsync`) is supported — see [JavaScript API](./javascript-api/#async-rendering). See [Limitations](./limitations/) and the repo’s [`NUNJUCKS_PARITY.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/NUNJUCKS_PARITY.md) for the full matrix.
 
 ## When migration is usually straightforward
 
@@ -41,6 +41,9 @@ description: Swap nunjucks for @zneep/runjucks on Node.js — what maps cleanly,
 | `nunjucks.configure(opts)` | `configure(opts)` — same pattern for default env |
 | `new nunjucks.Environment(loaders?, opts)` | `new Environment()` then `setTemplateMap` / `setLoaderRoot` / `setLoaderCallback` |
 | `env.renderString`, `env.render` | `env.renderString`, `env.renderTemplate` (named templates) |
+| `env.render` (async callback) | `env.renderTemplateAsync(name, ctx)` → `Promise<string>` |
+| `env.addFilter` (async) | `env.addAsyncFilter(name, fn)` |
+| `asyncEach` / `asyncAll` / `ifAsync` | Supported in `renderStringAsync` / `renderTemplateAsync` |
 | `FileSystemLoader` path | `setLoaderRoot(absoluteDir)` |
 | Custom sync loader | `setLoaderCallback((name) => src or null)` |
 | `env.addFilter`, `addGlobal`, `addExtension` | Same names on `Environment` ([details](./javascript-api/)) |
@@ -53,7 +56,7 @@ For the full surface (including `throwOnUndefined`, `trimBlocks`, custom tags, a
 
 Work through these with your real templates and tests:
 
-- **No async template APIs** — No `asyncEach` / `asyncAll`, no async `render` callback. If you relied on those, stay on Nunjucks or render in two phases in application code.
+- **Async rendering** — `renderStringAsync` and `renderTemplateAsync` return `Promise<string>` and support `asyncEach`, `asyncAll`, `ifAsync`, `addAsyncFilter`, and `addAsyncGlobal`. JS callbacks currently run synchronously; see [JavaScript API](./javascript-api/#async-rendering).
 - **No precompile / browser UMD** — Runjucks is a **Node native addon**. There is no Nunjucks-style JS precompile artifact.
 - **Autoescape** — Only **boolean** global autoescape per environment; Nunjucks’ string form (extension-based) is not implemented ([limitations](./limitations/#nodejs-and-loaders)).
 - **Context shape** — Render context crosses the boundary as **JSON-compatible** data. Use **`addGlobal`** for injectable functions; use [`serialize-context`](./javascript-api/) if you relied on `Map` / `Set` in context.

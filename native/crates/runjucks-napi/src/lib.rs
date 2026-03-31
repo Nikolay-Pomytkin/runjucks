@@ -7,12 +7,15 @@ use napi_derive::napi;
 use runjucks_core::ast::Node;
 use runjucks_core::value::value_to_string;
 use runjucks_core::{
-    file_system_loader, loader::TemplateLoader, map_loader, CustomFilter, CustomGlobalFn,
-    CustomTest, Environment, RunjucksError, Tags,
+    file_system_loader, loader::TemplateLoader, map_loader, AsyncCustomFilter,
+    AsyncCustomGlobalFn, CustomFilter, CustomGlobalFn, CustomTest, Environment, RunjucksError,
+    Tags,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::Path;
+#[allow(unused_imports)]
+use std::pin::Pin;
 use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -238,6 +241,133 @@ fn napi_custom_filter(js: Arc<JsFnRef>) -> CustomFilter {
         js.call(&call_args)
             .map_err(|e: Error| RunjucksError::new(e.to_string()))
     })
+}
+
+/// Creates an [`AsyncCustomFilter`] backed by a synchronous JS function reference.
+///
+/// The JS function is called synchronously on the Node main thread (same as sync filters).
+/// This bridges `addAsyncFilter` so that the async renderer can invoke these filters.
+fn napi_async_custom_filter_from_sync(js: Arc<JsFnRef>) -> AsyncCustomFilter {
+    Arc::new(move |input: &serde_json::Value, args: &[serde_json::Value]| {
+        let js = js.clone();
+        let input = input.clone();
+        let args = args.to_vec();
+        Box::pin(async move {
+            let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
+                RunjucksError::new(
+                    "async custom filter invoked without an active Node N-API render context",
+                )
+            })?;
+            if active != js.env {
+                return Err(RunjucksError::new(
+                    "N-API environment mismatch during async custom filter call",
+                ));
+            }
+            let mut call_args: Vec<serde_json::Value> = Vec::with_capacity(1 + args.len());
+            call_args.push(input);
+            call_args.extend(args);
+            js.call(&call_args)
+                .map_err(|e: Error| RunjucksError::new(e.to_string()))
+        })
+            as Pin<
+                Box<
+                    dyn std::future::Future<
+                        Output = runjucks_core::errors::Result<serde_json::Value>,
+                    > + Send,
+                >,
+            >
+    })
+}
+
+/// Creates an [`AsyncCustomGlobalFn`] backed by a synchronous JS function reference.
+fn napi_async_custom_global_from_sync(js: Arc<JsFnRef>) -> AsyncCustomGlobalFn {
+    Arc::new(
+        move |args: &[serde_json::Value], kwargs: &[(String, serde_json::Value)]| {
+            let js = js.clone();
+            let args = args.to_vec();
+            let kwargs = kwargs.to_vec();
+            Box::pin(async move {
+                let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
+                    RunjucksError::new(
+                        "async custom global invoked without an active Node N-API render context",
+                    )
+                })?;
+                if active != js.env {
+                    return Err(RunjucksError::new(
+                        "N-API environment mismatch during async custom global call",
+                    ));
+                }
+                let mut call_args: Vec<serde_json::Value> = args;
+                if !kwargs.is_empty() {
+                    let m: serde_json::Map<String, serde_json::Value> =
+                        kwargs.into_iter().collect();
+                    call_args.push(serde_json::Value::Object(m));
+                }
+                js.call(&call_args)
+                    .map_err(|e: Error| RunjucksError::new(e.to_string()))
+            })
+                as Pin<
+                    Box<
+                        dyn std::future::Future<
+                            Output = runjucks_core::errors::Result<serde_json::Value>,
+                        > + Send,
+                    >,
+                >
+        },
+    )
+}
+
+/// Wraps a `Result<String>` as a resolved/rejected JS `Promise`.
+fn wrap_result_as_promise(napi_env: sys::napi_env, result: Result<String>) -> Result<Unknown<'static>> {
+    unsafe {
+        let mut deferred = ptr::null_mut();
+        let mut promise = ptr::null_mut();
+        check_status!(
+            sys::napi_create_promise(napi_env, &mut deferred, &mut promise),
+            "create promise"
+        )?;
+        match result {
+            Ok(s) => {
+                let mut value = ptr::null_mut();
+                check_status!(
+                    sys::napi_create_string_utf8(
+                        napi_env,
+                        s.as_ptr().cast(),
+                        s.len() as isize,
+                        &mut value,
+                    ),
+                    "create string"
+                )?;
+                check_status!(
+                    sys::napi_resolve_deferred(napi_env, deferred, value),
+                    "resolve"
+                )?;
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let mut err_msg = ptr::null_mut();
+                check_status!(
+                    sys::napi_create_string_utf8(
+                        napi_env,
+                        msg.as_ptr().cast(),
+                        msg.len() as isize,
+                        &mut err_msg,
+                    ),
+                    "create error message"
+                )?;
+                let mut error_obj = ptr::null_mut();
+                check_status!(
+                    sys::napi_create_error(napi_env, ptr::null_mut(), err_msg, &mut error_obj),
+                    "create error"
+                )?;
+                check_status!(
+                    sys::napi_reject_deferred(napi_env, deferred, error_obj),
+                    "reject"
+                )?;
+            }
+        }
+        Unknown::from_napi_value(napi_env, promise)
+    }
 }
 
 #[napi]
@@ -749,6 +879,86 @@ impl JsEnvironment {
                 .render_template(&name, context)
                 .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
         })
+    }
+
+    /// Registers an async filter `(input, ...args) => any`.
+    /// The function is called synchronously on the main thread during render, but registered
+    /// as an async filter so it's available in `renderStringAsync` / `renderTemplateAsync`.
+    #[napi(js_name = "addAsyncFilter")]
+    pub fn add_async_filter(&self, env: Env, name: String, func: Unknown) -> Result<()> {
+        let js = Arc::new(JsFnRef::new(&env, &func)?);
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        inner.add_async_filter(name, napi_async_custom_filter_from_sync(js));
+        Ok(())
+    }
+
+    /// Registers an async global callable `(...args) => any`.
+    #[napi(js_name = "addAsyncGlobal")]
+    pub fn add_async_global(&self, env: Env, name: String, func: Unknown) -> Result<()> {
+        let js = Arc::new(JsFnRef::new(&env, &func)?);
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        inner.add_async_global_callable(name, napi_async_custom_global_from_sync(js));
+        Ok(())
+    }
+
+    /// Async render of an inline template string. Returns a `Promise<string>`.
+    ///
+    /// The render happens on the tokio runtime. Async filters/globals registered via
+    /// `addAsyncFilter` / `addAsyncGlobal` are called back to JS via ThreadsafeFunction.
+    /// Sync filters/globals and the sync loader are also available during async render.
+    /// Async render of an inline template string. Returns a `Promise<string>`.
+    ///
+    /// Uses the async renderer path which supports async filters and globals. JS callbacks
+    /// run synchronously on the main thread; the Promise-returning API matches Nunjucks' surface.
+    #[napi(js_name = "renderStringAsync", ts_return_type = "Promise<string>")]
+    pub fn render_string_async(
+        &self,
+        env: Env,
+        template: String,
+        context: serde_json::Value,
+    ) -> Result<Unknown<'static>> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let result = with_render_napi_env(env.raw(), || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            rt.block_on(inner.render_string_async(template, context))
+                .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
+        });
+        wrap_result_as_promise(env.raw(), result)
+    }
+
+    /// Async render of a named template. Returns a `Promise<string>`.
+    #[napi(js_name = "renderTemplateAsync", ts_return_type = "Promise<string>")]
+    pub fn render_template_async(
+        &self,
+        env: Env,
+        name: String,
+        context: serde_json::Value,
+    ) -> Result<Unknown<'static>> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        let result = with_render_napi_env(env.raw(), || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            rt.block_on(inner.render_template_async(&name, context))
+                .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
+        });
+        wrap_result_as_promise(env.raw(), result)
     }
 }
 

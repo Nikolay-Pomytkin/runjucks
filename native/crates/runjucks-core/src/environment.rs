@@ -58,6 +58,28 @@ pub type CustomTest = Arc<dyn Fn(&Value, &[Value]) -> Result<bool> + Send + Sync
 /// (Nunjucks keyword-argument convention), represented as `[(String, Value)]` before marshalling.
 pub type CustomGlobalFn = Arc<dyn Fn(&[Value], &[(String, Value)]) -> Result<Value> + Send + Sync>;
 
+/// Async variant of [`CustomFilter`]. Returns a boxed future.
+#[cfg(feature = "async")]
+pub type AsyncCustomFilter = Arc<
+    dyn Fn(
+            &Value,
+            &[Value],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Async variant of [`CustomGlobalFn`]. Returns a boxed future.
+#[cfg(feature = "async")]
+pub type AsyncCustomGlobalFn = Arc<
+    dyn Fn(
+            &[Value],
+            &[(String, Value)],
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Introspection-only descriptor for a registered extension (Nunjucks `getExtension` analog).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExtensionDescriptor {
@@ -121,6 +143,12 @@ pub struct Environment {
     pub(crate) custom_extensions: HashMap<String, CustomExtensionHandler>,
     inline_parse_cache: Arc<Mutex<HashMap<u64, CachedParse>>>,
     named_parse_cache: Arc<Mutex<HashMap<String, CachedParse>>>,
+    #[cfg(feature = "async")]
+    pub(crate) async_custom_filters: HashMap<String, AsyncCustomFilter>,
+    #[cfg(feature = "async")]
+    pub(crate) async_custom_globals: HashMap<String, AsyncCustomGlobalFn>,
+    #[cfg(feature = "async")]
+    pub async_loader: Option<Arc<dyn crate::loader::AsyncTemplateLoader>>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -286,6 +314,12 @@ impl Default for Environment {
             custom_extensions: HashMap::new(),
             inline_parse_cache: Arc::new(Mutex::new(HashMap::new())),
             named_parse_cache: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(feature = "async")]
+            async_custom_filters: HashMap::new(),
+            #[cfg(feature = "async")]
+            async_custom_globals: HashMap::new(),
+            #[cfg(feature = "async")]
+            async_loader: None,
         }
     }
 }
@@ -672,5 +706,44 @@ impl Environment {
         let out = renderer::render_entry(self, &mut state, ast.as_ref(), &mut stack)?;
         state.pop_template();
         Ok(out)
+    }
+
+    /// Registers an async filter. Called as `(input, args…) → Promise<Value>`.
+    #[cfg(feature = "async")]
+    pub fn add_async_filter(&mut self, name: String, filter: AsyncCustomFilter) -> &mut Self {
+        self.async_custom_filters.insert(name, filter);
+        self
+    }
+
+    /// Registers an async global function. Called as `(positional_args…, kwargs) → Promise<Value>`.
+    #[cfg(feature = "async")]
+    pub fn add_async_global_callable(
+        &mut self,
+        name: String,
+        f: AsyncCustomGlobalFn,
+    ) -> &mut Self {
+        let mut m = serde_json::Map::new();
+        m.insert(RJ_CALLABLE.to_string(), Value::Bool(true));
+        self.globals.insert(name.clone(), Value::Object(m));
+        self.async_custom_globals.insert(name, f);
+        self
+    }
+
+    /// Async render of an inline template string. Returns a `Future` that produces the rendered output.
+    #[cfg(feature = "async")]
+    pub async fn render_string_async(&self, template: String, context: Value) -> Result<String> {
+        let ast = self.parse_or_cached_inline(&template)?;
+        crate::async_renderer::render_async(self, ast.as_ref(), context).await
+    }
+
+    /// Async render of a named template. Returns a `Future` that produces the rendered output.
+    #[cfg(feature = "async")]
+    pub async fn render_template_async(&self, name: &str, context: Value) -> Result<String> {
+        let loader = self
+            .loader
+            .as_ref()
+            .ok_or_else(|| RunjucksError::new("no template loader configured"))?;
+        let ast = self.load_and_parse_named(name, loader.as_ref())?;
+        crate::async_renderer::render_async(self, ast.as_ref(), context).await
     }
 }

@@ -41,6 +41,27 @@ Create with `new Environment()` or use the instance returned by `configure()`.
 - **`addFilter(name, fn)`** — `(input, ...args) => any`. Overrides a built-in filter with the same name. Runs **synchronously** during render.
 - **`addTest(name, fn)`** — `(value, ...args) => boolean` (truthy return). Used for `is` tests and for `select` / `reject`. Built-in test names still use built-in implementations.
 
+### Async rendering {#async-rendering}
+
+Runjucks supports Promise-based async rendering, matching the Nunjucks async API surface:
+
+- **`renderStringAsync(template, context)`** — Returns `Promise<string>`. Supports all sync features plus async-only tags (`asyncEach`, `asyncAll`, `ifAsync`) and async filters/globals.
+- **`renderTemplateAsync(name, context)`** — Same as above for named templates from the active loader.
+- **`addAsyncFilter(name, fn)`** — Register an async filter `(input, ...args) => any`. Available in both sync and async render paths.
+- **`addAsyncGlobal(name, fn)`** — Register an async global callable `(...args) => any`. Available in both sync and async render paths.
+
+```js
+const env = new Environment();
+env.setTemplateMap({ 'page.html': '{% asyncEach item in items %}{{ item | shout }}{% endeach %}' });
+
+env.addAsyncFilter('shout', (val) => String(val).toUpperCase());
+
+const result = await env.renderTemplateAsync('page.html', { items: ['a', 'b', 'c'] });
+// => "ABC"
+```
+
+> **Note:** JS callbacks registered via `addAsyncFilter` / `addAsyncGlobal` currently run synchronously on the main thread. The Promise-returning API matches Nunjucks' surface for forward compatibility.
+
 ### Custom tags (`addExtension`) {#custom-tags-addextension}
 
 ```js
