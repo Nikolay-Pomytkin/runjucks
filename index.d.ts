@@ -56,16 +56,23 @@ export declare class Environment {
   /**
    * Async render of an inline template string. Returns a `Promise<string>`.
    *
-   * The render happens on the tokio runtime. Async filters/globals registered via
-   * `addAsyncFilter` / `addAsyncGlobal` are called back to JS via ThreadsafeFunction.
-   * Sync filters/globals and the sync loader are also available during async render.
    * Async render of an inline template string. Returns a `Promise<string>`.
    *
-   * Uses the async renderer path which supports async filters and globals. JS callbacks
-   * run synchronously on the main thread; the Promise-returning API matches Nunjucks' surface.
+   * Supports async-only tags (`asyncEach`, `asyncAll`, `ifAsync`) and async filters/globals.
+   *
+   * **Implementation note:** Rendering executes synchronously on the calling thread
+   * (the Node.js main thread) via a current-thread tokio runtime. The result is wrapped
+   * in an already-resolved/rejected Promise. This matches the Nunjucks `renderString`
+   * callback API surface but does **not** yield the event loop during render. This is
+   * an intentional trade-off: the async renderer's future holds `&mut` borrows that are
+   * `!Send`, preventing off-thread execution. True non-blocking rendering would require
+   * an `Arc<Mutex<...>>`-based state design in a future major version.
    */
   renderStringAsync(template: string, context: any): Promise<string>
-  /** Async render of a named template. Returns a `Promise<string>`. */
+  /**
+   * Async render of a named template. Returns a `Promise<string>`.
+   * Same blocking-then-Promise-wrap behavior as [`render_string_async`].
+   */
   renderTemplateAsync(name: string, context: any): Promise<string>
 }
 export type JsEnvironment = Environment
