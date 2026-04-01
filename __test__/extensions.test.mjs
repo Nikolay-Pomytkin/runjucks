@@ -99,3 +99,11 @@ test('getExtension returns a stub descriptor for introspection', () => {
   })
   assert.equal(env.getExtension('missing'), null)
 })
+
+test('getExtension tags are sorted alphabetically', () => {
+  const env = new Environment()
+  env.setAutoescape(false)
+  env.addExtension('z', ['zebra', 'apple', 'mango'], null, () => '')
+  const d = env.getExtension('z')
+  assert.deepEqual(d.tags, ['apple', 'mango', 'zebra'])
+})

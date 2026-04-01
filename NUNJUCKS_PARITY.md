@@ -20,6 +20,35 @@
 
 ---
 
+## Prioritized Nunjucks API parity queue
+
+**Maintainer action order** for closing gaps vs the [Nunjucks API](https://mozilla.github.io/nunjucks/api.html) and loader ecosystem. Tiers match **Priorities** above. The **API surface matrix** is in [Nunjucks API surface](#nunjucks-api-surface-high-level-matrix); deferred product tracks are in [P3_ROADMAP.md](P3_ROADMAP.md).
+
+### P2 — Ecosystem / drop-in DX (highest ROI for “more like Nunjucks npm”)
+
+1. **HTTP(S) / URL loading** — **Done (recipe + helper):** [Limitations](docs/src/content/docs/guides/limitations.md) documents fetch → map → `setTemplateMap` / `setLoaderCallback`; **`@zneep/runjucks/fetch-template-map`** implements `fetchTemplateMap`; tests in [`__test__/loader-url-pattern.test.mjs`](__test__/loader-url-pattern.test.mjs). No native HTTP loader in Rust (by design).
+2. **`configure` / `autoescape` depth** — **Done (JS truthiness):** `configure({ autoescape })` accepts boolean / string / number / `null` and normalizes to one engine boolean (Nunjucks-style truthiness); **`setAutoescape`** stays boolean-only. Documented in [limitations](docs/src/content/docs/guides/limitations.md) and [JavaScript API](docs/src/content/docs/guides/javascript-api.md); tests in [`__test__/configure-autoescape.test.mjs`](__test__/configure-autoescape.test.mjs). **Not done:** per-filename extension autoescape (still a single global flag).
+3. **`runjucks/express` vs `nunjucks.express`** — **Partial:** [`__test__/express.test.mjs`](__test__/express.test.mjs) covers missing view → 500, `configure.trimBlocks` via `opts.configure`, and `view cache` off + parse invalidation. Further gaps only as reported.
+4. **`getExtension`** — **Stub by design** (`name`, `tags`, sorted `tags`, `blocks`); docs clarify vs Nunjucks live extension object — see [JavaScript API](docs/src/content/docs/guides/javascript-api.md). **`parse()`-style objects** remain out of scope.
+
+### P3 — Large effort or different product shape
+
+1. **Callback-only async `render(name, ctx, cb)`** — Runjucks exposes **Promise** APIs (`renderStringAsync`, `renderTemplateAsync`); callback style remains unimplemented by design unless requirements change ([P3_ROADMAP.md](P3_ROADMAP.md)).
+2. **`precompile` / `precompileString` / `PrecompiledLoader`** — Upstream emits JS for Nunjucks’ runtime; Runjucks uses a Rust AST — needs a **codegen or WASM** story, not a small NAPI tweak.
+3. **Browser bundle (UMD / ESM) / WASM target** — Distribution and loader story for non-Node hosts.
+4. **`installJinjaCompat()`** — Optional shim for apps that call it; slices and most Jinja-like syntax already work without it.
+5. **`addExtension` with `parse(parser, nodes)`** — Nunjucks parser-hook extensions; Runjucks uses **declarative** `addExtension` + `process(…)` instead (no plan to clone the JS parser API).
+6. **Parallel `asyncAll`** — Runjucks runs **`asyncAll` sequentially** for deterministic output; true overlap would be new semantics.
+
+### Ongoing / test-driven (not one API ticket)
+
+- **ECMAScript `Map` / `Set` in context** — Core is JSON-shaped through NAPI; use objects/arrays or [`serialize-context`](serialize-context.js) until a bounded bridge is a product priority.
+- **Safe-string / `copySafeness` and filter chains** — Extend [upstream-ported tests](__test__/upstream/) and conformance as real templates surface mismatches.
+- **RegExp** — Rust `regex` with documented flags; full ECMAScript `RegExp` parity is a non-goal except where tests require it.
+- **`include` / `import` / `extends` edge cases** — Add goldens when stock **nunjucks@3.2.4** accepts the same syntax; see **Tags → Partial**.
+
+---
+
 ## Roadmap: “partial parity” (prioritized)
 
 Features that are **mostly** implemented but differ from Nunjucks in edge cases — or need deliberate sequencing. **Do not** tackle all of these at once; pick **one track** until shipped.

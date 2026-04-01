@@ -15,6 +15,7 @@ Types ship in `index.d.ts`; the [generated API reference](../../api/) is the sou
 | `reset()` | Clear the module default environment (mainly for tests). |
 | `compile(src, env?, path?, eagerCompile?)` | Build a `Template` from source; optional env and eager validation. |
 | `serializeContextForRender` | From **`@zneep/runjucks/serialize-context`** — converts `Map` / `Set` (and nested values) to JSON-friendly data for `context`. |
+| `fetchTemplateMap` | From **`@zneep/runjucks/fetch-template-map`** — `async` helper: given `{ name, url }[]`, returns a **`name → source`** object for **`setTemplateMap`** after **`fetch`**. Use when loading templates over HTTP(S); render stays sync after sources are loaded. |
 
 ## `Environment`
 
@@ -32,8 +33,8 @@ Create with `new Environment()` or use the instance returned by `configure()`.
 
 ### Options
 
-- **`setAutoescape` / `setDev` / `setRandomSeed`** — Autoescape HTML in outputs, dev flag (reserved), and a fixed seed for `| random` in tests. **`setAutoescape` accepts only a boolean.** Nunjucks’ `configure` also allows **`autoescape` as a string** (e.g. escape only files with a given extension). Runjucks does not implement extension-based autoescape; use boolean on/off for the whole environment (see [Limitations](./limitations/)).
-- **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — Instance method; same flags as Nunjucks’ `configure`, except **`autoescape` is boolean-only** (see above). **`tags`** sets custom delimiters (`blockStart`, `blockEnd`, `variableStart`, `variableEnd`, `commentStart`, `commentEnd`).
+- **`setAutoescape` / `setDev` / `setRandomSeed`** — Autoescape HTML in outputs, dev flag (reserved), and a fixed seed for `| random` in tests. **`setAutoescape` accepts only a boolean.**
+- **`configure({ autoescape?, dev?, throwOnUndefined?, trimBlocks?, lstripBlocks?, tags? })`** — Instance method; mirrors Nunjucks’ `configure` for these flags. **`autoescape`** accepts **boolean, string, number, or `null`** and is normalized with **JavaScript-like truthiness** (same idea as Nunjucks’ `suppressValue`): `false`, `0`, `""`, and `null` turn escaping **off**; other values (including non-empty strings such as `"html"`) turn it **on**. The Rust engine still stores a **single boolean** — there is no per-file extension autoescape (see [Limitations](./limitations/)). **`tags`** sets custom delimiters (`blockStart`, `blockEnd`, `variableStart`, `variableEnd`, `commentStart`, `commentEnd`).
 
 ### Globals, filters, tests
 
@@ -80,7 +81,7 @@ Tag **parsing** is fixed in the engine; your callback only **produces output** f
 
 ### `getExtension` (introspection)
 
-- **`getExtension(name)`** returns **`{ name, tags, blocks }`** when a custom extension is registered, or **`null`** if not. **`tags`** lists opening tag names; **`blocks`** maps an opening tag name to its closing tag name (for block-style tags only). This object is for **tooling and tests** — it does not expose the underlying Rust or JavaScript `process` callback, and it is **not** referentially equal to Nunjucks’ runtime extension objects.
+- **`getExtension(name)`** returns **`{ name, tags, blocks }`** when a custom extension is registered, or **`null`** if not. **`tags`** lists opening tag names (**sorted** for stable output); **`blocks`** maps an opening tag name to its closing tag name (for block-style tags only). This object is for **tooling and tests** — it does not expose the underlying Rust or JavaScript `process` callback. Nunjucks’ **`getExtension`** returns the **live extension object** (including any `parse` hook); Runjucks only exposes this **descriptor**, not parser hooks or the same object identity as upstream.
 
 ## Express (optional)
 

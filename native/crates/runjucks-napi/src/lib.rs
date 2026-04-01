@@ -466,10 +466,11 @@ pub struct TagsOptions {
     pub comment_end: Option<String>,
 }
 
-#[derive(Debug, Clone)]
 #[napi(object)]
 pub struct ConfigureOptions {
-    pub autoescape: Option<bool>,
+    /// Nunjucks accepts truthy/falsy values; normalized to a Rust `bool` for the engine (see `coerce_autoescape_value`).
+    #[napi(ts_type = "boolean | string | number | null | undefined")]
+    pub autoescape: Option<Unknown<'static>>,
     pub dev: Option<bool>,
     pub throw_on_undefined: Option<bool>,
     pub trim_blocks: Option<bool>,
@@ -489,9 +490,26 @@ fn validate_parse(env: &Environment, src: &str) -> std::result::Result<(), Runju
     env.validate_lex_parse(src)
 }
 
-fn apply_configure_opts(env: &mut Environment, opts: &ConfigureOptions) {
-    if let Some(a) = opts.autoescape {
-        env.autoescape = a;
+/// Match Nunjucks `suppressValue` / JS truthiness for `opts.autoescape`: `false`, `0`, `""`, `null`, `undefined` → off; other truthy values (including non-empty strings like `"html"`) → on.
+fn coerce_autoescape_value(u: &Unknown) -> Result<bool> {
+    match u.get_type()? {
+        ValueType::Undefined | ValueType::Null => Ok(false),
+        ValueType::Boolean => FromNapiValue::from_unknown(u.clone()),
+        ValueType::Number => {
+            let n: f64 = FromNapiValue::from_unknown(u.clone())?;
+            Ok(n != 0.0 && !n.is_nan())
+        }
+        ValueType::String => {
+            let s: String = FromNapiValue::from_unknown(u.clone())?;
+            Ok(!s.is_empty())
+        }
+        _ => Ok(true),
+    }
+}
+
+fn apply_configure_opts(env: &mut Environment, opts: &ConfigureOptions) -> Result<()> {
+    if let Some(ref a) = opts.autoescape {
+        env.autoescape = coerce_autoescape_value(a)?;
     }
     if let Some(d) = opts.dev {
         env.dev = d;
@@ -516,6 +534,7 @@ fn apply_configure_opts(env: &mut Environment, opts: &ConfigureOptions) {
             comment_end: t.comment_end.clone().unwrap_or(defaults.comment_end),
         });
     }
+    Ok(())
 }
 
 /// Module-level default environment for Nunjucks-style [`configure`] / [`render`].
@@ -813,14 +832,14 @@ impl JsEnvironment {
         Ok(())
     }
 
-    /// Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied.
+    /// Subset of Nunjucks `configure`: `autoescape` (truthy/falsy coercion like Nunjucks), `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied.
     #[napi]
     pub fn configure(&self, opts: ConfigureOptions) -> Result<()> {
         let mut env = self
             .inner
             .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        apply_configure_opts(&mut env, &opts);
+        apply_configure_opts(&mut env, &opts)?;
         Ok(())
     }
 
@@ -1019,7 +1038,7 @@ pub fn configure_default(opts: Option<ConfigureOptions>) -> Result<JsEnvironment
     let env = Arc::new(Mutex::new(Environment::default()));
     if let Some(o) = opts {
         let mut inner = env.lock().map_err(|e| Error::from_reason(e.to_string()))?;
-        apply_configure_opts(&mut inner, &o);
+        apply_configure_opts(&mut inner, &o)?;
     }
     set_global_env(env.clone());
     Ok(JsEnvironment { inner: env })

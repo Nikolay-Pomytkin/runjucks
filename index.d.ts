@@ -94,7 +94,8 @@ export declare function compile(src: string, env?: Environment | undefined | nul
 export declare function configure(opts?: ConfigureOptions | undefined | null): Environment
 
 export interface ConfigureOptions {
-  autoescape?: boolean
+  /** Nunjucks accepts truthy/falsy values; normalized to a Rust `bool` for the engine (see `coerce_autoescape_value`). */
+  autoescape?: boolean | string | number | null | undefined
   dev?: boolean
   throwOnUndefined?: boolean
   trimBlocks?: boolean

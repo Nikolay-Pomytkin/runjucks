@@ -23,6 +23,8 @@
     "express.js",
     "serialize-context.js",
     "serialize-context.d.ts",
+    "fetch-template-map.js",
+    "fetch-template-map.d.ts",
     "LICENSE"
   ],
   "publishConfig": {
