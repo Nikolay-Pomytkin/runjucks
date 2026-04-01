@@ -147,8 +147,6 @@ pub struct Environment {
     pub(crate) async_custom_filters: HashMap<String, AsyncCustomFilter>,
     #[cfg(feature = "async")]
     pub(crate) async_custom_globals: HashMap<String, AsyncCustomGlobalFn>,
-    #[cfg(feature = "async")]
-    pub async_loader: Option<Arc<dyn crate::loader::AsyncTemplateLoader>>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -318,8 +316,6 @@ impl Default for Environment {
             async_custom_filters: HashMap::new(),
             #[cfg(feature = "async")]
             async_custom_globals: HashMap::new(),
-            #[cfg(feature = "async")]
-            async_loader: None,
         }
     }
 }

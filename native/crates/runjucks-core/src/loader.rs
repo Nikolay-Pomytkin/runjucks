@@ -120,18 +120,3 @@ pub fn file_system_loader(root: impl AsRef<Path>) -> Result<Arc<dyn TemplateLoad
     Ok(Arc::new(FileSystemLoader::new(root)?))
 }
 
-/// Async variant of [`TemplateLoader`] for template sources fetched from databases, APIs, etc.
-#[cfg(feature = "async")]
-pub trait AsyncTemplateLoader: Send + Sync {
-    /// Asynchronously loads template source by name.
-    fn load_async<'a>(
-        &'a self,
-        name: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + 'a>>;
-
-    /// When `Some`, parsed templates for this name may be cached.
-    fn cache_key(&self, name: &str) -> Option<String> {
-        let _ = name;
-        None
-    }
-}

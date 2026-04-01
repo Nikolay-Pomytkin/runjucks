@@ -1788,6 +1788,12 @@ fn eval_to_value(
                 if let Some(f) = env.custom_globals.get(name) {
                     return f(&arg_vals, &kw_vals);
                 }
+                #[cfg(feature = "async")]
+                if env.async_custom_globals.contains_key(name) {
+                    return Err(RunjucksError::new(format!(
+                        "`{name}` is an async global and can only be used with `renderStringAsync()` or `renderTemplateAsync()`"
+                    )));
+                }
             }
             if let Expr::GetAttr { base, attr } = callee.as_ref() {
                 if let Expr::Variable(ns) = base.as_ref() {

@@ -97,6 +97,21 @@ describe('async callback Promise detection', () => {
   });
 });
 
+describe('sync render with async-only registrations', () => {
+  it('gives clear error when async global used in sync render', () => {
+    const env = new Environment();
+    env.addAsyncGlobal('getData', () => 'fetched');
+    assert.throws(
+      () => env.renderString('{{ getData() }}', {}),
+      (err) => {
+        assert.ok(err.message.includes('async global'));
+        assert.ok(err.message.includes('renderStringAsync'));
+        return true;
+      }
+    );
+  });
+});
+
 describe('async template tags', () => {
   it('asyncEach renders in async mode (via sync bridge)', async () => {
     const env = new Environment();

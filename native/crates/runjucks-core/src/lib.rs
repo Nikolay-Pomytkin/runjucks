@@ -48,5 +48,4 @@ pub use lexer::{LexerOptions, Tags};
 pub use loader::{file_system_loader, map_loader, FileSystemLoader, FnLoader, TemplateLoader};
 #[cfg(feature = "async")]
 pub use environment::{AsyncCustomFilter, AsyncCustomGlobalFn};
-#[cfg(feature = "async")]
-pub use loader::AsyncTemplateLoader;
+
