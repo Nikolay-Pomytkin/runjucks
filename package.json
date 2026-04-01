@@ -1,6 +1,6 @@
 {
   "name": "@zneep/runjucks",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Rust-powered Nunjucks-compatible template engine (Node.js native addon)",
   "main": "index.js",
   "types": "index.d.ts",
@@ -80,12 +80,12 @@
     "tinybench": "6.0.0"
   },
   "optionalDependencies": {
-    "@zneep/runjucks-win32-x64-msvc": "0.1.7",
-    "@zneep/runjucks-darwin-x64": "0.1.7",
-    "@zneep/runjucks-darwin-arm64": "0.1.7",
-    "@zneep/runjucks-linux-x64-gnu": "0.1.7",
-    "@zneep/runjucks-linux-x64-musl": "0.1.7",
-    "@zneep/runjucks-linux-arm64-gnu": "0.1.7",
-    "@zneep/runjucks-linux-arm64-musl": "0.1.7"
+    "@zneep/runjucks-win32-x64-msvc": "0.1.8",
+    "@zneep/runjucks-darwin-x64": "0.1.8",
+    "@zneep/runjucks-darwin-arm64": "0.1.8",
+    "@zneep/runjucks-linux-x64-gnu": "0.1.8",
+    "@zneep/runjucks-linux-x64-musl": "0.1.8",
+    "@zneep/runjucks-linux-arm64-gnu": "0.1.8",
+    "@zneep/runjucks-linux-arm64-musl": "0.1.8"
   }
 }

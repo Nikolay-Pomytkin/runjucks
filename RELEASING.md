@@ -66,7 +66,7 @@ The [Performance](docs/src/content/docs/guides/performance.mdx) guide embeds a *
 After a release version bump (or when you intentionally refresh benchmarks):
 
 1. From the **package root**: `npm run build && npm run perf:json` (uses **warm** Runjucks parse cache by default; use `npm run perf:cold` if you want a cold snapshot—then save under a distinct filename or document `mode` in the report).
-2. Copy `perf/last-run.json` to `docs/src/data/perf/reports/<runjucksVersion>.json` (for example `0.1.7.json`).
+2. Copy `perf/last-run.json` to `docs/src/data/perf/reports/<runjucksVersion>.json` (for example `0.1.8.json`).
 3. Update [`docs/src/data/perf/index.json`](docs/src/data/perf/index.json): set **`latest`** to that version and append it to **`reports`** if it is a new file (keep older versions in **`reports`** for optional history).
 
 Numbers are **machine-dependent**; treat them as directional. The JSON records **`platform`**, **`node`**, and timestamps so readers can see how the snapshot was produced.
