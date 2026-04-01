@@ -148,7 +148,7 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 
 ## Non-goals (same spirit as parity doc)
 
-- **Async render pipeline**, `asyncEach` / worker threads for template execution — different product.
+- **Nunjucks-style async baseline in `perf/run.mjs`** — upstream’s async API differs from sync `renderString`; async throughput is measured separately ([`perf/run-async.mjs`](perf/run-async.mjs), `npm run perf:async`). True parallel `asyncAll` / worker-thread template execution — not a goal (Runjucks runs async tags **sequentially** for deterministic output).
 - **Multithreaded rendering** of a **single** template instance — correctness and Nunjucks semantics are inherently sequential for sync templates.
 - **Browser precompile / bytecode bundle** — Runjucks is Node-native N-API today.
 - **Replacing `serde_json::Value` entirely** across the engine — only as a last resort after measured plateau on P1–P2.
@@ -168,6 +168,7 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 | **Release native addon** | From `runjucks/`: `npm run build` (not `build:debug`) |
 | **Node vs Nunjucks** | `npm run perf` — uses [`harness-env.mjs`](perf/harness-env.mjs); optional `npm run perf:cold` |
 | **N-API context sizing** | `npm run perf:context` — [`context-boundary.mjs`](perf/context-boundary.mjs) |
+| **Async render (Runjucks only)** | `npm run perf:async` — [`perf/run-async.mjs`](perf/run-async.mjs) benches `renderStringAsync` / `renderTemplateAsync`; cases in [`asyncSyntheticCases`](perf/synthetic.mjs) / [`asyncSyncParityCases`](perf/synthetic.mjs). **No Nunjucks row** — compare sync vs async overhead on the same template via `*_async_over_sync` ratio rows, or track regressions on `async_synth_*` rows. Optional `npm run perf:async:json` → [`perf/last-run-async.json`](perf/last-run-async.json). |
 | **Rust-only render cost** | `cd native && cargo bench -p runjucks_core --bench render_hotspots` or `npm run bench:rust` from package root |
 | **Rust-only parse cost** | `cd native && cargo bench -p runjucks_core --bench parse_hotspots` or `npm run bench:rust:parse` |
 | **Flamegraph (Linux)** | `cargo install flamegraph && cd native && cargo flamegraph --bench render_hotspots -p runjucks_core` (same for `parse_hotspots`) |
@@ -189,7 +190,7 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 | AST | [`ast.rs`](native/crates/runjucks-core/src/ast.rs) |
 | Parser | [`parser/`](native/crates/runjucks-core/src/parser/) |
 | NAPI, `Template`, env lock, `renderStringFromJson` | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
-| Perf harness | [`perf/run.mjs`](perf/run.mjs), [`perf/harness-env.mjs`](perf/harness-env.mjs), [`perf/synthetic.mjs`](perf/synthetic.mjs), [`perf/context-boundary.mjs`](perf/context-boundary.mjs) |
+| Perf harness | [`perf/run.mjs`](perf/run.mjs), [`perf/run-async.mjs`](perf/run-async.mjs), [`perf/harness-env.mjs`](perf/harness-env.mjs), [`perf/synthetic.mjs`](perf/synthetic.mjs), [`perf/context-boundary.mjs`](perf/context-boundary.mjs) |
 | P1 regression tests | [`tests/perf_regressions.rs`](native/crates/runjucks-core/tests/perf_regressions.rs) |
 
 ---
@@ -207,3 +208,4 @@ When you ship a perf track, add a one-line bullet with **date + PR/ref + area** 
 - **2026-03 — Compile/render perf track:** Criterion [`parse_hotspots`](native/crates/runjucks-core/benches/parse_hotspots.rs) + `perf/README.md` table (parse vs render); lexer `tokenize` + template parser root `Vec` pre-capacity; `|upper` / `|lower` / `|length` on **plain variables** via `resolve_variable_ref`; `is` tests with **no args** borrow the LHS variable when it is a bare identifier; NAPI [`renderStringFromJson`](native/crates/runjucks-napi/src/lib.rs) + optional **`fast-json`** (`simd-json`) for Rust-side JSON parse; Node [`__test__/json-ingress.test.mjs`](__test__/json-ingress.test.mjs).
 - **2026-03 — Perf plan execution (local):** `perf:context` on this machine showed ~0.03 ms **large − small** context delta vs ~0.05 ms small-context mean — meaningful **relative** cost but small in absolute ms; **Tier-D ingress work** (broader JSON / `sonic-rs` on main `renderString` path) **deferred** per decision gate until profiles show ingress dominates Criterion render cost. Core: fused **`upper` / `lower` / `length`** chains on variables and literals (one `resolve_variable_ref` / leaf where valid); `is` tests with **args** borrow `LHS` when it is a bare variable (`Cow` + `apply_is_test` on `&Value`); Criterion `variable_chained_upper_lower_filters`; Node harness supports `renderMode: 'template'` synthetics ([`perf/run.mjs`](perf/run.mjs)); measurement playbook clarifies `--json`, `avg nj/rj`, skip rules.
 - **2026-03 — Follow-on:** Fused chains allow **`trim`** and **`capitalize`** with other string filters; **`length` must be last** in the fused chain (any interleaving of `upper`/`lower`/`trim`/`capitalize` before that — fixes `trim`→`upper` order that the old validator rejected). [`chain_capitalize_like_builtin`](native/crates/runjucks-core/src/filters.rs) dedupes `apply_builtin` `capitalize`. Criterion: `variable_trim_upper_filters`, `variable_trim_capitalize_filters`. Synthetics `synth_var_trim_upper`, `synth_var_trim_capitalize` ([`perf/synthetic.mjs`](perf/synthetic.mjs)). Single-comparison `a == b` uses `resolve_variable_ref` for a plain variable LHS with RHS evaluated first to satisfy borrow rules.
+- **2026-03 — Async throughput:** [`perf/run-async.mjs`](perf/run-async.mjs) + `npm run perf:async` / `perf:async:json`; [`asyncSyntheticCases`](perf/synthetic.mjs) / [`asyncSyncParityCases`](perf/synthetic.mjs) — Runjucks-only (no Nunjucks baseline); optional sync-vs-async ratio row for the same `for` template.

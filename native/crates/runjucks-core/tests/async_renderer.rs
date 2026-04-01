@@ -2,8 +2,10 @@
 
 #[cfg(feature = "async")]
 mod tests {
+    use runjucks_core::loader::map_loader;
     use runjucks_core::Environment;
     use serde_json::json;
+    use std::collections::HashMap;
     use std::pin::Pin;
     use std::sync::Arc;
 
@@ -191,5 +193,81 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out, "5");
+    }
+
+    #[tokio::test]
+    async fn render_template_async_uses_map_loader() {
+        let mut m = HashMap::new();
+        m.insert("page.njk".into(), "n={{ n }}".into());
+        let mut env = Environment::default();
+        env.loader = Some(map_loader(m));
+        let out = env
+            .render_template_async("page.njk", json!({ "n": 9 }))
+            .await
+            .unwrap();
+        assert_eq!(out, "n=9");
+    }
+
+    #[tokio::test]
+    async fn render_template_async_missing_errors() {
+        let mut env = Environment::default();
+        env.loader = Some(map_loader(HashMap::new()));
+        let err = env
+            .render_template_async("nope.njk", json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("nope") || err.to_string().contains("template"));
+    }
+
+    #[tokio::test]
+    async fn async_each_else_when_empty() {
+        let env = Environment::default();
+        let out = env
+            .render_string_async(
+                "{% asyncEach x in items %}{{ x }}{% else %}empty{% endeach %}".into(),
+                json!({ "items": [] }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, "empty");
+    }
+
+    #[tokio::test]
+    async fn if_async_false_branch() {
+        let env = Environment::default();
+        let out = env
+            .render_string_async(
+                "{% ifAsync ok %}yes{% endif %}".into(),
+                json!({ "ok": false }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, "");
+    }
+
+    #[tokio::test]
+    async fn async_switch_dispatches() {
+        let env = Environment::default();
+        let out = env
+            .render_string_async(
+                "{% switch x %}{% case 1 %}a{% case 2 %}b{% default %}z{% endswitch %}".into(),
+                json!({ "x": 2 }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, "b");
+    }
+
+    #[tokio::test]
+    async fn async_all_iteration_order_matches_input() {
+        let env = Environment::default();
+        let out = env
+            .render_string_async(
+                "{% asyncAll i in items %}{{ i }}{% endall %}".into(),
+                json!({ "items": [3, 1, 4] }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, "314");
     }
 }

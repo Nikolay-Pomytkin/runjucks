@@ -56,6 +56,7 @@
     "test:conformance:rust": "cargo test --manifest-path native/Cargo.toml --test conformance",
     "test:pending": "node --test __test__/interpolation-pending.mjs",
     "test:rust": "cargo test --manifest-path native/Cargo.toml",
+    "test:rust:async": "cargo test --manifest-path native/Cargo.toml -p runjucks_core --features async",
     "bench:rust": "cargo bench --manifest-path native/Cargo.toml -p runjucks_core --bench render_hotspots",
     "bench:rust:parse": "cargo bench --manifest-path native/Cargo.toml -p runjucks_core --bench parse_hotspots",
     "rust:test": "npm run test:rust",
@@ -66,6 +67,8 @@
     "perf": "node perf/run.mjs",
     "perf:cold": "node perf/run.mjs --cold",
     "perf:json": "node perf/run.mjs --json",
+    "perf:async": "node perf/run-async.mjs",
+    "perf:async:json": "node perf/run-async.mjs --json",
     "perf:context": "node perf/context-boundary.mjs",
     "perf:context:json": "node perf/context-boundary.mjs --json"
   },

@@ -82,3 +82,47 @@ export function syntheticCases() {
     },
   ]
 }
+
+/**
+ * Scenarios for `perf/run-async.mjs` — **Runjucks only** (`renderStringAsync` / `renderTemplateAsync`).
+ * No Nunjucks baseline (upstream async API differs).
+ */
+export function asyncSyntheticCases() {
+  return [
+    {
+      name: 'async_synth_plain',
+      template: 'hello {{ x }}',
+      context: { x: 'world' },
+    },
+    {
+      name: 'async_synth_asyncEach_200',
+      template: '{% asyncEach n in nums %}{{ n }}{% endeach %}',
+      context: { nums },
+    },
+    {
+      name: 'async_synth_asyncAll_200',
+      template: '{% asyncAll n in nums %}{{ n }}{% endall %}',
+      context: { nums },
+    },
+    {
+      name: 'async_synth_named_template',
+      renderMode: 'template',
+      templateName: 'main.njk',
+      env: {
+        templateMap: {
+          'main.njk': '{% for i in items %}{{ i }}{% endfor %}',
+        },
+      },
+      context: { items: nums.slice(0, 50) },
+    },
+  ]
+}
+
+/**
+ * Same template measured with sync `renderString` vs `renderStringAsync` (overhead hint).
+ */
+export function asyncSyncParityCases() {
+  const tpl = '{% for n in nums %}{{ n }}{% endfor %}'
+  const ctx = { nums }
+  return [{ name: 'for_200_sync_vs_async', template: tpl, context: ctx }]
+}
