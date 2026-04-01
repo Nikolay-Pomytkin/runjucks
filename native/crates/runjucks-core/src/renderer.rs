@@ -728,6 +728,12 @@ fn render_node(
             out
         }
         Node::FilterBlock { name, args, body } => {
+            #[cfg(feature = "async")]
+            if env.async_custom_filters.contains_key(name) {
+                return Err(RunjucksError::new(format!(
+                    "`{name}` is an async filter and can only be used with `renderStringAsync()` or `renderTemplateAsync()`"
+                )));
+            }
             let s = render_children(env, state, body, stack)?;
             let arg_vals: Vec<Value> = args
                 .iter()
@@ -1001,11 +1007,31 @@ fn render_output(
     Ok(out)
 }
 
+#[cfg(feature = "async")]
+fn filter_chain_has_async_override(env: &Environment, e: &Expr) -> bool {
+    let mut cur = e;
+    loop {
+        match cur {
+            Expr::Filter { name, input, .. } => {
+                if env.async_custom_filters.contains_key(name) {
+                    return true;
+                }
+                cur = input.as_ref();
+            }
+            _ => return false,
+        }
+    }
+}
+
 fn try_apply_peeled_builtin_filter_chain_value(
     env: &Environment,
     stack: &mut CtxStack,
     e: &Expr,
 ) -> Option<Result<Value>> {
+    #[cfg(feature = "async")]
+    if filter_chain_has_async_override(env, e) {
+        return None;
+    }
     let (rev_names, leaf) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters)?;
     match leaf {
         Expr::Variable(var_name) => {
@@ -1058,6 +1084,12 @@ fn eval_for_output(
             }
         }
         Expr::Filter { name, input, args } => {
+            #[cfg(feature = "async")]
+            if env.async_custom_filters.contains_key(name) {
+                return Err(RunjucksError::new(format!(
+                    "`{name}` is an async filter and can only be used with `renderStringAsync()` or `renderTemplateAsync()`"
+                )));
+            }
             if args.is_empty() {
                 if let Some((rev_names, leaf)) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters) {
                     match leaf {
@@ -1822,7 +1854,11 @@ fn eval_to_value(
                     return r;
                 }
             }
-            if args.is_empty() && !env.custom_filters.contains_key(name) {
+            #[cfg(feature = "async")]
+            let async_override = env.async_custom_filters.contains_key(name);
+            #[cfg(not(feature = "async"))]
+            let async_override = false;
+            if args.is_empty() && !env.custom_filters.contains_key(name) && !async_override {
                 if let Expr::Variable(var_name) = input.as_ref() {
                     let input_v = env.resolve_variable_ref(stack, var_name)?;
                     match name.as_str() {
@@ -1869,6 +1905,12 @@ fn eval_to_value(
                         return Ok(json!(a.len()));
                     }
                 }
+            }
+            #[cfg(feature = "async")]
+            if env.async_custom_filters.contains_key(name) {
+                return Err(RunjucksError::new(format!(
+                    "`{name}` is an async filter and can only be used with `renderStringAsync()` or `renderTemplateAsync()`"
+                )));
             }
             let input_v = eval_to_value(env, state, input, stack)?;
             let arg_vals: Vec<Value> = args

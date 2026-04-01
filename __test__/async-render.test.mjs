@@ -110,6 +110,32 @@ describe('sync render with async-only registrations', () => {
       }
     );
   });
+
+  it('gives clear error when async filter used in sync render', () => {
+    const env = new Environment();
+    env.addAsyncFilter('shout', (val) => String(val).toUpperCase());
+    assert.throws(
+      () => env.renderString('{{ name | shout }}', { name: 'hello' }),
+      (err) => {
+        assert.ok(err.message.includes('async filter'));
+        assert.ok(err.message.includes('renderStringAsync'));
+        return true;
+      }
+    );
+  });
+
+  it('gives clear error when async filter overrides builtin in sync render', () => {
+    const env = new Environment();
+    env.addAsyncFilter('upper', (val) => String(val).toUpperCase() + '!');
+    assert.throws(
+      () => env.renderString('{{ name | upper }}', { name: 'hello' }),
+      (err) => {
+        assert.ok(err.message.includes('async filter'));
+        assert.ok(err.message.includes('renderStringAsync'));
+        return true;
+      }
+    );
+  });
 });
 
 describe('async template tags', () => {
