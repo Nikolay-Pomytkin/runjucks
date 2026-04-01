@@ -23,6 +23,8 @@ const TAG_KEYWORDS: &[&str] = &[
     "endmacro",
     "endif",
     "endfor",
+    "endeach",
+    "endall",
     "extends",
     "include",
     "import",
@@ -34,6 +36,9 @@ const TAG_KEYWORDS: &[&str] = &[
     "switch",
     "case",
     "default",
+    "asyncEach",
+    "asyncAll",
+    "ifAsync",
     "for",
     "set",
     "if",
@@ -901,6 +906,103 @@ fn parse_raw_block(tokens: &[Token], i: &mut usize, close_tags: &[&str]) -> Resu
     Ok(Node::Text(content.into()))
 }
 
+fn parse_async_each_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `asyncEach` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["asyncEach"])?;
+    let (vars, iter) = parse_for_header(rest)?;
+    *i += 1;
+    let body = parse_until_tags(tokens, i, &["else", "endeach"], ctx)?;
+    let else_body = if peek_tag_keyword(tokens, *i).as_deref() == Some("else") {
+        *i += 1;
+        Some(parse_until_tags(tokens, i, &["endeach"], ctx)?)
+    } else {
+        None
+    };
+    expect_tag(tokens, i, &["endeach"])?;
+    Ok(Node::AsyncEach {
+        vars,
+        iter,
+        body,
+        else_body,
+    })
+}
+
+fn parse_async_all_stmt(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `asyncAll` tag"));
+    };
+    let rest = strip_keyword_prefix(body, &["asyncAll"])?;
+    let (vars, iter) = parse_for_header(rest)?;
+    *i += 1;
+    let body = parse_until_tags(tokens, i, &["else", "endall"], ctx)?;
+    let else_body = if peek_tag_keyword(tokens, *i).as_deref() == Some("else") {
+        *i += 1;
+        Some(parse_until_tags(tokens, i, &["endall"], ctx)?)
+    } else {
+        None
+    };
+    expect_tag(tokens, i, &["endall"])?;
+    Ok(Node::AsyncAll {
+        vars,
+        iter,
+        body,
+        else_body,
+    })
+}
+
+fn parse_if_async_chain(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
+    let Token::Tag(body) = &tokens[*i] else {
+        return Err(RunjucksError::new("internal: expected `ifAsync` tag"));
+    };
+    let cond_s = strip_keyword_prefix(body, &["ifAsync"])?;
+    let cond = parse_expr(cond_s)?;
+    *i += 1;
+    let mut branches = vec![IfBranch {
+        cond: Some(cond),
+        body: parse_until_tags(tokens, i, &["elif", "elseif", "else", "endif"], ctx)?,
+    }];
+    loop {
+        if *i >= tokens.len() {
+            return Err(RunjucksError::new(
+                "unclosed `{% ifAsync %}`: missing `{% endif %}`",
+            ));
+        }
+        let Token::Tag(b) = &tokens[*i] else {
+            return Err(RunjucksError::new("internal parse state"));
+        };
+        let kw = first_tag_keyword(b);
+        match kw.as_str() {
+            "elif" | "elseif" => {
+                let rest = strip_keyword_prefix(b, &["elif", "elseif"])?;
+                let c = parse_expr(rest)?;
+                *i += 1;
+                branches.push(IfBranch {
+                    cond: Some(c),
+                    body: parse_until_tags(tokens, i, &["elif", "elseif", "else", "endif"], ctx)?,
+                });
+            }
+            "else" => {
+                *i += 1;
+                let body = parse_until_tags(tokens, i, &["endif"], ctx)?;
+                branches.push(IfBranch { cond: None, body });
+                expect_tag(tokens, i, &["endif"])?;
+                return Ok(Node::IfAsync { branches });
+            }
+            "endif" => {
+                *i += 1;
+                return Ok(Node::IfAsync { branches });
+            }
+            _ => {
+                return Err(RunjucksError::new(format!(
+                    "unexpected tag `{kw}` inside `ifAsync` block"
+                )));
+            }
+        }
+    }
+}
+
 fn parse_node(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Node> {
     match &tokens[*i] {
         Token::Text(s) => {
@@ -927,11 +1029,14 @@ fn parse_node(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Nod
                 "filter" => parse_filter_stmt(tokens, i, ctx),
                 "call" => parse_call_stmt(tokens, i, ctx),
                 "macro" => parse_macro_stmt(tokens, i, ctx),
+                "asyncEach" => parse_async_each_stmt(tokens, i, ctx),
+                "asyncAll" => parse_async_all_stmt(tokens, i, ctx),
+                "ifAsync" => parse_if_async_chain(tokens, i, ctx),
                 "raw" => parse_raw_block(tokens, i, &["endraw"]),
                 "verbatim" => parse_raw_block(tokens, i, &["endverbatim"]),
-                "elif" | "elseif" | "else" | "endif" | "endfor" | "endblock" | "endmacro"
-                | "endfilter" | "endcall" | "case" | "default" | "endswitch" | "endset"
-                | "endraw" | "endverbatim" => Err(RunjucksError::new(format!(
+                "elif" | "elseif" | "else" | "endif" | "endfor" | "endeach" | "endall"
+                | "endblock" | "endmacro" | "endfilter" | "endcall" | "case" | "default"
+                | "endswitch" | "endset" | "endraw" | "endverbatim" => Err(RunjucksError::new(format!(
                     "unexpected `{{%{body}%}}` (no matching opening tag)"
                 ))),
                 _ => {

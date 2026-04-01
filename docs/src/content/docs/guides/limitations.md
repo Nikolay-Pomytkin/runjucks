@@ -14,7 +14,7 @@ Runjucks targets **Node.js** and **synchronous** rendering. This page lists **pr
 
 ## Async and precompile
 
-- **No async `render` / `renderString`** — templates run to completion on the calling thread; async tags (`asyncEach`, `asyncAll`, `ifAsync`) are not supported.
+- **Async rendering** — `renderStringAsync` and `renderTemplateAsync` return a `Promise<string>` and support async-only tags (`asyncEach`, `asyncAll`, `ifAsync`) as well as async filters (`addAsyncFilter`) and async globals (`addAsyncGlobal`). JS callbacks registered via these methods currently run **synchronously on the main thread**; the Promise-based API matches the Nunjucks surface for forward compatibility. See [JavaScript API](./javascript-api/#async-rendering) for usage.
 - **No `precompile` / `precompileString`** emitting JavaScript — the Rust engine parses templates to an internal AST and **caches** parses per environment / `Template` (see [JavaScript API](./javascript-api/)); there is no Nunjucks-style **JS** precompile artifact or browser bundle workflow.
 
 ## Globals and callables

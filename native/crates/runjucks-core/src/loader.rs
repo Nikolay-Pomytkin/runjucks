@@ -119,3 +119,4 @@ impl TemplateLoader for FileSystemLoader {
 pub fn file_system_loader(root: impl AsRef<Path>) -> Result<Arc<dyn TemplateLoader + Send + Sync>> {
     Ok(Arc::new(FileSystemLoader::new(root)?))
 }
+

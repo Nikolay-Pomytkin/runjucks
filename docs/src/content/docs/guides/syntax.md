@@ -43,7 +43,13 @@ Supported constructs include:
 - **`filter` / `endfilter`** — block filtered as a whole.
 - **`raw` / `endraw`**, **`verbatim` / `endverbatim`** — literal regions; nesting is balanced like Nunjucks.
 
-Async-only tags (`asyncEach`, `asyncAll`, `ifAsync`) are **not** supported — see [Limitations](./limitations/).
+### Async tags
+
+The following tags are supported inside **async render** (`renderStringAsync` / `renderTemplateAsync`). Using them with the synchronous `renderString` raises an error directing you to the async API.
+
+- **`asyncEach` / `endeach`** — sequential iteration, same behavior as `for` but signals async intent. `{% asyncEach item in items %}{{ item }}{% endeach %}`.
+- **`asyncAll` / `endall`** — parallel-intent iteration (currently sequential in Runjucks, matching Nunjucks behavior). `{% asyncAll item in items %}{{ item }}{% endall %}`.
+- **`ifAsync` / `endif`** — conditional that may depend on async-resolved values. `{% ifAsync show %}visible{% endif %}`.
 
 ## Whitespace control
 
