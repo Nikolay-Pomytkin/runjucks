@@ -24,7 +24,7 @@ export declare class Environment {
   removeExtension(name: string): boolean
   /** Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `NUNJUCKS_PARITY.md` (P1). */
   addGlobal(name: string, value: unknown): void
-  /** Subset of Nunjucks `configure`: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */
+  /** Subset of Nunjucks `configure`: `autoescape` (truthy/falsy coercion like Nunjucks), `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */
   configure(opts: ConfigureOptions): void
   /**
    * Sync callback `(name: string) => string | null | { src: string }`. `null` / `undefined` JSON as

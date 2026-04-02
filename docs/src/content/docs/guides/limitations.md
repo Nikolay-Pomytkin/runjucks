@@ -47,3 +47,4 @@ Runjucks targets **Node.js** and **synchronous** rendering. This page lists **pr
 ## Jinja compatibility
 
 - Runjucks accepts **array slice** syntax without requiring a separate **`installJinjaCompat()`**-style shim (Nunjucks needs that for slices). A dedicated Jinja-compat API flag is not required for slices; other Jinja shims from Nunjucks are not mirrored as a single API.
+- **`@zneep/runjucks/install-jinja-compat`** exports **`installJinjaCompat()`** as a **no-op** so legacy `require('…/install-jinja-compat')` during migration does not throw; you do not need to call it for slices in Runjucks.

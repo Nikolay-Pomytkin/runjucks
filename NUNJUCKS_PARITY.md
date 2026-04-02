@@ -28,15 +28,15 @@
 
 1. **HTTP(S) / URL loading** — **Done (recipe + helper):** [Limitations](docs/src/content/docs/guides/limitations.md) documents fetch → map → `setTemplateMap` / `setLoaderCallback`; **`@zneep/runjucks/fetch-template-map`** implements `fetchTemplateMap`; tests in [`__test__/loader-url-pattern.test.mjs`](__test__/loader-url-pattern.test.mjs). No native HTTP loader in Rust (by design).
 2. **`configure` / `autoescape` depth** — **Done (JS truthiness):** `configure({ autoescape })` accepts boolean / string / number / `null` and normalizes to one engine boolean (Nunjucks-style truthiness); **`setAutoescape`** stays boolean-only. Documented in [limitations](docs/src/content/docs/guides/limitations.md) and [JavaScript API](docs/src/content/docs/guides/javascript-api.md); tests in [`__test__/configure-autoescape.test.mjs`](__test__/configure-autoescape.test.mjs). **Not done:** per-filename extension autoescape (still a single global flag).
-3. **`runjucks/express` vs `nunjucks.express`** — **Partial:** [`__test__/express.test.mjs`](__test__/express.test.mjs) covers missing view → 500, `configure.trimBlocks` via `opts.configure`, and `view cache` off + parse invalidation. Further gaps only as reported.
-4. **`getExtension`** — **Stub by design** (`name`, `tags`, sorted `tags`, `blocks`); docs clarify vs Nunjucks live extension object — see [JavaScript API](docs/src/content/docs/guides/javascript-api.md). **`parse()`-style objects** remain out of scope.
+3. **`runjucks/express` vs `nunjucks.express`** — **Partial:** [`__test__/express.test.mjs`](__test__/express.test.mjs) covers missing view → 500, `configure.trimBlocks`, `view cache` off + parse invalidation, **`res.locals` JSON round-trip** (functions stripped), **error middleware** receiving render errors, and **multi-root `views`**: **`setLoaderCallback`** searches all roots; relative template names match the root Express resolved for the file. Further gaps only as reported.
+4. **`getExtension`** — **Stub by design** (`name`, `tags`, sorted `tags`, `blocks`); the Rust registry does not store **priority** / arbitrary ids — nothing to expose beyond [`ExtensionDescriptor`](native/crates/runjucks-core/src/environment.rs). Docs: [JavaScript API](docs/src/content/docs/guides/javascript-api.md). **`parse()`-style objects** remain out of scope.
 
 ### P3 — Large effort or different product shape
 
-1. **Callback-only async `render(name, ctx, cb)`** — Runjucks exposes **Promise** APIs (`renderStringAsync`, `renderTemplateAsync`); callback style remains unimplemented by design unless requirements change ([P3_ROADMAP.md](P3_ROADMAP.md)).
+1. **Callback-only async `render(name, ctx, cb)`** — Core exposes **Promise** APIs; optional JS adapters [`render-with-callback.js`](render-with-callback.js) wrap **`renderTemplate`** / **`renderTemplateAsync`** with **`(err, html)`** ([P3_ROADMAP.md](P3_ROADMAP.md)).
 2. **`precompile` / `precompileString` / `PrecompiledLoader`** — Upstream emits JS for Nunjucks’ runtime; Runjucks uses a Rust AST — needs a **codegen or WASM** story, not a small NAPI tweak.
 3. **Browser bundle (UMD / ESM) / WASM target** — Distribution and loader story for non-Node hosts.
-4. **`installJinjaCompat()`** — Optional shim for apps that call it; slices and most Jinja-like syntax already work without it.
+4. **`installJinjaCompat()`** — **Shipped (no-op):** [`install-jinja-compat.js`](install-jinja-compat.js); slices and most Jinja-like syntax already work without calling it.
 5. **`addExtension` with `parse(parser, nodes)`** — Nunjucks parser-hook extensions; Runjucks uses **declarative** `addExtension` + `process(…)` instead (no plan to clone the JS parser API).
 6. **Parallel `asyncAll`** — Runjucks runs **`asyncAll` sequentially** for deterministic output; true overlap would be new semantics.
 
@@ -57,7 +57,7 @@ Features that are **mostly** implemented but differ from Nunjucks in edge cases 
 |------|--------|-----------|
 | **1 — P1** | **Live `addGlobal` callables** (JS functions from Node; Rust `add_global_callable` for tests) | **Shipped** — unblocks migrations (`{{ fn(…) }}`); see **P1 spec** below. |
 | **2** | **`{% import %}` / `{% from %}` exports** — multi-target `{% set %}`, block `{% set %}…{% endset %}` as exports | **Shipped** — [`eval_exported_top_level_sets`](native/crates/runjucks-core/src/renderer.rs) / [`collect_top_level_set_exports`](native/crates/runjucks-core/src/renderer.rs); Rust tests in [`import_from.rs`](native/crates/runjucks-core/tests/import_from.rs); **conformance** IDs `tag_import_multi_target_export`, `tag_import_block_set_export`, `tag_from_import_multi_and_block`, `tag_import_chained_top_level_sets` in [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (also on [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json)). |
-| **3 — P2** | Loaders, Express, optional `getExtension` | **Partial** — **`setLoaderRoot`** (filesystem), optional **`runjucks/express`**, **`getExtension`** introspection stub shipped; URL loaders / async loaders remain open. |
+| **3 — P2** | Loaders, Express, optional `getExtension` | **Partial** — **`setLoaderRoot`** (filesystem), **`setTemplateMap`**, **`setLoaderCallback`** (sync JS), optional **`runjucks/express`**, **`getExtension`** descriptor shipped. **HTTP(S):** no Rust `http:` loader — use **`fetch`** + **`setTemplateMap`** / [`fetch-template-map`](fetch-template-map.js) ([`__test__/loader-url-pattern.test.mjs`](__test__/loader-url-pattern.test.mjs)). **No** upstream-style async loader or **`PrecompiledLoader`**. |
 | **Defer** | **ECMAScript `Map` / `Set`** in context, **full RegExp parity**, remaining **copySafeness** edge cases, **include** quirks vs nunjucks 3.x | Pursue when a **concrete** template or conformance ID demands it — often avoidable at the app layer. |
 | **Separate** | **Nunjucks callback `render`**, **true parallel `asyncAll`**, precompile, browser bundle | **P3** — Runjucks async uses **Promises** and **sequential** `asyncAll`; see [P3_ROADMAP.md](P3_ROADMAP.md). |
 
@@ -90,7 +90,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 | **`for` over Map / Set / iterables** | Partial | Core uses JSON values; **object** iteration uses sorted keys. **`length`** on JSON objects counts keys. ECMAScript **`Map`/`Set`** in Node context are not first-class (serialize to JSON or use objects/arrays) — see **Map / Set / length** below. |
 | **`is` tests (`defined`, `callable`, `gt`, `mapping`, …)** | Shipped | **Dotted lookups** (`o.a`, `items[0]`) use Nunjucks-style **missing → undefined** so `is defined` matches upstream; **`lib.mac` is callable** for import namespaces uses the same rules. Builtin list: **Expressions → Builtin `is` tests**. |
 | **Builtin filters / globals** | Mostly shipped | Behavioral gaps — **Filters → Partial**; `range`, `cycler`, `joiner` shipped. |
-| **`installJinjaCompat()`** (Pythonic APIs, etc.) | Not an API | Slices work without shim; see **Node / NAPI API → Remaining**. |
+| **`installJinjaCompat()`** (Pythonic APIs, etc.) | Optional no-op | [`install-jinja-compat.js`](install-jinja-compat.js) for migrations; slices work without calling it — see [limitations](docs/src/content/docs/guides/limitations.md#jinja-compatibility). |
 
 ### Regex literals (implementation)
 
@@ -143,14 +143,14 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 
 | Area | Still open / partial | Notes |
 |------|----------------------|--------|
-| **Tags** | `{% asyncEach %}`, `{% asyncAll %}`, `{% ifAsync %}` | **Shipped** on async render path — **`asyncAll`** order matches input (sequential); vs Nunjucks async behavior, see **Tags → Async**. |
+| **Tags (async)** | `{% asyncEach %}`, `{% asyncAll %}`, `{% ifAsync %}` | **Shipped** when using **`renderStringAsync`** / **`renderTemplateAsync`**. **`asyncAll`** is **sequential** (deterministic order), not worker-parallel — see **Tags → Async**. |
 | **Expressions** | `addGlobal` with **live JS callables** (`{{ fn(…) }}`) | **Shipped** (Node); context fields remain JSON — see **Roadmap → P1 spec**. |
 | **Expressions** | Builtin **`is`** tests (`gt`, `ne`, `escaped`, `mapping`, …) | **Shipped** — see **Expressions → Builtin `is` tests**; **`equalto` / `sameas`** use `===`-style rules for JSON context (same-variable vs distinct bindings). |
 | **Filters** | `length` on ECMAScript `Map`/`Set` in Node (not JSON-shaped) | Partial — core **`length`** on objects is key count; see **Map / Set / length**. **`safe`/`escape` chains** aligned for common cases — see **Filters → Partial**. |
-| **Node API** | **URL / async loaders** | **P2** — **`setTemplateMap`** + **`setLoaderRoot`** (sync disk); **`runjucks/express`** optional helper; no `http(s):` URL loader. |
-| **Node API** | **Async** `renderString` / `render` | **Partial** — **`renderStringAsync`**, **`renderTemplateAsync`**, **`addAsyncFilter`**, **`addAsyncGlobal`** shipped; Nunjucks **callback**-style async without Promises — **P3**. |
+| **Node API** | **URL / remote templates** | **Partial** — **`setTemplateMap`**, **`setLoaderRoot`**, **`setLoaderCallback`**; prefetch over HTTP with **`fetch`** / [`fetch-template-map`](fetch-template-map.js) (no **Rust** `http:` loader). **`runjucks/express`** optional. **No** `PrecompiledLoader` / upstream **`WebLoader`** class. |
+| **Node API** | **Async** `renderString` / `render` | **Partial** — **`renderStringAsync`**, **`renderTemplateAsync`**, **`addAsyncFilter`**, **`addAsyncGlobal`** shipped. Optional **`render-with-callback.js`** for **`(err, html)`**; core remains Promise-based — see **Deferred spikes**. |
 | **Node API** | **`precompile` / `precompileString`**, **browser bundle** | **P3** — different product shape; runjucks is Node-native. |
-| **Node API** | **`installJinjaCompat()`**-style shim | **P3** — slices already native; shim would be migration sugar only. |
+| **Node API** | **`installJinjaCompat()`**-style shim | **Shipped (no-op)** — [`install-jinja-compat.js`](install-jinja-compat.js); slices already native. |
 | **Extensions** | Nunjucks **`parse(parser, nodes)`** extension API | Not planned; Runjucks uses **declarative** `addExtension` + `process(…)` (shipped). |
 | **Conformance** | **Perf parity allowlist** | All fixture IDs on [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) are tracked; **`npm run check:conformance-allowlist`** fails if a non-skipped JSON `id` is missing. Perf harness: [`perf/run.mjs`](perf/run.mjs). |
 
@@ -163,8 +163,8 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 | Nunjucks concept | Runjucks today |
 |------------------|----------------|
 | `configure(path?, opts?)` / `new Environment(loaders?, opts)` | `configure(opts)` / `new Environment()`; templates via **`setTemplateMap`** (name → source) and/or **`setLoaderRoot(path)`** (sync filesystem under `path`). |
-| Loaders (`FileSystemLoader`, `WebLoader`, `PrecompiledLoader`, …) | **Disk:** **`setLoaderRoot`** (Rust [`FileSystemLoader`](native/crates/runjucks-core/src/loader.rs)). **URL / async / pluggable JS loaders** — not exposed. |
-| `render` / `renderString` (sync + **callback**) | **Sync** `renderString` / `render` / `renderTemplate`; **async** via **`renderStringAsync`**, **`renderTemplateAsync`** (return Promises). No Nunjucks-style **callback** `render(name, ctx, cb)`. |
+| Loaders (`FileSystemLoader`, `WebLoader`, `PrecompiledLoader`, …) | **Disk:** **`setLoaderRoot`** ([`FileSystemLoader`](native/crates/runjucks-core/src/loader.rs)). **In-memory / callback:** **`setTemplateMap`**, **`setLoaderCallback`**. **HTTP(S):** prefetch in JS (`fetch` / [`fetch-template-map`](fetch-template-map.js)) then register sources — **no** built-in Rust URL loader, **no** `PrecompiledLoader`, **no** npm `WebLoader` equivalent. |
+| `render` / `renderString` (sync + **callback**) | **Sync** `renderString` / `render` / `renderTemplate`; **async** via **`renderStringAsync`**, **`renderTemplateAsync`** (return Promises). Optional JS **`renderWithCallback`** / **`renderWithCallbackAsync`** ([`render-with-callback.js`](render-with-callback.js)) for **`(err, html)`**; no callback-only core API. |
 | `compile` / `Template` / `getTemplate(name, eagerCompile?, …)` | **Shipped** — Rust **AST** is cached (per `Template` for inline source; per environment for named templates from the map). No Nunjucks-style **JavaScript** bytecode cache. |
 | `addFilter` / `addTest` / `addGlobal` | **Shipped** — `addGlobal` JSON values + **P1: JS functions** (see **Roadmap → P1 spec**). **`addAsyncFilter` / `addAsyncGlobal`** for async templates (Promise callables). |
 | `addExtension` — JS object with **`parse`** | **Shipped** — different model: tag names + optional block ends + **`process(context, args, body)`**. |
@@ -173,7 +173,7 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 | `express(app)` | **Optional** — `require('runjucks/express').expressEngine(app, opts?)` registers a sync view engine (see docs); not identical to upstream’s `nunjucks.express`. |
 | `invalidateCache` | **`invalidateCache()`** clears **named** and **inline** parse caches (NAPI). **`setTemplateMap`** / **`setLoaderRoot`** / **`setLoaderCallback`** still clear the named cache when replacing the loader. |
 | `precompile` / precompiled loader | **Not implemented**. |
-| `installJinjaCompat()` | **Not implemented** as an API; slice syntax works without it. |
+| `installJinjaCompat()` | **Optional no-op** — [`install-jinja-compat.js`](install-jinja-compat.js) for migrations; slice syntax already works without calling it — see [limitations](docs/src/content/docs/guides/limitations.md). |
 
 ---
 
@@ -248,15 +248,30 @@ Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunj
 
 ### Implemented
 
-`renderString` (top-level + `Environment`), **`renderStringAsync`**, `Environment` (`setAutoescape`, `setDev`, `setRandomSeed`, `setTemplateMap`, **`setLoaderRoot`** (sync disk loader), **`setLoaderCallback`** (sync JS `getSource(name)` → source / `null`), **`invalidateCache`**, `renderTemplate`, **`renderTemplateAsync`**, `getTemplate`, `addFilter`, **`addAsyncFilter`**, `addTest`, `addExtension`, `hasExtension`, `getExtension`, `removeExtension`, `addGlobal`, **`addAsyncGlobal`**, `configure`), module-level `configure` / `render` / `reset`, `compile`, `Template` (`.render(ctx)`). Options: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, `tags` (custom delimiters). Optional **`@zneep/runjucks/express`** (`expressEngine`), **`@zneep/runjucks/serialize-context`** (`serializeContextForRender`).
+`renderString` (top-level + `Environment`), **`renderStringAsync`**, `Environment` (`setAutoescape`, `setDev`, `setRandomSeed`, `setTemplateMap`, **`setLoaderRoot`** (sync disk loader), **`setLoaderCallback`** (sync JS `getSource(name)` → source / `null`), **`invalidateCache`**, `renderTemplate`, **`renderTemplateAsync`**, `getTemplate`, `addFilter`, **`addAsyncFilter`**, `addTest`, `addExtension`, `hasExtension`, `getExtension`, `removeExtension`, `addGlobal`, **`addAsyncGlobal`**, `configure`), module-level `configure` / `render` / `reset`, `compile`, `Template` (`.render(ctx)`). Options: `autoescape`, `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, `tags` (custom delimiters). Optional **`@zneep/runjucks/express`** (`expressEngine`), **`@zneep/runjucks/serialize-context`** (`serializeContextForRender`), **`@zneep/runjucks/install-jinja-compat`** (`installJinjaCompat` no-op), **`@zneep/runjucks/render-with-callback`** (`renderWithCallback` / `renderWithCallbackAsync` — thin JS adapters over sync / Promise APIs).
 
 ### Remaining
 
-- [ ] **Built-in URL / `http(s):` loader** — **P2** — use **`setLoaderCallback`** or app-layer fetch + `setTemplateMap`; no first-class WebLoader in-box.
-- [ ] **Nunjucks-style async `render` with callback** (no Promise) — **P3** — Runjucks uses **async functions** returning Promises instead.
+- [x] **Built-in URL / `http(s):` loader** — **By design:** no Rust `http:` loader in the addon (avoids blocking the event loop). Use **`setLoaderCallback`**, app-layer **`fetch`** + **`setTemplateMap`**, or **`@zneep/runjucks/fetch-template-map`** — same story as **P2 queue → HTTP(S) / URL loading** (done).
+- [x] **Nunjucks-style `render` with callback** — optional JS adapters [`render-with-callback.js`](render-with-callback.js) (`renderWithCallback`, `renderWithCallbackAsync`); core remains Promise-based.
 - [ ] **`precompile` / `precompileString`** — **P3**.
 - [ ] **Browser build** (UMD / ESM / WASM) — **P3**.
-- [ ] **`installJinjaCompat()`** API — **P3** (migration shim; slices already native).
+- [x] **`installJinjaCompat()`** — no-op in [`install-jinja-compat.js`](install-jinja-compat.js) (slices already native).
+
+---
+
+## Deferred spikes (P3 — separate efforts)
+
+Do **not** batch these into a single parity sprint; each needs its own design note or explicit product decision. Minimum bar before implementation: see [P3_ROADMAP.md](P3_ROADMAP.md) and [`PER_TEMPLATE_AUTOESCAPE.md`](PER_TEMPLATE_AUTOESCAPE.md) (proof + mismatch tests).
+
+| Item | Defer reason | Spike / proof |
+|------|----------------|---------------|
+| **Per-template / extension autoescape** | `RenderState` must track **current template** and apply rules in [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs) (sync + async). | [`PER_TEMPLATE_AUTOESCAPE.md`](PER_TEMPLATE_AUTOESCAPE.md) + spike tests in [`__test__/per-template-autoescape-spike.test.mjs`](__test__/per-template-autoescape-spike.test.mjs) |
+| **`precompile` / `PrecompiledLoader`** | Rust AST ≠ Nunjucks JS bytecode. | Codegen or WASM story; see **P3_ROADMAP** |
+| **Browser bundle** | Native addon is Node-first. | Distribution plan |
+| **`parse(parser, nodes)` extensions** | Conflicts with Rust lexer/parser. | Document “won’t implement” |
+| **Parallel `asyncAll`** | Would break sequential semantics and tests. | Product decision |
+| **Callback-only core `render`** | Duplicates Promise path. | Use [`render-with-callback.js`](render-with-callback.js) |
 
 ---
 
@@ -272,6 +287,12 @@ Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunj
 
 - [ ] **New conformance vectors** — when adding rows to the JSON fixtures, append the new `id` to [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) once Runjucks matches Nunjucks; `npm run perf` can include them for trends.
 
+### Maintainer workflow (allowlist + upstream tests)
+
+1. After editing [`native/fixtures/conformance/*.json`](native/fixtures/conformance/) (non-`skip` rows), run **`npm run check:conformance-allowlist`** — every fixture `id` must appear in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json).
+2. **Parity vs npm Nunjucks:** [`__test__/parity.test.mjs`](__test__/parity.test.mjs) uses that allowlist; add **`compareWithNunjucks: false`** + **`divergenceNote`** when syntax or semantics intentionally differ ([Testing model](#testing-model-full-parity-vs-partial-vs-runjucks-only-goldens)).
+3. **Extra regressions** (not a substitute for allowlist): extend [`__test__/upstream/filters-ported.test.mjs`](__test__/upstream/filters-ported.test.mjs) when a **copySafeness** / filter-chain mismatch appears; file an issue or add a minimal case before widening scope.
+
 ### Behavioral follow-ups (incremental)
 
 - **Safe-string / `copySafeness`:** extend [`__test__/upstream/filters-ported.test.mjs`](__test__/upstream/filters-ported.test.mjs) and/or filter conformance rows when a real template finds a new chain; no blanket guarantee vs Nunjucks for every filter ordering.
@@ -282,7 +303,7 @@ Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunj
 
 ## Out of scope / non-goals (current)
 
-- **Nunjucks callback-only async**, **true parallel `asyncAll`**, **browser precompile** as a supported path — see [`P3_ROADMAP.md`](P3_ROADMAP.md) (Promise-based async templates are shipped).
+- **Nunjucks callback-only async in core**, **true parallel `asyncAll`**, **browser precompile** as a supported path — see [`P3_ROADMAP.md`](P3_ROADMAP.md) (Promise-based async templates are shipped; optional [`render-with-callback.js`](render-with-callback.js) for `(err, html)` ergonomics).
 - **Nunjucks browser precompile** workflow as a supported product path (runjucks is Node-native).
 - Exact **`undefined` vs `null`** JS semantics in Rust’s JSON model (both collapse similarly; templates should not rely on distinction).
 
@@ -290,6 +311,7 @@ Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunj
 
 ## References
 
+- **Per-template / extension autoescape spike:** [`PER_TEMPLATE_AUTOESCAPE.md`](PER_TEMPLATE_AUTOESCAPE.md)
 - **P3 deferred tracks (precompile, browser, callback-async):** [`P3_ROADMAP.md`](P3_ROADMAP.md)
 - **User docs (this repo):** [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/)
 - **Vendored Nunjucks:** [`../nunjucks/nunjucks/src/`](../nunjucks/nunjucks/src/)

@@ -5,6 +5,29 @@
   "main": "index.js",
   "types": "index.d.ts",
   "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./express": "./express.js",
+    "./serialize-context": {
+      "types": "./serialize-context.d.ts",
+      "default": "./serialize-context.js"
+    },
+    "./fetch-template-map": {
+      "types": "./fetch-template-map.d.ts",
+      "default": "./fetch-template-map.js"
+    },
+    "./install-jinja-compat": {
+      "types": "./install-jinja-compat.d.ts",
+      "default": "./install-jinja-compat.js"
+    },
+    "./render-with-callback": {
+      "types": "./render-with-callback.d.ts",
+      "default": "./render-with-callback.js"
+    }
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Nikolay-Pomytkin/runjucks.git"
@@ -25,6 +48,10 @@
     "serialize-context.d.ts",
     "fetch-template-map.js",
     "fetch-template-map.d.ts",
+    "install-jinja-compat.js",
+    "install-jinja-compat.d.ts",
+    "render-with-callback.js",
+    "render-with-callback.d.ts",
     "LICENSE"
   ],
   "publishConfig": {

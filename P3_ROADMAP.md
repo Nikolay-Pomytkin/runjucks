@@ -28,8 +28,7 @@ Runjucks is **Node-first** with a **synchronous** Rust core for the default path
 
 ## `installJinjaCompat()`-style API
 
-- **Optional** no-op or thin re-export for migration from apps that call Nunjucks’s shim.
-- **Slices** and most Jinja-like syntax already work without a compat install in Runjucks.
+- **Shipped:** **`@zneep/runjucks/install-jinja-compat`** exports **`installJinjaCompat()`** as a **no-op** so legacy imports during migration do not throw. **Slices** and most Jinja-like syntax already work without calling it — see [Limitations → Jinja compatibility](docs/src/content/docs/guides/limitations.md#jinja-compatibility).
 
 ## When to revisit
 

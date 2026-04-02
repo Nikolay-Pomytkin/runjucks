@@ -16,6 +16,8 @@ Types ship in `index.d.ts`; the [generated API reference](../../api/) is the sou
 | `compile(src, env?, path?, eagerCompile?)` | Build a `Template` from source; optional env and eager validation. |
 | `serializeContextForRender` | From **`@zneep/runjucks/serialize-context`** — converts `Map` / `Set` (and nested values) to JSON-friendly data for `context`. |
 | `fetchTemplateMap` | From **`@zneep/runjucks/fetch-template-map`** — `async` helper: given `{ name, url }[]`, returns a **`name → source`** object for **`setTemplateMap`** after **`fetch`**. Use when loading templates over HTTP(S); render stays sync after sources are loaded. |
+| `installJinjaCompat` | From **`@zneep/runjucks/install-jinja-compat`** — **no-op**; Nunjucks needs this call for slice syntax; Runjucks does not. Safe to import when porting apps that still call it. |
+| `renderWithCallback` / `renderWithCallbackAsync` | From **`@zneep/runjucks/render-with-callback`** — invoke **`(err, html)`** callbacks wrapping **`renderTemplate`** / **`renderTemplateAsync`** (optional migration sugar; core APIs remain sync / Promise). |
 
 ## `Environment`
 
