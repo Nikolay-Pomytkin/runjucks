@@ -119,6 +119,38 @@ test.describe('upstream nunjucks/tests/filters.js (cherry-picked)', () => {
     )
   })
 
+  test('copySafeness through macro, caller, and replace chains', () => {
+    const env = createUpstreamEnvironment({ autoescape: true })
+    assertRendered(
+      assert,
+      renderUpstream(env, '{{ "<i>x</i>" | safe | replace("x", "y") }}', {}),
+      '<i>y</i>',
+    )
+    assertRendered(
+      assert,
+      renderUpstream(env, '{{ "<i>x</i>" | replace("x", "y") }}', {}),
+      '&lt;i&gt;y&lt;/i&gt;',
+    )
+    assertRendered(
+      assert,
+      renderUpstream(
+        env,
+        '{% macro m() %}{{ "<b>x</b>" | safe }}{% endmacro %}{{ m() | escape }}',
+        {},
+      ),
+      '<b>x</b>',
+    )
+    assertRendered(
+      assert,
+      renderUpstream(
+        env,
+        '{% macro wrap() %}{{ caller() | safe | forceescape }}{% endmacro %}{% call wrap() %}<u>A</u>{% endcall %}',
+        {},
+      ),
+      '&lt;u&gt;A&lt;/u&gt;',
+    )
+  })
+
   test('first', () => {
     const env = createUpstreamEnvironment()
     assertRendered(assert, renderUpstream(env, '{{ [1,2,3] | first }}', {}), '1')

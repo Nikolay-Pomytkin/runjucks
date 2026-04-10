@@ -39,7 +39,9 @@
     "source": "nunjucks/tests/filters.js ~109-113",
     "template": "{{ \"<html>\\\\\" | escape }}",
     "context": {},
-    "env": { "autoescape": false },
+    "env": {
+      "autoescape": false
+    },
     "expected": "&lt;html&gt;&#92;"
   },
   {
@@ -155,7 +157,12 @@
     "id": "filters_length_object",
     "source": "nunjucks length on plain object (JSON)",
     "template": "{{ m | length }}",
-    "context": { "m": { "a": 1, "b": 2 } },
+    "context": {
+      "m": {
+        "a": 1,
+        "b": 2
+      }
+    },
     "expected": "2"
   },
   {
@@ -177,7 +184,9 @@
     "source": "nunjucks/tests/filters.js escape skip safe / double escape",
     "template": "{{ \"<html>\" | escape | escape }}",
     "context": {},
-    "env": { "autoescape": false },
+    "env": {
+      "autoescape": false
+    },
     "expected": "&lt;html&gt;"
   },
   {
@@ -185,7 +194,9 @@
     "source": "nunjucks/tests/filters.js escape with autoescape on (set + output)",
     "template": "{% set val = \"<html>\" | escape %}{{ val }}",
     "context": {},
-    "env": { "autoescape": true },
+    "env": {
+      "autoescape": true
+    },
     "expected": "&lt;html&gt;"
   },
   {
@@ -193,7 +204,9 @@
     "source": "nunjucks/tests/filters.js safe + e alias preserve safeness across set/output",
     "template": "{% set val = \"<html>\" | safe | e %}{{ val }}",
     "context": {},
-    "env": { "autoescape": true },
+    "env": {
+      "autoescape": true
+    },
     "expected": "<html>"
   },
   {
@@ -201,7 +214,9 @@
     "source": "nunjucks/tests/filters.js forceescape with autoescape on (set + output)",
     "template": "{% set val = \"<html>\" | safe | forceescape %}{{ val }}",
     "context": {},
-    "env": { "autoescape": true },
+    "env": {
+      "autoescape": true
+    },
     "expected": "&lt;html&gt;"
   },
   {
@@ -217,5 +232,47 @@
     "template": "{{ [1, 2, 3] | sum }}",
     "context": {},
     "expected": "6"
+  },
+  {
+    "id": "filters_replace_preserves_safe_input",
+    "source": "nunjucks copySafeness: replace preserves safeness on SafeString",
+    "template": "{{ \"<i>x</i>\" | safe | replace(\"x\", \"y\") }}",
+    "context": {},
+    "expected": "<i>y</i>"
+  },
+  {
+    "id": "filters_replace_autoescape_on_unsafe_input",
+    "source": "nunjucks copySafeness: replace result escapes when input is unsafe",
+    "template": "{{ \"<i>x</i>\" | replace(\"x\", \"y\") }}",
+    "context": {},
+    "expected": "&lt;i&gt;y&lt;/i&gt;"
+  },
+  {
+    "id": "filters_macro_safe_then_escape",
+    "source": "nunjucks copySafeness: macro safe output through escape",
+    "template": "{% macro m() %}{{ \"<b>x</b>\" | safe }}{% endmacro %}{{ m() | escape }}",
+    "context": {},
+    "expected": "<b>x</b>"
+  },
+  {
+    "id": "filters_macro_safe_then_forceescape",
+    "source": "nunjucks copySafeness: macro safe output through forceescape",
+    "template": "{% macro m() %}{{ \"<b>x</b>\" | safe }}{% endmacro %}{{ m() | forceescape }}",
+    "context": {},
+    "expected": "&lt;b&gt;x&lt;/b&gt;"
+  },
+  {
+    "id": "filters_caller_safe_then_escape",
+    "source": "nunjucks copySafeness: caller() output through safe+escape",
+    "template": "{% macro wrap() %}{{ caller() | safe | escape }}{% endmacro %}{% call wrap() %}<u>A</u>{% endcall %}",
+    "context": {},
+    "expected": "<u>A</u>"
+  },
+  {
+    "id": "filters_caller_safe_then_forceescape",
+    "source": "nunjucks copySafeness: caller() output through forceescape",
+    "template": "{% macro wrap() %}{{ caller() | safe | forceescape }}{% endmacro %}{% call wrap() %}<u>A</u>{% endcall %}",
+    "context": {},
+    "expected": "&lt;u&gt;A&lt;/u&gt;"
   }
 ]

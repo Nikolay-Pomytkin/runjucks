@@ -129,7 +129,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 
 | Epic | Notes |
 |------|--------|
-| **SafeString / copySafeness edge cases** | Common `escape` / `safe` / `e` / `forceescape` chains plus macro / `caller()` / `super()` output are covered; keep extending [`filters-ported.test.mjs`](__test__/upstream/filters-ported.test.mjs) + Rust tests when a new mismatch shows up. |
+| **SafeString / copySafeness edge cases** | Common `escape` / `safe` / `e` / `forceescape` chains plus macro / `caller()` / `super()` output are covered, including additional `replace` + macro/caller chain vectors; keep extending [`filters-ported.test.mjs`](__test__/upstream/filters-ported.test.mjs) + Rust tests when a new mismatch shows up. |
 | **`Map` / `Set` in context** | Explicit Node cases with `skip` until NAPI/model supports or product stays JSON-only. |
 | **Include `with` / `without` context** | Port only what `setTemplateMap` can express; compare to `nunjucks` in harness. |
 | **Extends / dynamic parent cycles** | Targeted `templateMap` scenarios; see **Tags → Partial**. |
@@ -274,7 +274,7 @@ Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunj
 
 - **`length`:** JSON **object** key count is supported; ECMAScript **`Map`/`Set`** (non-JSON context values) are not.
 - **`striptags`:** `preserveLinebreaks` aligned with Nunjucks behavior (line-edge trim, CRLF, newline caps).
-- **Safe-string chaining:** `escape` preserves marked-safe input; `safe | escape`, `escape | safe`, `safe | e`, `safe | forceescape`, regex-backed `replace`, and macro / `caller()` / `super()` render output match Nunjucks for common HTML cases; other filter combinations may still differ from upstream `copySafeness`.
+- **Safe-string chaining:** `escape` preserves marked-safe input; `safe | escape`, `escape | safe`, `safe | e`, `safe | forceescape`, regex-backed `replace` (safe and unsafe inputs), and macro / `caller()` / `super()` render output match Nunjucks for common HTML cases; other filter combinations may still differ from upstream `copySafeness`.
 
 ### Remaining
 
@@ -317,7 +317,7 @@ Do **not** batch these into a single parity sprint; each needs its own design no
 
 ### Current state
 
-- **142** allowlisted JSON vectors (non-skipped): [`render_cases.json`](native/fixtures/conformance/render_cases.json) (60) + [`filter_cases.json`](native/fixtures/conformance/filter_cases.json) (26) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (56).
+- **160** allowlisted JSON vectors (non-skipped): [`render_cases.json`](native/fixtures/conformance/render_cases.json) (64) + [`filter_cases.json`](native/fixtures/conformance/filter_cases.json) (36) + [`tag_parity_cases.json`](native/fixtures/conformance/tag_parity_cases.json) (60).
 - **Allowlist hygiene** — run **`npm run check:conformance-allowlist`** so every non-skipped fixture `id` appears in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json).
 - **Parity gate** — [`__test__/parity.test.mjs`](__test__/parity.test.mjs) vs `nunjucks` npm using that allowlist. Env fixtures in [`__test__/conformance/run.mjs`](__test__/conformance/run.mjs).
 

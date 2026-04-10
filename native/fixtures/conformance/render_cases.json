@@ -1,7 +1,7 @@
 [
   {
     "id": "smoke_plain_text",
-    "source": "runjucks __test__/smoke — baseline",
+    "source": "runjucks __test__/smoke \u2014 baseline",
     "template": "hello",
     "context": {},
     "expected": "hello"
@@ -10,7 +10,9 @@
     "id": "smoke_variable",
     "source": "runjucks interpolation tests",
     "template": "{{ x }}",
-    "context": { "x": "y" },
+    "context": {
+      "x": "y"
+    },
     "expected": "y"
   },
   {
@@ -24,14 +26,18 @@
     "id": "tests_js_defined_true_null",
     "source": "nunjucks/tests/tests.js ~34-36",
     "template": "{{ foo is defined }}",
-    "context": { "foo": null },
+    "context": {
+      "foo": null
+    },
     "expected": "true"
   },
   {
     "id": "tests_js_not_defined",
     "source": "nunjucks/tests/tests.js ~37-39",
     "template": "{{ foo is not defined }}",
-    "context": { "foo": null },
+    "context": {
+      "foo": null
+    },
     "expected": "false"
   },
   {
@@ -45,7 +51,9 @@
     "id": "tests_js_if_defined_with_null",
     "source": "nunjucks/tests/tests.js ~47-50",
     "template": "{% if foo is defined %}defined{% else %}undefined{% endif %}",
-    "context": { "foo": null },
+    "context": {
+      "foo": null
+    },
     "expected": "defined"
   },
   {
@@ -116,7 +124,9 @@
     "source": "nunjucks/tests/filters.js ~128-131",
     "template": "{% set val = \"<html>\" | escape %}{{ val }}",
     "context": {},
-    "env": { "autoescape": true },
+    "env": {
+      "autoescape": true
+    },
     "expected": "&lt;html&gt;"
   },
   {
@@ -144,7 +154,10 @@
     "id": "tests_js_sameas",
     "source": "nunjucks/tests/tests.js ~240-246",
     "template": "{{ obj1 is sameas(obj2) }}",
-    "context": { "obj1": {}, "obj2": {} },
+    "context": {
+      "obj1": {},
+      "obj2": {}
+    },
     "expected": "false"
   },
   {
@@ -165,14 +178,23 @@
     "id": "lookup_nested_key",
     "source": "postfix access",
     "template": "{{ user.name }}",
-    "context": { "user": { "name": "Ada" } },
+    "context": {
+      "user": {
+        "name": "Ada"
+      }
+    },
     "expected": "Ada"
   },
   {
     "id": "array_index_zero",
     "source": "subscript",
     "template": "{{ items[0] }}",
-    "context": { "items": ["first", "second"] },
+    "context": {
+      "items": [
+        "first",
+        "second"
+      ]
+    },
     "expected": "first"
   },
   {
@@ -186,14 +208,21 @@
     "id": "if_truthy_branch",
     "source": "if/endif",
     "template": "{% if show %}on{% endif %}",
-    "context": { "show": true },
+    "context": {
+      "show": true
+    },
     "expected": "on"
   },
   {
     "id": "for_simple_sum_style",
     "source": "for loop",
     "template": "{% for n in nums %}{{ n }}{% endfor %}",
-    "context": { "nums": [7, 8] },
+    "context": {
+      "nums": [
+        7,
+        8
+      ]
+    },
     "expected": "78"
   },
   {
@@ -261,9 +290,11 @@
   },
   {
     "id": "globals_shadow_range_context",
-    "source": "nunjucks environment.js Context.lookup — context over globals",
+    "source": "nunjucks environment.js Context.lookup \u2014 context over globals",
     "template": "{{ range }}",
-    "context": { "range": null },
+    "context": {
+      "range": null
+    },
     "expected": ""
   },
   {
@@ -273,7 +304,9 @@
     "context": {},
     "env": {
       "globals": {
-        "myfn": { "__runjucks_callable": true }
+        "myfn": {
+          "__runjucks_callable": true
+        }
       }
     },
     "expected": "true"
@@ -282,35 +315,63 @@
     "id": "jinja_compat_slice_range",
     "source": "Jinja-compat slice (runjucks native; vanilla nunjucks needs installJinjaCompat)",
     "template": "{{ arr[1:4] | join(',') }}",
-    "context": { "arr": [0, 1, 2, 3, 4, 5] },
-    "env": { "jinjaCompat": true },
+    "context": {
+      "arr": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "env": {
+      "jinjaCompat": true
+    },
     "expected": "1,2,3"
   },
   {
     "id": "jinja_compat_slice_step",
     "source": "Jinja-compat slice with step",
     "template": "{{ nums[::2] | join(',') }}",
-    "context": { "nums": [0, 1, 2, 3, 4] },
-    "env": { "jinjaCompat": true },
+    "context": {
+      "nums": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "env": {
+      "jinjaCompat": true
+    },
     "expected": "0,2,4"
   },
   {
     "id": "is_defined_missing_object_key",
     "source": "nunjucks `is defined` on missing object property",
     "template": "{{ o.a is defined }}",
-    "context": { "o": {} },
+    "context": {
+      "o": {}
+    },
     "expected": "false"
   },
   {
     "id": "is_defined_array_oob",
     "source": "nunjucks `is defined` on array index",
     "template": "{{ items[0] is defined }} {{ items[99] is defined }}",
-    "context": { "items": [1, 2] },
+    "context": {
+      "items": [
+        1,
+        2
+      ]
+    },
     "expected": "true false"
   },
   {
     "id": "regex_literal_test_substring",
-    "source": "nunjucks templating.html — Regular expressions",
+    "source": "nunjucks templating.html \u2014 Regular expressions",
     "template": "{{ 'yes' if r/foo/.test('barfoobaz') else 'no' }}",
     "context": {},
     "expected": "yes"
@@ -368,7 +429,9 @@
     "id": "tests_js_is_null_not_undefined",
     "source": "nunjucks undefined vs null",
     "template": "{{ n is undefined }}",
-    "context": { "n": null },
+    "context": {
+      "n": null
+    },
     "expected": "false"
   },
   {
@@ -380,7 +443,7 @@
   },
   {
     "id": "tests_js_is_not_escaped_raw",
-    "source": "nunjucks escaped test — plain string",
+    "source": "nunjucks escaped test \u2014 plain string",
     "template": "{{ \"<\" is escaped }}",
     "context": {},
     "expected": "false"
@@ -396,35 +459,87 @@
     "id": "tests_js_is_iterable_array_and_object",
     "source": "nunjucks/src/tests.js iterable",
     "template": "{{ items is iterable }} {{ obj is iterable }}",
-    "context": { "items": [1, 2], "obj": {} },
+    "context": {
+      "items": [
+        1,
+        2
+      ],
+      "obj": {}
+    },
     "expected": "true false"
   },
   {
     "id": "tests_js_is_iterable_string",
-    "source": "nunjucks iterable — string",
+    "source": "nunjucks iterable \u2014 string",
     "template": "{{ s is iterable }}",
-    "context": { "s": "hi" },
+    "context": {
+      "s": "hi"
+    },
     "expected": "true"
   },
   {
     "id": "tests_js_is_mapping",
     "source": "nunjucks/src/tests.js mapping",
     "template": "{{ o is mapping }} {{ items is mapping }}",
-    "context": { "o": {}, "items": [1] },
+    "context": {
+      "o": {},
+      "items": [
+        1
+      ]
+    },
     "expected": "true false"
   },
   {
     "id": "tests_js_same_var_sameas_object",
-    "source": "nunjucks `===` same reference — `o is sameas(o)`",
+    "source": "nunjucks `===` same reference \u2014 `o is sameas(o)`",
     "template": "{{ o is sameas(o) }}",
-    "context": { "o": { "a": 1 } },
+    "context": {
+      "o": {
+        "a": 1
+      }
+    },
     "expected": "true"
   },
   {
     "id": "tests_js_distinct_objects_equalto",
     "source": "nunjucks `===` distinct objects",
     "template": "{{ a is equalto(b) }}",
-    "context": { "a": { "x": 1 }, "b": { "x": 1 } },
+    "context": {
+      "a": {
+        "x": 1
+      },
+      "b": {
+        "x": 1
+      }
+    },
     "expected": "false"
+  },
+  {
+    "id": "tests_js_is_gt_mixed_string_numeric",
+    "source": "nunjucks relational mixed string/number coercion",
+    "template": "{{ '12' is gt(3) }} {{ '2' is gt('10') }}",
+    "context": {},
+    "expected": "true false"
+  },
+  {
+    "id": "tests_js_nested_lookup_undefined_propagation",
+    "source": "nunjucks undefined propagation in nested lookups",
+    "template": "{{ user.profile.name is undefined }}",
+    "context": {},
+    "expected": "true"
+  },
+  {
+    "id": "tests_js_inline_if_with_undefined_predicate",
+    "source": "nunjucks inline-if with undefined predicate",
+    "template": "{{ 'yes' if missing else 'no' }}",
+    "context": {},
+    "expected": "no"
+  },
+  {
+    "id": "tests_js_is_defined_after_default_filter",
+    "source": "nunjucks is-test edge: default filter output is defined",
+    "template": "{{ (missing | default('x')) is defined }}",
+    "context": {},
+    "expected": "true"
   }
 ]
