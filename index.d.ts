@@ -22,7 +22,7 @@ export declare class Environment {
   getExtension(name: string): ExtensionDescriptor | null
   /** Unregisters a custom extension by name (Nunjucks `removeExtension`). Returns `true` if it existed. */
   removeExtension(name: string): boolean
-  /** Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `NUNJUCKS_PARITY.md` (P1). */
+  /** Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `ai_docs/NUNJUCKS_PARITY.md` (P1). */
   addGlobal(name: string, value: unknown): void
   /** Subset of Nunjucks `configure`: `autoescape` (truthy/falsy coercion like Nunjucks), `dev`, `throwOnUndefined`, `trimBlocks`, `lstripBlocks`, and `tags` are applied. */
   configure(opts: ConfigureOptions): void

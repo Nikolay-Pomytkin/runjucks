@@ -2,7 +2,7 @@
 //! per binding), unary `resolve_variable_ref` fast paths, literal filter shortcuts, dotted
 //! attribute chains (`foo.bar.baz`), and member/index chains on plain variables without cloning the
 //! whole container when possible.
-//! Documented in `runjucks/RUNJUCKS_PERF.md` (changelog + P0 regression list).
+//! Documented in `runjucks/ai_docs/RUNJUCKS_PERF.md` (changelog + P0 regression list).
 
 use runjucks_core::value::value_to_string;
 use runjucks_core::Environment;

@@ -815,7 +815,7 @@ impl JsEnvironment {
         Ok(env.remove_extension(&name))
     }
 
-    /// Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `NUNJUCKS_PARITY.md` (P1).
+    /// Registers a global: JSON-serializable value, or a **JavaScript function** invoked for `{{ name(...) }}` (Nunjucks-style keyword args as a trailing object). See `ai_docs/NUNJUCKS_PARITY.md` (P1).
     #[napi(js_name = "addGlobal")]
     pub fn add_global(&self, env: Env, name: String, value: Unknown) -> Result<()> {
         let mut inner = self

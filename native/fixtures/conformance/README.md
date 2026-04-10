@@ -12,9 +12,9 @@ JSON files are arrays of cases consumed by Rust (`native/crates/runjucks-core/te
 | `context` | no | JSON object (default `{}`). |
 | `env` | no | `{ "autoescape": bool, "dev": bool }` — partial ok, defaults match `Environment::default()`. |
 | `expected` | yes | Exact string output Nunjucks produces (golden). |
-| `skip` | no | If `true`, Rust (`conformance` / `tag_parity` tests) and Node conformance skip the case until the engine matches (see [`NUNJUCKS_PARITY.md`](../../../NUNJUCKS_PARITY.md)). |
+| `skip` | no | If `true`, Rust (`conformance` / `tag_parity` tests) and Node conformance skip the case until the engine matches (see [`ai_docs/NUNJUCKS_PARITY.md`](../../../ai_docs/NUNJUCKS_PARITY.md)). |
 | `compareWithNunjucks` | no | Default `true`. If `false`, [`__test__/parity.test.mjs`](../../../__test__/parity.test.mjs) checks runjucks output against `expected` only (must not compare to nunjucks 3.2.4). Requires **`divergenceNote`**. |
-| `divergenceNote` | when `compareWithNunjucks` is false | Human-readable reason (and pointer to `NUNJUCKS_PARITY.md`); enforced by **`npm run check:conformance-allowlist`**. |
+| `divergenceNote` | when `compareWithNunjucks` is false | Human-readable reason (and pointer to `ai_docs/NUNJUCKS_PARITY.md`); enforced by **`npm run check:conformance-allowlist`**. |
 
 Scenarios are BSD-2-Clause Nunjucks test vectors; `source` should point to upstream for traceability.
 
