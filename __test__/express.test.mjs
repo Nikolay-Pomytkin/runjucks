@@ -169,3 +169,27 @@ test('view cache off + invalidateOnViewCacheOff picks up disk template changes',
     fs.rmSync(views, { recursive: true, force: true })
   }
 })
+
+test('view cache off without invalidateOnViewCacheOff keeps cached template AST', async () => {
+  const views = path.join(__dirname, `.express-inval-off-${process.pid}`)
+  fs.mkdirSync(views, { recursive: true })
+  const fp = path.join(views, 'live.njk')
+  fs.writeFileSync(fp, 'v1', 'utf8')
+  try {
+    const app = express()
+    app.set('views', views)
+    app.set('view engine', 'njk')
+    app.set('view cache', false)
+    expressEngine(app, { ext: 'njk', invalidateOnViewCacheOff: false })
+    app.get('/', (req, res) => {
+      res.render('live', {})
+    })
+    const r1 = await request(app).get('/')
+    assert.equal(r1.text, 'v1')
+    fs.writeFileSync(fp, 'v2', 'utf8')
+    const r2 = await request(app).get('/')
+    assert.equal(r2.text, 'v1')
+  } finally {
+    fs.rmSync(views, { recursive: true, force: true })
+  }
+})

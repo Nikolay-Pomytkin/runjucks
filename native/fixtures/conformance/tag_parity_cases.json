@@ -10,7 +10,12 @@
     "id": "tag_for_kv_sorted",
     "source": "renderer_tags_extended",
     "template": "{% for k, v in o %}{{ k }}={{ v }};{% endfor %}",
-    "context": { "o": { "a": 1, "b": 2 } },
+    "context": {
+      "o": {
+        "a": 1,
+        "b": 2
+      }
+    },
     "expected": "a=1;b=2;"
   },
   {
@@ -31,14 +36,18 @@
     "id": "tag_raw_braces",
     "source": "nunjucks raw tag",
     "template": "{% raw %}{{x}}{% endraw %}",
-    "context": { "x": 99 },
+    "context": {
+      "x": 99
+    },
     "expected": "{{x}}"
   },
   {
     "id": "tag_verbatim_braces",
     "source": "nunjucks verbatim tag",
     "template": "{% verbatim %}{{x}}{% endverbatim %}",
-    "context": { "x": 99 },
+    "context": {
+      "x": 99
+    },
     "expected": "{{x}}"
   },
   {
@@ -94,7 +103,9 @@
     "id": "tag_include_from_map",
     "source": "nunjucks include + template map",
     "template": "{% include \"part.njk\" %}",
-    "context": { "x": "y" },
+    "context": {
+      "x": "y"
+    },
     "env": {
       "templateMap": {
         "part.njk": "Hello {{ x }}"
@@ -106,7 +117,9 @@
     "id": "tag_include_nested_map",
     "source": "nunjucks nested include + template map",
     "template": "{% include \"a.njk\" %}",
-    "context": { "v": "root" },
+    "context": {
+      "v": "root"
+    },
     "env": {
       "templateMap": {
         "a.njk": "{% include \"b.njk\" %}",
@@ -139,7 +152,7 @@
     },
     "expected": "",
     "compareWithNunjucks": false,
-    "divergenceNote": "Stock nunjucks 3.2.4 does not parse `without context` on include; see NUNJUCKS_PARITY.md Tags → Partial."
+    "divergenceNote": "Stock nunjucks 3.2.4 does not parse `without context` on include; see NUNJUCKS_PARITY.md Tags \u2192 Partial."
   },
   {
     "id": "tag_extends_layout_map",
@@ -158,15 +171,24 @@
     "source": "nunjucks trimBlocks",
     "template": "{% if true %}\nhello{% endif %}",
     "context": {},
-    "env": { "trimBlocks": true },
+    "env": {
+      "trimBlocks": true
+    },
     "expected": "hello"
   },
   {
     "id": "tag_trim_blocks_for",
     "source": "nunjucks trimBlocks",
     "template": "{% for i in items %}\n{{ i }}\n{% endfor %}",
-    "context": { "items": ["a", "b"] },
-    "env": { "trimBlocks": true },
+    "context": {
+      "items": [
+        "a",
+        "b"
+      ]
+    },
+    "env": {
+      "trimBlocks": true
+    },
     "expected": "a\nb\n"
   },
   {
@@ -174,7 +196,9 @@
     "source": "nunjucks lstripBlocks",
     "template": "  {% if true %}hello  {% endif %}",
     "context": {},
-    "env": { "lstripBlocks": true },
+    "env": {
+      "lstripBlocks": true
+    },
     "expected": "hello  "
   },
   {
@@ -182,30 +206,47 @@
     "source": "nunjucks trimBlocks + lstripBlocks",
     "template": "  {% if true %}\nhello\n  {% endif %}\n",
     "context": {},
-    "env": { "trimBlocks": true, "lstripBlocks": true },
+    "env": {
+      "trimBlocks": true,
+      "lstripBlocks": true
+    },
     "expected": "hello\n"
   },
   {
     "id": "tag_trim_blocks_for_loop_items",
     "source": "nunjucks trimBlocks + lstripBlocks for loop",
     "template": "{% for i in items %}\n  {{ i }}\n{% endfor %}\n",
-    "context": { "items": ["a", "b"] },
-    "env": { "trimBlocks": true, "lstripBlocks": true },
+    "context": {
+      "items": [
+        "a",
+        "b"
+      ]
+    },
+    "env": {
+      "trimBlocks": true,
+      "lstripBlocks": true
+    },
     "expected": "  a\n  b\n"
   },
   {
     "id": "tag_trim_blocks_no_var_strip",
     "source": "nunjucks trimBlocks does not affect {{ }}",
     "template": "{{ x }}\nafter",
-    "context": { "x": "hi" },
-    "env": { "trimBlocks": true },
+    "context": {
+      "x": "hi"
+    },
+    "env": {
+      "trimBlocks": true
+    },
     "expected": "hi\nafter"
   },
   {
     "id": "tag_custom_delimiters_var",
     "source": "nunjucks custom tags",
     "template": "Hello <$ name $>!",
-    "context": { "name": "World" },
+    "context": {
+      "name": "World"
+    },
     "env": {
       "tags": {
         "blockStart": "<%",
@@ -222,7 +263,9 @@
     "id": "tag_custom_delimiters_block",
     "source": "nunjucks custom tags",
     "template": "<% if ok %>yes<% else %>no<% endif %>",
-    "context": { "ok": true },
+    "context": {
+      "ok": true
+    },
     "env": {
       "tags": {
         "blockStart": "<%",
@@ -239,7 +282,13 @@
     "id": "tag_custom_delimiters_for",
     "source": "nunjucks custom tags for loop",
     "template": "<% for i in items %><$ i $><% endfor %>",
-    "context": { "items": ["a", "b", "c"] },
+    "context": {
+      "items": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
     "env": {
       "tags": {
         "blockStart": "<%",
@@ -273,35 +322,66 @@
     "id": "tag_for_else_empty",
     "source": "nunjucks for/else on empty array",
     "template": "{% for i in items %}{{ i }}{% else %}none{% endfor %}",
-    "context": { "items": [] },
+    "context": {
+      "items": []
+    },
     "expected": "none"
   },
   {
     "id": "tag_for_tuple_unpack",
     "source": "nunjucks for tuple unpack",
     "template": "{% for a, b in pairs %}{{ a }}={{ b }};{% endfor %}",
-    "context": { "pairs": [["x", 1], ["y", 2]] },
+    "context": {
+      "pairs": [
+        [
+          "x",
+          1
+        ],
+        [
+          "y",
+          2
+        ]
+      ]
+    },
     "expected": "x=1;y=2;"
   },
   {
     "id": "tag_for_loop_length",
     "source": "nunjucks loop.length",
     "template": "{% for i in items %}{{ loop.length }}{% endfor %}",
-    "context": { "items": [10, 20, 30] },
+    "context": {
+      "items": [
+        10,
+        20,
+        30
+      ]
+    },
     "expected": "333"
   },
   {
     "id": "tag_for_loop_revindex",
     "source": "nunjucks loop.revindex",
     "template": "{% for i in items %}{{ loop.revindex }}{% endfor %}",
-    "context": { "items": ["a", "b", "c"] },
+    "context": {
+      "items": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
     "expected": "321"
   },
   {
     "id": "tag_for_loop_last",
     "source": "nunjucks loop.last",
     "template": "{% for i in items %}{% if loop.last %}{{ i }}{% endif %}{% endfor %}",
-    "context": { "items": ["a", "b", "c"] },
+    "context": {
+      "items": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
     "expected": "c"
   },
   {
@@ -315,7 +395,10 @@
     "id": "tag_nested_if",
     "source": "nunjucks nested if",
     "template": "{% if a %}{% if b %}both{% else %}a-only{% endif %}{% else %}none{% endif %}",
-    "context": { "a": true, "b": false },
+    "context": {
+      "a": true,
+      "b": false
+    },
     "expected": "a-only"
   },
   {
@@ -387,7 +470,9 @@
     "id": "tag_import_with_context_macro",
     "source": "nunjucks import with context for module scope",
     "template": "{% import \"lib.njk\" as lib with context %}{{ lib.m() }}",
-    "context": { "ctxval": 42 },
+    "context": {
+      "ctxval": 42
+    },
     "env": {
       "templateMap": {
         "lib.njk": "{% set x = ctxval %}{% macro m() %}{{ x }}{% endmacro %}"
@@ -399,7 +484,9 @@
     "id": "tag_import_without_context_macro",
     "source": "nunjucks import default isolates parent context for module",
     "template": "{% import \"lib.njk\" as lib %}{{ lib.m() }}",
-    "context": { "ctxval": 42 },
+    "context": {
+      "ctxval": 42
+    },
     "env": {
       "templateMap": {
         "lib.njk": "{% set x = ctxval %}{% macro m() %}{{ x }}{% endmacro %}"
@@ -442,21 +529,27 @@
     "id": "tag_inline_if_expr",
     "source": "nunjucks inline if expression",
     "template": "{{ 'yes' if ok else 'no' }}",
-    "context": { "ok": true },
+    "context": {
+      "ok": true
+    },
     "expected": "yes"
   },
   {
     "id": "tag_inline_if_false",
     "source": "nunjucks inline if expression false",
     "template": "{{ 'yes' if ok else 'no' }}",
-    "context": { "ok": false },
+    "context": {
+      "ok": false
+    },
     "expected": "no"
   },
   {
     "id": "tag_whitespace_trim_open_close",
     "source": "nunjucks whitespace control",
     "template": "  {{- x -}}  ",
-    "context": { "x": "hi" },
+    "context": {
+      "x": "hi"
+    },
     "expected": "hi"
   },
   {
@@ -471,7 +564,9 @@
     "source": "nunjucks trimBlocks applies to block tags only",
     "template": "before{# x #}\nafter",
     "context": {},
-    "env": { "trimBlocks": true },
+    "env": {
+      "trimBlocks": true
+    },
     "expected": "before\nafter"
   },
   {
@@ -479,7 +574,9 @@
     "source": "nunjucks trimBlocks not after endraw",
     "template": "{% raw %}x{% endraw %}\nafter",
     "context": {},
-    "env": { "trimBlocks": true },
+    "env": {
+      "trimBlocks": true
+    },
     "expected": "x\nafter"
   },
   {
@@ -529,5 +626,60 @@
       }
     },
     "expected": "1"
+  },
+  {
+    "id": "tag_extends_dynamic_parent_expression",
+    "source": "nunjucks extends with dynamic parent expression",
+    "template": "{% extends layout %}{% block body %}C{% endblock %}",
+    "context": {
+      "layout": "base2.njk"
+    },
+    "env": {
+      "templateMap": {
+        "base1.njk": "{% block body %}A{% endblock %}",
+        "base2.njk": "{% block body %}B{{ super() }}{% endblock %}"
+      }
+    },
+    "expected": "C"
+  },
+  {
+    "id": "tag_include_relative_from_parent_dir",
+    "source": "nunjucks include nested template map path lookup",
+    "template": "{% include \"pages/home.njk\" %}",
+    "context": {
+      "name": "Ada"
+    },
+    "env": {
+      "templateMap": {
+        "pages/home.njk": "{% include 'partials/card.njk' %}",
+        "partials/card.njk": "Hello {{ name }}"
+      }
+    },
+    "expected": "Hello Ada"
+  },
+  {
+    "id": "tag_include_nested_context_override",
+    "source": "nunjucks include nested templates keep latest set context",
+    "template": "{% set v = 'root' %}{% include 'a.njk' %}|{{ v }}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "a.njk": "{% set v = 'inner' %}{% include 'b.njk' %}",
+        "b.njk": "{{ v }}"
+      }
+    },
+    "expected": "inner|inner"
+  },
+  {
+    "id": "tag_extends_super_filter_chain",
+    "source": "nunjucks super() output through filter chain",
+    "template": "{% extends 'base.njk' %}{% block m %}{{ super() | safe | escape }}+child{% endblock %}",
+    "context": {},
+    "env": {
+      "templateMap": {
+        "base.njk": "{% block m %}<i>base</i>{% endblock %}"
+      }
+    },
+    "expected": "<i>base</i>+child"
   }
 ]

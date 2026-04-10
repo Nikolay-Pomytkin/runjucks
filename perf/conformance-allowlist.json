@@ -59,7 +59,11 @@
     "tests_js_is_iterable_string",
     "tests_js_is_mapping",
     "tests_js_same_var_sameas_object",
-    "tests_js_distinct_objects_equalto"
+    "tests_js_distinct_objects_equalto",
+    "tests_js_is_gt_mixed_string_numeric",
+    "tests_js_nested_lookup_undefined_propagation",
+    "tests_js_inline_if_with_undefined_predicate",
+    "tests_js_is_defined_after_default_filter"
   ],
   "filter_cases": [
     "filters_join_simple",
@@ -91,7 +95,13 @@
     "filters_safe_e_set_output_autoescape_on",
     "filters_forceescape_set_output_autoescape_on",
     "filters_replace_regex_flags",
-    "filters_sum_array"
+    "filters_sum_array",
+    "filters_replace_preserves_safe_input",
+    "filters_replace_autoescape_on_unsafe_input",
+    "filters_macro_safe_then_escape",
+    "filters_macro_safe_then_forceescape",
+    "filters_caller_safe_then_escape",
+    "filters_caller_safe_then_forceescape"
   ],
   "tag_parity_cases": [
     "tag_switch_basic",
@@ -149,6 +159,10 @@
     "tag_import_multi_target_export",
     "tag_import_block_set_export",
     "tag_from_import_multi_and_block",
-    "tag_import_chained_top_level_sets"
+    "tag_import_chained_top_level_sets",
+    "tag_extends_dynamic_parent_expression",
+    "tag_include_relative_from_parent_dir",
+    "tag_include_nested_context_override",
+    "tag_extends_super_filter_chain"
   ]
 }

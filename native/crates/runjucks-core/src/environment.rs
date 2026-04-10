@@ -200,6 +200,9 @@ fn to_number_for_is_compare(v: &Value) -> Option<f64> {
 }
 
 fn relational_ordering(value: &Value, other: &Value) -> Option<std::cmp::Ordering> {
+    if let (Value::String(s1), Value::String(s2)) = (value, other) {
+        return Some(s1.cmp(s2));
+    }
     let (n1, n2) = (
         to_number_for_is_compare(value),
         to_number_for_is_compare(other),
@@ -209,9 +212,6 @@ fn relational_ordering(value: &Value, other: &Value) -> Option<std::cmp::Orderin
             return None;
         }
         return a.partial_cmp(&b);
-    }
-    if let (Value::String(s1), Value::String(s2)) = (value, other) {
-        return Some(s1.cmp(s2));
     }
     None
 }
