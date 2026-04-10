@@ -1,5 +1,5 @@
 /**
- * Proof for PER_TEMPLATE_AUTOESCAPE.md: Nunjucks can disable escaping per extension;
+ * Proof for ai_docs/PER_TEMPLATE_AUTOESCAPE.md: Nunjucks can disable escaping per extension;
  * Runjucks applies global autoescape to extension output only.
  */
 import assert from 'node:assert/strict'

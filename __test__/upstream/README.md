@@ -39,4 +39,4 @@ export RUNJUCKS_NUNJUCKS_TESTS=/absolute/path/to/nunjucks/tests
 - Do not run vendored `nunjucks` Mocha verbatim inside this repo without a full Nunjucks API shim.
 - Do not port `compiler.js`, `express.js`, or `precompile.js` unless product scope expands; those target Nunjucks’ JS compiler or server integration.
 
-See [`NUNJUCKS_PARITY.md`](../../NUNJUCKS_PARITY.md) for maintainer-facing strategy and follow-on epics.
+See [`ai_docs/NUNJUCKS_PARITY.md`](../../ai_docs/NUNJUCKS_PARITY.md) for maintainer-facing strategy and follow-on epics.

@@ -15,7 +15,7 @@ struct Case {
     context: Value,
     env: Option<EnvOpt>,
     expected: String,
-    /// When true, skip until engine matches Nunjucks (see `NUNJUCKS_PARITY.md`).
+    /// When true, skip until engine matches Nunjucks (see `ai_docs/NUNJUCKS_PARITY.md`).
     #[serde(default)]
     skip: bool,
 }

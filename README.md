@@ -33,9 +33,9 @@ This repository also serves as a **learning project** for Rust: lexer, parser, t
 
 **Still missing or stubbed (typical next steps vs Nunjucks):**
 
-- **Loaders** — **`setTemplateMap`**, **`setLoaderRoot`**, and **`setLoaderCallback`** (sync JS) are supported; **URL / async** loaders and **`http(s):`** loading are not built-in (see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md)).
-- **Async / precompile / browser** — **P3**; intentionally deferred (see [`P3_ROADMAP.md`](P3_ROADMAP.md)).
-- **Parity** — Conformance JSON + [`__test__/parity.test.mjs`](__test__/parity.test.mjs) vs `nunjucks` 3.2.4; run **`npm run check:conformance-allowlist`** when adding fixture `id`s. Full backlog: [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md).
+- **Loaders** — **`setTemplateMap`**, **`setLoaderRoot`**, and **`setLoaderCallback`** (sync JS) are supported; **URL / async** loaders and **`http(s):`** loading are not built-in (see [`ai_docs/NUNJUCKS_PARITY.md`](ai_docs/NUNJUCKS_PARITY.md)).
+- **Async / precompile / browser** — **P3**; intentionally deferred (see [`ai_docs/P3_ROADMAP.md`](ai_docs/P3_ROADMAP.md)).
+- **Parity** — Conformance JSON + [`__test__/parity.test.mjs`](__test__/parity.test.mjs) vs `nunjucks` 3.2.4; run **`npm run check:conformance-allowlist`** when adding fixture `id`s. Full backlog: [`ai_docs/NUNJUCKS_PARITY.md`](ai_docs/NUNJUCKS_PARITY.md).
 
 Development continues against [Nunjucks](https://github.com/mozilla/nunjucks) behavior; if you keep a checkout next to this repo, the vendored tree is still useful as [`../nunjucks`](../nunjucks).
 
@@ -126,7 +126,7 @@ Deploy: enable **GitHub Pages** (GitHub Actions) and use [`.github/workflows/doc
 ## Performance
 
 - **User guide:** [Performance](docs/src/content/docs/guides/performance.mdx) (caching, release builds, measuring, published benchmarks).
-- **Maintainer backlog:** [`RUNJUCKS_PERF.md`](RUNJUCKS_PERF.md); **`npm run perf`** / **`npm run bench:rust`** compare workloads vs Nunjucks and Rust microbenches.
+- **Maintainer backlog:** [`ai_docs/RUNJUCKS_PERF.md`](ai_docs/RUNJUCKS_PERF.md); **`npm run perf`** / **`npm run bench:rust`** compare workloads vs Nunjucks and Rust microbenches.
 
 ## Development
 
@@ -151,7 +151,7 @@ Integration tests live under [`native/crates/runjucks-core/tests/`](native/crate
 - **`npm run test:rust`** or **`cargo test --manifest-path native/Cargo.toml`** — all Rust integration tests.
 - **`npm test`** — Node tests: hand-written cases, **`__test__/parity.test.mjs`** (runjucks vs `nunjucks` npm on the perf allowlist), and JSON goldens for the NAPI layer (run `npm run build` first).
 - **`npm run test:rust:green`** — subset of Rust tests (see [`package.json`](package.json)).
-- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — same as the JSON suite in `npm test` (split out for focused runs); skipped cases use `"skip": true` in the fixture until parity lands (see [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md)).
+- **`npm run test:conformance:rust`** / **`npm run test:conformance:node`** — same as the JSON suite in `npm test` (split out for focused runs); skipped cases use `"skip": true` in the fixture until parity lands (see [`ai_docs/NUNJUCKS_PARITY.md`](ai_docs/NUNJUCKS_PARITY.md)).
 - **`npm run check:conformance-allowlist`** — verifies every non-skipped fixture `id` in [`native/fixtures/conformance/`](native/fixtures/conformance/) appears in [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json) (runs in CI).
 - **`npm run perf`** / **`npm run perf:json`** — local-only speed comparison vs `nunjucks` (see [`perf/README.md`](perf/README.md); `perf:json` writes `perf/last-run.json`; run `npm run build` first).
 - **`npm run test:pending`** — optional Node checks in [`__test__/interpolation-pending.mjs`](__test__/interpolation-pending.mjs).
