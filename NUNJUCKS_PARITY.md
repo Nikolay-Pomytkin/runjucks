@@ -156,6 +156,44 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 
 ---
 
+## Path to near-100% parity (concrete next milestones)
+
+If we optimize strictly for **Nunjucks 3.2.4 migration confidence** (not P3 browser/precompile), the highest-value path is to close behavioral gaps and expand parity coverage in this order:
+
+1. **Safe-string/copySafeness hardening (P1)**
+   - Port additional upstream edge cases for `safe`, `escape/e`, `forceescape`, `replace`, macro returns, `caller()`, and `super()` chains.
+   - Land failing vectors first in [`__test__/upstream/filters-ported.test.mjs`](__test__/upstream/filters-ported.test.mjs) and/or [`native/fixtures/conformance/`](native/fixtures/conformance/), then fix in [`native/crates/runjucks-core/src/filters.rs`](native/crates/runjucks-core/src/filters.rs).
+   - **Done when:** no known copySafeness mismatches remain in upstream-ported coverage.
+
+2. **`include`/`extends` edge-behavior parity (P1)**
+   - Add targeted fixtures for tricky inheritance and include interactions (dynamic parent expressions, context passing, ignore-missing combinations) that are valid in stock Nunjucks.
+   - Keep runjucks-only divergences explicitly tagged with `compareWithNunjucks: false` + `divergenceNote`.
+   - **Done when:** all stock-valid scenarios in this area are either parity-green or explicitly documented as intentional divergence.
+
+3. **Expression/runtime parity cleanup (P1)**
+   - Continue closing subtle `is`/comparison/coercion differences with upstream tests (especially mixed numeric/string relational cases and undefined propagation paths).
+   - Prefer adding cases to JSON conformance so Rust + Node stay aligned automatically.
+   - **Done when:** no open mismatches in `is` tests and comparison behavior for JSON-shaped data.
+
+4. **Loader/Express migration polish (P2)**
+   - Expand parity-style tests around multi-root resolution, relative includes, cache invalidation, and error surfaces in [`__test__/express.test.mjs`](__test__/express.test.mjs) and loader suites.
+   - Focus on “drop-in app migration” failures reported by users, not theoretical API coverage.
+   - **Done when:** common `nunjucks.configure(...).express(app)` usage patterns are covered by green tests with documented deltas.
+
+5. **Coverage accounting + release gate (P1/P2)**
+   - **Shipped:** [`scripts/check-conformance-allowlist.mjs`](scripts/check-conformance-allowlist.mjs) now prints parity summary counts (`total`, `comparedWithNunjucks`, `runjucksOnlyGoldens`, `skipped`) plus per-suite breakdown.
+   - Keep `perf/conformance-allowlist.json` synchronized as new IDs go green.
+   - **Done when:** maintainers can quote parity progress from CI without manual counting.
+
+### Suggested “next PR” checklist
+
+- Add 3–5 new upstream-derived conformance vectors focused on one gap category (recommended: copySafeness).
+- Ensure each new non-skipped fixture ID is added to [`perf/conformance-allowlist.json`](perf/conformance-allowlist.json).
+- Run: `npm run build`, `npm test`, `npm run test:rust`, `npm run check:conformance-allowlist`.
+- Update this document’s relevant “Partial/Remaining” bullets as cases move to green.
+
+---
+
 ## Nunjucks API surface (high-level matrix)
 
 How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io/nunjucks/api.html) and the [`Environment` implementation](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/environment.js) in upstream.
