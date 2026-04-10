@@ -11,7 +11,7 @@ Runjucks is a Nunjucks-compatible template engine with a Rust core exposed to No
 
 ### Key commands
 
-All commands run from the repo root (`/workspace`). See `README.md` and `package.json` `scripts` for the full list.
+All commands run from the repo root (`/workspace/runjucks`). See `README.md` and `package.json` `scripts` for the full list.
 
 | Task | Command |
 |------|---------|
@@ -22,6 +22,26 @@ All commands run from the repo root (`/workspace`). See `README.md` and `package
 | Rust tests | `npm run test:rust` |
 | Rust lint | `cargo clippy --manifest-path native/Cargo.toml --all-targets` |
 | Perf benchmarks | `npm run perf` |
+| Docs dev server | `npm run docs:dev` |
+| Docs production build | `npm run docs:build` |
+
+### Repository map (quick orientation)
+
+- `native/crates/runjucks-core/` — Rust template engine (lexer, parser, AST, renderer, filters, environment) plus integration tests under `native/crates/runjucks-core/tests/`.
+- `native/crates/runjucks-napi/` — NAPI-RS bindings that expose the Rust core to Node.js as the `.node` addon.
+- `__test__/` — Node test suite (`node --test`) including conformance, parity, and API behavior tests.
+- `docs/` — Astro + Starlight documentation site (has its own `package.json`; currently requires Node 22.12+ for docs scripts).
+- Root JS entrypoints (`index.js`, `express.js`, `fetch-template-map.js`, etc.) mirror/package the public Node API surface.
+
+### Recommended edit workflow
+
+1. `npm install`
+2. `npm run build` (or `npm run build:debug` while iterating)
+3. Run targeted checks first:
+   - JS-side changes: `npm test`
+   - Rust core changes: `npm run test:rust`
+   - Conformance/parity-focused changes: `npm run test:conformance:node` and/or `npm run test:conformance:rust`
+4. Optionally run perf scripts (`npm run perf`, `npm run perf:json`) for throughput-sensitive changes.
 
 ### Gotchas
 

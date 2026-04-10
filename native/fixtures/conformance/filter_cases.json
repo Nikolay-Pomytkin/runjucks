@@ -173,6 +173,38 @@
     "expected": "&lt;x&gt;"
   },
   {
+    "id": "filters_escape_then_escape",
+    "source": "nunjucks/tests/filters.js escape skip safe / double escape",
+    "template": "{{ \"<html>\" | escape | escape }}",
+    "context": {},
+    "env": { "autoescape": false },
+    "expected": "&lt;html&gt;"
+  },
+  {
+    "id": "filters_escape_set_output_autoescape_on",
+    "source": "nunjucks/tests/filters.js escape with autoescape on (set + output)",
+    "template": "{% set val = \"<html>\" | escape %}{{ val }}",
+    "context": {},
+    "env": { "autoescape": true },
+    "expected": "&lt;html&gt;"
+  },
+  {
+    "id": "filters_safe_e_set_output_autoescape_on",
+    "source": "nunjucks/tests/filters.js safe + e alias preserve safeness across set/output",
+    "template": "{% set val = \"<html>\" | safe | e %}{{ val }}",
+    "context": {},
+    "env": { "autoescape": true },
+    "expected": "<html>"
+  },
+  {
+    "id": "filters_forceescape_set_output_autoescape_on",
+    "source": "nunjucks/tests/filters.js forceescape with autoescape on (set + output)",
+    "template": "{% set val = \"<html>\" | safe | forceescape %}{{ val }}",
+    "context": {},
+    "env": { "autoescape": true },
+    "expected": "&lt;html&gt;"
+  },
+  {
     "id": "filters_replace_regex_flags",
     "source": "nunjucks/tests/filters.js replace with regex literals",
     "template": "{{ \"aabbbb\" | replace(r/ab{2}/, \"z\") }}|{{ \"aaaAAA\" | replace(r/a/gi, \"z\") }}",

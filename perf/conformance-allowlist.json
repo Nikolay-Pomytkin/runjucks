@@ -86,6 +86,10 @@
     "filters_length_object",
     "filters_safe_then_escape",
     "filters_escape_then_safe",
+    "filters_escape_then_escape",
+    "filters_escape_set_output_autoescape_on",
+    "filters_safe_e_set_output_autoescape_on",
+    "filters_forceescape_set_output_autoescape_on",
     "filters_replace_regex_flags",
     "filters_sum_array"
   ],
