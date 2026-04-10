@@ -130,3 +130,15 @@ fn is_gt_and_escaped_match_nunjucks() {
         .unwrap();
     assert_eq!(out, "true true");
 }
+
+#[test]
+fn is_gt_uses_lexicographic_compare_for_two_strings() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            r#"{{ '12' is gt(3) }} {{ '2' is gt('10') }}"#.into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "true true");
+}

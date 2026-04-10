@@ -519,7 +519,7 @@
     "source": "nunjucks relational mixed string/number coercion",
     "template": "{{ '12' is gt(3) }} {{ '2' is gt('10') }}",
     "context": {},
-    "expected": "true false"
+    "expected": "true true"
   },
   {
     "id": "tests_js_nested_lookup_undefined_propagation",
