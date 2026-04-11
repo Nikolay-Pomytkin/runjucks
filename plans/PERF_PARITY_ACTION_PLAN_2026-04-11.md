@@ -15,7 +15,7 @@ Inputs used:
 **Historical** macro signal from that perf run:
 
 - Average non-skipped speed ratio was **~4.4×** in favor of Runjucks.
-- One recurring underperformer where Runjucks loses: **`synth_named_template_interp`** (order **~0.3×** `nj/rj` in published snapshots such as `docs/src/data/perf/reports/0.1.8.json` — meaning Nunjucks faster on that microbench).
+- One recurring underperformer where Runjucks loses: **`synth_named_template_interp`** (order **~0.3×** `nj/rj` in published snapshots such as `docs/src/data/perf/reports/0.1.9.json` — meaning Nunjucks faster on that microbench).
 
 **Conformance rows vs perf skips (clarified):**
 
