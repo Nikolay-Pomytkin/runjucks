@@ -2,7 +2,9 @@
 //! (declarative tags + `process` callback; not Nunjucks’ JS `parse()` API).
 
 use runjucks_core::Environment;
+use runjucks_core::loader::map_loader;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn echo_handler() -> runjucks_core::extension::CustomExtensionHandler {
@@ -60,6 +62,30 @@ fn extension_receives_flattened_context() {
         .render_string("{% ctxdump %}".into(), json!({ "x": 42 }))
         .unwrap();
     assert_eq!(out, "x=42");
+}
+
+#[test]
+fn extension_context_cache_does_not_cross_include_scopes() {
+    let mut env = Environment::default();
+    env.autoescape = false;
+    env.register_extension(
+        "e",
+        vec![("ctxx".into(), None)],
+        Arc::new(|ctx, _args, _body| {
+            let x = ctx.get("x").and_then(|v| v.as_str()).unwrap_or("missing");
+            Ok(x.to_string())
+        }),
+    )
+    .unwrap();
+    let mut templates = HashMap::new();
+    templates.insert(
+        "main.njk".to_string(),
+        "{% set x = 'A' %}{% include 'inc.njk' %}{% set x = 'B' %}{% include 'inc.njk' %}".into(),
+    );
+    templates.insert("inc.njk".to_string(), "{% ctxx %}".into());
+    env.loader = Some(map_loader(templates));
+    let out = env.render_template("main.njk", json!({})).unwrap();
+    assert_eq!(out, "AB");
 }
 
 #[test]

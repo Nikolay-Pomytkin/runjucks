@@ -659,7 +659,7 @@
   },
   {
     "id": "tag_include_nested_context_override",
-    "source": "nunjucks include nested templates keep latest set context",
+    "source": "nunjucks include nested templates isolate included frame assignments from caller",
     "template": "{% set v = 'root' %}{% include 'a.njk' %}|{{ v }}",
     "context": {},
     "env": {
@@ -668,7 +668,7 @@
         "b.njk": "{{ v }}"
       }
     },
-    "expected": "inner|inner"
+    "expected": "inner|root"
   },
   {
     "id": "tag_extends_super_filter_chain",
