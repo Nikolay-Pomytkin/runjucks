@@ -1,10 +1,11 @@
 //! Parse cache correctness: signature invalidation and named/inline reuse.
 
 use runjucks_core::extension::CustomExtensionHandler;
-use runjucks_core::loader::map_loader;
+use runjucks_core::loader::{map_loader, TemplateLoader};
 use runjucks_core::Environment;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 fn echo_handler() -> CustomExtensionHandler {
@@ -148,4 +149,40 @@ fn invalidate_cache_smoke_named_and_inline() {
         env.render_template("a.njk", json!({ "y": 4 })).unwrap(),
         "4"
     );
+}
+
+struct CountingStableLoader {
+    src: String,
+    loads: Arc<AtomicUsize>,
+}
+
+impl TemplateLoader for CountingStableLoader {
+    fn load(&self, _name: &str) -> runjucks_core::errors::Result<String> {
+        self.loads.fetch_add(1, Ordering::SeqCst);
+        Ok(self.src.clone())
+    }
+
+    fn cache_key(&self, name: &str) -> Option<String> {
+        Some(name.to_string())
+    }
+
+    fn cache_keys_are_stable(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn named_cache_skips_reload_when_loader_keys_are_stable() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let loader = CountingStableLoader {
+        src: "{{ x }}".into(),
+        loads: loads.clone(),
+    };
+    let mut env = Environment::default();
+    env.loader = Some(Arc::new(loader));
+    let out1 = env.render_template("main.njk", json!({ "x": 1 })).unwrap();
+    let out2 = env.render_template("main.njk", json!({ "x": 2 })).unwrap();
+    assert_eq!(out1, "1");
+    assert_eq!(out2, "2");
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
 }
