@@ -1,6 +1,7 @@
 //! Resolving template names to source strings for [`crate::Environment::render_template`].
 
 use crate::errors::{Result, RunjucksError};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -10,6 +11,15 @@ use std::sync::Arc;
 /// Implement for in-memory maps, filesystem reads, or embedders that fetch from a CDN.
 pub trait TemplateLoader: Send + Sync {
     fn load(&self, name: &str) -> Result<String>;
+
+    /// Borrow-friendly variant of [`Self::cache_key`].
+    ///
+    /// Default behavior delegates to `cache_key` and returns an owned key. Implementors with
+    /// stable name-based keys can return `Cow::Borrowed(name)` to avoid per-render allocations on
+    /// cache hits.
+    fn cache_key_cow<'a>(&self, name: &'a str) -> Option<Cow<'a, str>> {
+        self.cache_key(name).map(Cow::Owned)
+    }
 
     /// When `Some`, parsed templates for this name may be cached in [`crate::Environment`].
     /// Return `None` for loaders whose sources are not stable by name (e.g. dynamic closures).
@@ -36,6 +46,11 @@ impl TemplateLoader for HashMap<String, String> {
     fn cache_key(&self, name: &str) -> Option<String> {
         let _ = self;
         Some(name.to_string())
+    }
+
+    fn cache_key_cow<'a>(&self, name: &'a str) -> Option<Cow<'a, str>> {
+        let _ = self;
+        Some(Cow::Borrowed(name))
     }
 
     fn cache_keys_are_stable(&self) -> bool {

@@ -33,8 +33,16 @@ struct ParseSignature {
 struct CachedParse {
     sig: ParseSignature,
     ast: Arc<Node>,
+    /// Identity of the loader instance used for this named parse cache entry.
+    /// `None` for inline parses.
+    loader_id: Option<usize>,
     /// Full source at parse time (validates hash collisions for inline cache; detects loader changes for named cache).
     source: Option<String>,
+}
+
+fn loader_identity(loader: &(dyn TemplateLoader + Send + Sync)) -> usize {
+    let ptr = loader as *const (dyn TemplateLoader + Send + Sync);
+    ptr as *const () as usize
 }
 
 fn hash_source(s: &str) -> u64 {
@@ -364,6 +372,7 @@ impl Environment {
             CachedParse {
                 sig,
                 ast: Arc::clone(&arc),
+                loader_id: None,
                 source: Some(src.to_string()),
             },
         );
@@ -378,10 +387,11 @@ impl Environment {
     ) -> Result<Arc<Node>> {
         if loader.cache_keys_are_stable() {
             let sig = self.current_parse_signature();
-            if let Some(key) = loader.cache_key(name) {
+            let loader_id = loader_identity(loader);
+            if let Some(key) = loader.cache_key_cow(name) {
                 let cache = self.named_parse_cache.lock().unwrap();
-                if let Some(c) = cache.get(&key) {
-                    if c.sig == sig {
+                if let Some(c) = cache.get(key.as_ref()) {
+                    if c.sig == sig && c.loader_id == Some(loader_id) {
                         return Ok(Arc::clone(&c.ast));
                     }
                 }
@@ -398,11 +408,15 @@ impl Environment {
         src: &str,
     ) -> Result<Arc<Node>> {
         let sig = self.current_parse_signature();
-        if let Some(ref key) = loader.cache_key(name) {
+        let loader_id = loader_identity(loader);
+        if let Some(key) = loader.cache_key_cow(name) {
             {
                 let cache = self.named_parse_cache.lock().unwrap();
-                if let Some(c) = cache.get(key) {
-                    if c.sig == sig && c.source.as_deref() == Some(src) {
+                if let Some(c) = cache.get(key.as_ref()) {
+                    if c.sig == sig
+                        && c.loader_id == Some(loader_id)
+                        && c.source.as_deref() == Some(src)
+                    {
                         return Ok(Arc::clone(&c.ast));
                     }
                 }
@@ -411,10 +425,11 @@ impl Environment {
             let arc = Arc::new(node);
             let mut cache = self.named_parse_cache.lock().unwrap();
             cache.insert(
-                key.clone(),
+                key.into_owned(),
                 CachedParse {
                     sig,
                     ast: Arc::clone(&arc),
+                    loader_id: Some(loader_id),
                     source: Some(src.to_string()),
                 },
             );
