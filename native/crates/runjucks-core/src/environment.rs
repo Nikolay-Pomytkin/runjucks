@@ -376,6 +376,17 @@ impl Environment {
         name: &str,
         loader: &(dyn TemplateLoader + Send + Sync),
     ) -> Result<Arc<Node>> {
+        if loader.cache_keys_are_stable() {
+            let sig = self.current_parse_signature();
+            if let Some(key) = loader.cache_key(name) {
+                let cache = self.named_parse_cache.lock().unwrap();
+                if let Some(c) = cache.get(&key) {
+                    if c.sig == sig {
+                        return Ok(Arc::clone(&c.ast));
+                    }
+                }
+            }
+        }
         let src = loader.load(name)?;
         self.parse_with_named_cache(name, loader, &src)
     }

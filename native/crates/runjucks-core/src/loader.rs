@@ -17,6 +17,13 @@ pub trait TemplateLoader: Send + Sync {
         let _ = name;
         None
     }
+
+    /// Whether sources are immutable for keys returned by [`Self::cache_key`] while this loader
+    /// instance is alive. When true, [`crate::Environment`] may reuse parsed ASTs for named
+    /// templates without reloading source on every render.
+    fn cache_keys_are_stable(&self) -> bool {
+        false
+    }
 }
 
 impl TemplateLoader for HashMap<String, String> {
@@ -29,6 +36,10 @@ impl TemplateLoader for HashMap<String, String> {
     fn cache_key(&self, name: &str) -> Option<String> {
         let _ = self;
         Some(name.to_string())
+    }
+
+    fn cache_keys_are_stable(&self) -> bool {
+        true
     }
 }
 
@@ -119,4 +130,3 @@ impl TemplateLoader for FileSystemLoader {
 pub fn file_system_loader(root: impl AsRef<Path>) -> Result<Arc<dyn TemplateLoader + Send + Sync>> {
     Ok(Arc::new(FileSystemLoader::new(root)?))
 }
-
