@@ -1,18 +1,15 @@
 //! Walks [`crate::ast::Node`] trees and produces output strings using an [`crate::Environment`] and JSON context.
 
-use crate::ast::{
-    BinOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp,
-};
+use crate::ast::{BinOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
-use crate::globals::{
-    parse_cycler_id, parse_joiner_id, CyclerState, JoinerState, RJ_CALLABLE,
-};
+use crate::globals::{parse_cycler_id, parse_joiner_id, CyclerState, JoinerState, RJ_CALLABLE};
 use crate::loader::TemplateLoader;
 use crate::render_common::{
-    add_like_js, apply_builtin_filter_chain_on_cow_value, as_number, collect_attr_chain_from_getattr,
-    compare_values, eval_in, is_test_parts, is_truthy, iterable_empty, iterable_from_value,
-    jinja_slice_array, json_num, peel_builtin_upper_lower_length_chain, ExtendsLayout, Iterable,
+    add_like_js, apply_builtin_filter_chain_on_cow_value, as_number,
+    collect_attr_chain_from_getattr, compare_values, eval_in, is_test_parts, is_truthy,
+    iterable_empty, iterable_from_value, jinja_slice_array, json_num,
+    peel_builtin_upper_lower_length_chain, ExtendsLayout, Iterable,
 };
 use crate::value::{is_undefined_value, mark_safe, undefined_value};
 use ahash::AHashMap;
@@ -21,6 +18,7 @@ use rand::SeedableRng;
 use serde_json::{json, Map, Value};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Nunjucks-style frame stack: inner frames shadow outer; `set` updates the innermost existing binding.
@@ -32,6 +30,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct CtxStack {
     pub(crate) frames: Vec<AHashMap<String, Arc<Value>>>,
+    stack_id: u64,
     /// Incremented on any binding change (frames, `set`, `set_local`, `loop` injection).
     /// Used to reuse merged extension context snapshots when the stack is unchanged.
     revision: u64,
@@ -39,10 +38,12 @@ pub struct CtxStack {
 
 impl CtxStack {
     pub fn from_root(root: Map<String, Value>) -> Self {
+        static NEXT_STACK_ID: AtomicU64 = AtomicU64::new(1);
         let mapped: AHashMap<String, Arc<Value>> =
             root.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
         Self {
             frames: vec![mapped],
+            stack_id: NEXT_STACK_ID.fetch_add(1, Ordering::Relaxed),
             revision: 0,
         }
     }
@@ -154,8 +155,9 @@ pub struct RenderState<'a> {
     pub joiners: Vec<JoinerState>,
     /// PRNG for `| random` (seed from [`Environment::random_seed`] when set).
     pub rng: SmallRng,
-    /// Cached `stack.flatten()` for [`Node::ExtensionTag`] when [`CtxStack::revision`] matches.
-    extension_context_cache: Option<(u64, Value)>,
+    /// Cached `stack.flatten()` for [`Node::ExtensionTag`] when both stack identity and
+    /// [`CtxStack::revision`] match.
+    extension_context_cache: Option<(usize, u64, Value)>,
 }
 
 impl<'a> RenderState<'a> {
@@ -225,6 +227,11 @@ impl<'a> RenderState<'a> {
             .get(ns)
             .and_then(|m| m.get(name))
     }
+}
+
+#[inline]
+fn stack_identity(stack: &CtxStack) -> usize {
+    stack.stack_id as usize
 }
 
 /// Renders `root` to a string using `env` and `ctx_stack`.
@@ -652,7 +659,10 @@ fn render_node(
                 let mut isolated = CtxStack::from_root(Map::new());
                 render_entry(env, state, included.as_ref(), &mut isolated)?
             } else {
-                render_entry(env, state, included.as_ref(), stack)?
+                // Nunjucks include-with-context receives parent bindings as input, but `{% set %}`
+                // inside the included template must not leak back into the caller frame.
+                let mut scoped = CtxStack::from_root(stack.flatten());
+                render_entry(env, state, included.as_ref(), &mut scoped)?
             };
             state.pop_template();
             Ok(out)
@@ -833,9 +843,10 @@ fn render_node(
             let handler = env.custom_extensions.get(extension_name).ok_or_else(|| {
                 RunjucksError::new(format!("unknown extension `{extension_name}`"))
             })?;
+            let sid = stack_identity(stack);
             let rev = stack.revision();
             let ctx_for_handler = match state.extension_context_cache.take() {
-                Some((r, v)) if r == rev => v,
+                Some((cached_sid, r, v)) if cached_sid == sid && r == rev => v,
                 _ => Value::Object(stack.flatten()),
             };
             let body_s = if let Some(nodes) = body {
@@ -844,7 +855,7 @@ fn render_node(
                 None
             };
             let out = handler(&ctx_for_handler, args.as_str(), body_s)?;
-            state.extension_context_cache = Some((rev, ctx_for_handler));
+            state.extension_context_cache = Some((sid, rev, ctx_for_handler));
             Ok(if env.autoescape {
                 crate::filters::escape_html(&out)
             } else {
@@ -1091,7 +1102,9 @@ fn eval_for_output(
                 )));
             }
             if args.is_empty() {
-                if let Some((rev_names, leaf)) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters) {
+                if let Some((rev_names, leaf)) =
+                    peel_builtin_upper_lower_length_chain(e, &env.custom_filters)
+                {
                     match leaf {
                         Expr::Variable(var_name) => {
                             let v = env.resolve_variable_ref(stack, var_name)?;

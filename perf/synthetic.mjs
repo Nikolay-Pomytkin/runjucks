@@ -80,6 +80,17 @@ export function syntheticCases() {
       },
       context: { a: 'x', b: 'y' },
     },
+    {
+      name: 'synth_named_template_static',
+      renderMode: 'template',
+      templateName: 'main.njk',
+      env: {
+        templateMap: {
+          'main.njk': 'ok',
+        },
+      },
+      context: {},
+    },
   ]
 }
 

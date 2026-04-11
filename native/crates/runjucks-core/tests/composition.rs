@@ -53,6 +53,23 @@ fn include_with_context_matches_default_include_scope() {
 }
 
 #[test]
+fn include_with_context_does_not_leak_set_to_parent_scope() {
+    let mut m = HashMap::new();
+    m.insert(
+        "a.njk".into(),
+        r#"{% set v = "inner" %}{% include "b.njk" %}"#.into(),
+    );
+    m.insert("b.njk".into(), "{{ v }}".into());
+    m.insert(
+        "main.njk".into(),
+        r#"{% set v = "root" %}{% include "a.njk" %}|{{ v }}"#.into(),
+    );
+    let env = env_with_map(m);
+    let out = env.render_template("main.njk", json!({})).unwrap();
+    assert_eq!(out, "inner|root");
+}
+
+#[test]
 fn include_cycle_errors() {
     let mut m = HashMap::new();
     m.insert("a.html".into(), r#"{% include "b.html" %}"#.into());
