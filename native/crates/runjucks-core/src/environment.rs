@@ -378,9 +378,9 @@ impl Environment {
     ) -> Result<Arc<Node>> {
         if loader.cache_keys_are_stable() {
             let sig = self.current_parse_signature();
-            if let Some(key) = loader.cache_key(name) {
+            if let Some(key) = loader.cache_key_cow(name) {
                 let cache = self.named_parse_cache.lock().unwrap();
-                if let Some(c) = cache.get(&key) {
+                if let Some(c) = cache.get(key.as_ref()) {
                     if c.sig == sig {
                         return Ok(Arc::clone(&c.ast));
                     }
@@ -398,10 +398,10 @@ impl Environment {
         src: &str,
     ) -> Result<Arc<Node>> {
         let sig = self.current_parse_signature();
-        if let Some(ref key) = loader.cache_key(name) {
+        if let Some(key) = loader.cache_key_cow(name) {
             {
                 let cache = self.named_parse_cache.lock().unwrap();
-                if let Some(c) = cache.get(key) {
+                if let Some(c) = cache.get(key.as_ref()) {
                     if c.sig == sig && c.source.as_deref() == Some(src) {
                         return Ok(Arc::clone(&c.ast));
                     }
@@ -411,7 +411,7 @@ impl Environment {
             let arc = Arc::new(node);
             let mut cache = self.named_parse_cache.lock().unwrap();
             cache.insert(
-                key.clone(),
+                key.into_owned(),
                 CachedParse {
                     sig,
                     ast: Arc::clone(&arc),
