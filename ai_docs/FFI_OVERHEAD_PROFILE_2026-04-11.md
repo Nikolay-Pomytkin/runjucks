@@ -67,3 +67,13 @@ Expected effect:
 
 - Keep parity and public API behavior unchanged.
 - Prefer reversible micro-optimizations first; defer broader API shape changes (handles/ingress redesign) until measured need is clear.
+
+## Subsequent landings on `main` (same theme)
+
+After this note, related commits tightened the same hot path further (see `git log`):
+
+- **Stable named-template cache keys:** skip redundant reloads when the loader reports a stable borrowed key (`cache_key_cow`).
+- **Named-template allocations:** fewer cache-key string allocations on the NAPI / loader boundary.
+- **Extension context cache:** merged `flatten()` snapshot is reused only when both **stack identity** and **`CtxStack::revision`** match, so different call shapes cannot share a stale context.
+
+For maintainer-facing narrative and updated goals, see [`plans/PERF_PARITY_ACTION_PLAN_2026-04-11.md`](../plans/PERF_PARITY_ACTION_PLAN_2026-04-11.md) and the **2026-04** bullet in [`RUNJUCKS_PERF.md`](RUNJUCKS_PERF.md).

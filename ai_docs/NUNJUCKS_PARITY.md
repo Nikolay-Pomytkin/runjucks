@@ -123,7 +123,7 @@ Cross-check the official [Nunjucks templating reference](https://mozilla.github.
 
 **Pointers:** API surface smoke: [`__test__/napi-surface.test.mjs`](__test__/napi-surface.test.mjs). Runjucks-only **error** substrings: [`__test__/error-cases.test.mjs`](__test__/error-cases.test.mjs). JSON ingress parity: [`json-ingress.test.mjs`](__test__/json-ingress.test.mjs).
 
-**Upstream-ported cases (maintainers):** [`__test__/upstream/README.md`](__test__/upstream/README.md) — scenarios inspired by vendored [`nunjucks/tests/`](../nunjucks/tests/) (`node:test`, not Mocha). Use for extra regression signal beyond JSON goldens; skipped tests document known partials (`is` tests not yet in core, `sameas` object identity, `int` vs `"3.5"` truncation, …). Does **not** replace the conformance allowlist or parity gate.
+**Upstream-ported cases (maintainers):** [`__test__/upstream/README.md`](__test__/upstream/README.md) — scenarios inspired by Nunjucks’ upstream suite ([`tests/` on GitHub](https://github.com/mozilla/nunjucks/tree/master/tests)), optionally checked out beside this repo or via `RUNJUCKS_NUNJUCKS_TESTS` (see that README). Ported with `node:test`, not Mocha. Use for extra regression signal beyond JSON goldens; skipped tests document known partials (`is` tests not yet in core, `sameas` object identity, `int` vs `"3.5"` truncation, …). Does **not** replace the conformance allowlist or parity gate.
 
 **Follow-on epics (test-driven):**
 
@@ -238,7 +238,7 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 
 `Literal`, `Variable`, `GetAttr`, `GetItem` (including Jinja-style `arr[start:stop:step]`) — **missing** keys / out-of-bounds indices yield the internal **undefined** sentinel (not JSON `null`) so `is defined` matches Nunjucks for `{{ o.missing }}`, `{{ arr[99] }}`, and **import namespaces** (`{{ lib.nope }}`). `Call` (macros, `super()`, `caller()`, built-in globals), `Filter`, `List`, `Dict`, `InlineIf`, `Unary`, `Binary`, `Compare`, builtin `is` tests (see table below), plus `add_test` / `addTest`. **`throwOnUndefined`**, unknown custom `is` tests throw, **`addGlobal`** with JSON values, default globals (`range`, `cycler`, `joiner`). **Import namespaces:** `lib.mac` as a value uses a `__runjucks_callable` marker so `is callable` / `is defined` work without calling the macro.
 
-### Builtin `is` tests (vs [nunjucks `tests.js`](../nunjucks/nunjucks/src/tests.js))
+### Builtin `is` tests (vs [nunjucks `tests.js`](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/tests.js))
 
 | Test names | Status | Notes |
 |------------|--------|--------|
@@ -268,7 +268,7 @@ How Runjucks compares to the [documented Nunjucks API](https://mozilla.github.io
 
 Built-ins in [`filters::apply_builtin`](native/crates/runjucks-core/src/filters.rs) include: `upper`, `lower`, `length`, `join` (optional `attr`), `replace`, `random` (seeded via `setRandomSeed` / `random_seed`), `round`, `escape` / `e`, `safe`, `forceescape`, `default` / `d`, `batch`, `abs`, `capitalize`, `first`, `last`, `sort`, `reverse`, `trim`, `int`, `float`, `string`, `title`, `truncate`, `striptags`, `urlencode`, `indent`, `nl2br`, `sum`, `wordcount`, `dictsort`, `center`, `dump`, `list`, `slice`, `urlize`, `selectattr`, `rejectattr`, `select`, `reject`, `groupby`.
 
-Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](../nunjucks/nunjucks/src/filters.js); compare exports when adding or auditing filters.
+Upstream Nunjucks built-ins live in [`nunjucks/src/filters.js`](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/filters.js); compare exports when adding or auditing filters.
 
 ### Partial
 
@@ -352,7 +352,7 @@ Do **not** batch these into a single parity sprint; each needs its own design no
 - **Per-template / extension autoescape spike:** [`PER_TEMPLATE_AUTOESCAPE.md`](PER_TEMPLATE_AUTOESCAPE.md)
 - **P3 deferred tracks (precompile, browser, callback-async):** [`P3_ROADMAP.md`](P3_ROADMAP.md)
 - **User docs (this repo):** [`docs/src/content/docs/guides/`](docs/src/content/docs/guides/)
-- **Vendored Nunjucks:** [`../nunjucks/nunjucks/src/`](../nunjucks/nunjucks/src/)
+- **Upstream Nunjucks sources:** [nunjucks/src on GitHub](https://github.com/mozilla/nunjucks/tree/master/nunjucks/src) — not checked into this repo; use the npm package, GitHub, or an optional sibling checkout ([`__test__/upstream/README.md`](__test__/upstream/README.md)).
 - **Conformance fixtures:** [`native/fixtures/conformance/`](native/fixtures/conformance/)
 - **Perf harness:** [`perf/README.md`](perf/README.md)
 - **Rust core:** [`native/crates/runjucks-core/src/`](native/crates/runjucks-core/src/)

@@ -2,10 +2,10 @@
 
 This note supports the **Deferred spikes** row in [`NUNJUCKS_PARITY.md`](NUNJUCKS_PARITY.md) (“per-template / extension autoescape”). It does **not** implement the feature; it records **upstream behavior** and **Runjucks behavior** so a future implementation can be scoped against proof.
 
-## Nunjucks 3.2.4 (vendored / npm)
+## Nunjucks 3.2.4 (npm / upstream sources)
 
 - **Global flag:** `Environment` stores `opts.autoescape` (truthy/falsy in JS). Output uses `runtime.suppressValue(val, autoescape)` where `autoescape` reflects global settings for normal interpolations.
-- **Extension tags:** For `CallExtension`, the compiler emits `suppressValue(…, ext.autoescape && env.opts.autoescape)` — see [`nunjucks/nunjucks/src/compiler.js`](../nunjucks/nunjucks/src/compiler.js) (`compileCallExtension`) and [`nodes.CallExtension`](../nunjucks/nunjucks/src/nodes.js) (`this.autoescape = ext.autoescape`). An extension can set **`this.autoescape = false`** so its **returned string is not escaped** even when `env.opts.autoescape` is true.
+- **Extension tags:** For `CallExtension`, the compiler emits `suppressValue(…, ext.autoescape && env.opts.autoescape)` — see [`compiler.js` (`compileCallExtension`)](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/compiler.js) and [`nodes.js` (`CallExtension`)](https://github.com/mozilla/nunjucks/blob/master/nunjucks/src/nodes.js) (`this.autoescape = ext.autoescape`). An extension can set **`this.autoescape = false`** so its **returned string is not escaped** even when `env.opts.autoescape` is true.
 - **Upstream test:** `nunjucks/tests/compiler.js` — *“should not autoescape when extension set false”* — expects raw `<b>Foo</b>` with global autoescape on.
 
 So “per-extension autoescape” in Nunjucks is **not** per filename; it is a property on **JS extension objects** used with the **`parse()`** pipeline. Runjucks does not expose that pipeline.
