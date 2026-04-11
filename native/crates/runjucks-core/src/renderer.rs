@@ -1,18 +1,15 @@
 //! Walks [`crate::ast::Node`] trees and produces output strings using an [`crate::Environment`] and JSON context.
 
-use crate::ast::{
-    BinOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp,
-};
+use crate::ast::{BinOp, Expr, ForVars, MacroDef, MacroParam, Node, SwitchCase, UnaryOp};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
-use crate::globals::{
-    parse_cycler_id, parse_joiner_id, CyclerState, JoinerState, RJ_CALLABLE,
-};
+use crate::globals::{parse_cycler_id, parse_joiner_id, CyclerState, JoinerState, RJ_CALLABLE};
 use crate::loader::TemplateLoader;
 use crate::render_common::{
-    add_like_js, apply_builtin_filter_chain_on_cow_value, as_number, collect_attr_chain_from_getattr,
-    compare_values, eval_in, is_test_parts, is_truthy, iterable_empty, iterable_from_value,
-    jinja_slice_array, json_num, peel_builtin_upper_lower_length_chain, ExtendsLayout, Iterable,
+    add_like_js, apply_builtin_filter_chain_on_cow_value, as_number,
+    collect_attr_chain_from_getattr, compare_values, eval_in, is_test_parts, is_truthy,
+    iterable_empty, iterable_from_value, jinja_slice_array, json_num,
+    peel_builtin_upper_lower_length_chain, ExtendsLayout, Iterable,
 };
 use crate::value::{is_undefined_value, mark_safe, undefined_value};
 use ahash::AHashMap;
@@ -652,7 +649,10 @@ fn render_node(
                 let mut isolated = CtxStack::from_root(Map::new());
                 render_entry(env, state, included.as_ref(), &mut isolated)?
             } else {
-                render_entry(env, state, included.as_ref(), stack)?
+                // Nunjucks include-with-context receives parent bindings as input, but `{% set %}`
+                // inside the included template must not leak back into the caller frame.
+                let mut scoped = CtxStack::from_root(stack.flatten());
+                render_entry(env, state, included.as_ref(), &mut scoped)?
             };
             state.pop_template();
             Ok(out)
@@ -1091,7 +1091,9 @@ fn eval_for_output(
                 )));
             }
             if args.is_empty() {
-                if let Some((rev_names, leaf)) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters) {
+                if let Some((rev_names, leaf)) =
+                    peel_builtin_upper_lower_length_chain(e, &env.custom_filters)
+                {
                     match leaf {
                         Expr::Variable(var_name) => {
                             let v = env.resolve_variable_ref(stack, var_name)?;
