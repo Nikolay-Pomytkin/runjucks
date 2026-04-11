@@ -563,7 +563,9 @@ pub fn tokenize_with_options(input: &str, opts: LexerOptions) -> Result<Vec<Toke
     let mut lexer = Lexer::with_options(input, opts);
     // Heuristic: fewer tokens for long plain-text runs; more when delimiter-heavy. Cap to avoid huge
     // allocations on pathological inputs (full arena/interning is deferred until parse benches justify it).
-    let est = (input.len() / 24).saturating_add(4).min(8192);
+    // Slightly higher estimate on delimiter-heavy templates reduces `Vec` growth (validate with
+    // `cargo bench -p runjucks_core --bench parse_hotspots`).
+    let est = (input.len() / 20).saturating_add(4).min(8192);
     let mut tokens = Vec::with_capacity(est);
     while let Some(t) = lexer.next_token()? {
         tokens.push(t);

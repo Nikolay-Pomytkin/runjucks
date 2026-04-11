@@ -80,6 +80,14 @@ fn try_apply_peeled_builtin_filter_chain_value(
                     "capitalize" => {
                         current = crate::filters::capitalize_string_slice(&current);
                     }
+                    "title" => {
+                        current = match crate::filters::filter_title(&Value::String(std::mem::take(
+                            &mut current,
+                        ))) {
+                            Value::String(s) => s,
+                            o => crate::value::value_to_string(&o),
+                        };
+                    }
                     "length" => return Some(Ok(json!(current.chars().count()))),
                     _ => unreachable!(),
                 }
@@ -121,6 +129,34 @@ pub(super) fn eval_to_value_async<'a>(
     stack: &'a mut CtxStack,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + 'a>> {
     Box::pin(eval_to_value_inner(env, state, e, stack))
+}
+
+async fn eval_binary_pair_async<F>(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    stack: &mut CtxStack,
+    left: &Box<Expr>,
+    right: &Box<Expr>,
+    f: F,
+) -> Result<Value>
+where
+    F: FnOnce(&Value, &Value) -> Result<Value>,
+{
+    let a = match left.as_ref() {
+        Expr::Variable(name) => env.resolve_variable_ref(stack, name)?,
+        Expr::Literal(v) => Cow::Borrowed(v),
+        _ => Cow::Owned(eval_to_value_async(env, state, left.as_ref(), stack).await?),
+    };
+    let b = match right.as_ref() {
+        Expr::Variable(name) => env.resolve_variable_ref(stack, name)?,
+        Expr::Literal(v) => Cow::Borrowed(v),
+        _ => {
+            let ao = a.into_owned();
+            let bv = eval_to_value_async(env, state, right.as_ref(), stack).await?;
+            return f(&ao, &bv);
+        }
+    };
+    f(a.as_ref(), b.as_ref())
 }
 
 async fn eval_to_value_inner(
@@ -166,63 +202,69 @@ async fn eval_to_value_inner(
             }
         },
         Expr::Binary { op, left, right } => match op {
-            BinOp::Add => Ok(add_like_js(
-                &eval_to_value_async(env, state, left, stack).await?,
-                &eval_to_value_async(env, state, right, stack).await?,
-            )),
+            BinOp::Add => {
+                eval_binary_pair_async(env, state, stack, left, right, |a, b| Ok(add_like_js(a, b)))
+                    .await
+            }
             BinOp::Concat => Ok(Value::String(format!(
                 "{}{}",
                 eval_for_output_async(env, state, left, stack).await?,
                 eval_for_output_async(env, state, right, stack).await?
             ))),
             BinOp::Sub => {
-                let a = eval_to_value_async(env, state, left, stack).await?;
-                let b = eval_to_value_async(env, state, right, stack).await?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
-                Ok(json_num(x - y))
+                eval_binary_pair_async(env, state, stack, left, right, |a, b| {
+                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
+                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
+                    Ok(json_num(x - y))
+                })
+                .await
             }
             BinOp::Mul => {
-                let a = eval_to_value_async(env, state, left, stack).await?;
-                let b = eval_to_value_async(env, state, right, stack).await?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
-                Ok(json_num(x * y))
+                eval_binary_pair_async(env, state, stack, left, right, |a, b| {
+                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
+                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
+                    Ok(json_num(x * y))
+                })
+                .await
             }
             BinOp::Div => {
-                let a = eval_to_value_async(env, state, left, stack).await?;
-                let b = eval_to_value_async(env, state, right, stack).await?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
-                Ok(json!(x / y))
+                eval_binary_pair_async(env, state, stack, left, right, |a, b| {
+                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
+                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
+                    Ok(json!(x / y))
+                })
+                .await
             }
             BinOp::FloorDiv => {
-                let a = eval_to_value_async(env, state, left, stack).await?;
-                let b = eval_to_value_async(env, state, right, stack).await?;
-                let x =
-                    as_number(&a).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
-                let y =
-                    as_number(&b).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
-                if y == 0.0 {
-                    return Err(RunjucksError::new("division by zero"));
-                }
-                Ok(json_num((x / y).floor()))
+                eval_binary_pair_async(env, state, stack, left, right, |a, b| {
+                    let x =
+                        as_number(a).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
+                    let y =
+                        as_number(b).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
+                    if y == 0.0 {
+                        return Err(RunjucksError::new("division by zero"));
+                    }
+                    Ok(json_num((x / y).floor()))
+                })
+                .await
             }
             BinOp::Mod => {
-                let a = eval_to_value_async(env, state, left, stack).await?;
-                let b = eval_to_value_async(env, state, right, stack).await?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
-                Ok(json_num(x % y))
+                eval_binary_pair_async(env, state, stack, left, right, |a, b| {
+                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
+                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
+                    Ok(json_num(x % y))
+                })
+                .await
             }
             BinOp::Pow => {
-                let a = eval_to_value_async(env, state, left, stack).await?;
-                let b = eval_to_value_async(env, state, right, stack).await?;
-                let x =
-                    as_number(&a).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
-                let y =
-                    as_number(&b).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
-                Ok(json!(x.powf(y)))
+                eval_binary_pair_async(env, state, stack, left, right, |a, b| {
+                    let x =
+                        as_number(a).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
+                    let y =
+                        as_number(b).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
+                    Ok(json!(x.powf(y)))
+                })
+                .await
             }
             BinOp::And => {
                 let l = eval_to_value_async(env, state, left, stack).await?;
@@ -556,8 +598,8 @@ async fn eval_to_value_inner(
                     return Ok(mark_safe(s));
                 }
                 if arg_vals.is_empty() {
-                    let v = env.resolve_variable(stack, name)?;
-                    if let Some(id) = parse_joiner_id(&v) {
+                    let v = env.resolve_variable_ref(stack, name)?;
+                    if let Some(id) = parse_joiner_id(v.as_ref()) {
                         if let Some(j) = state.joiners.get_mut(id) {
                             return Ok(Value::String(j.invoke()));
                         }
@@ -632,6 +674,12 @@ async fn eval_to_value_inner(
                                 input_v.as_ref(),
                             ));
                         }
+                        "trim" => {
+                            return Ok(crate::filters::chain_trim_like_builtin(input_v.as_ref()));
+                        }
+                        "title" => {
+                            return Ok(crate::filters::filter_title(input_v.as_ref()));
+                        }
                         _ => {}
                     }
                 }
@@ -642,6 +690,14 @@ async fn eval_to_value_inner(
                         "length" => return Ok(json!(s.chars().count())),
                         "capitalize" => {
                             return Ok(Value::String(crate::filters::capitalize_string_slice(s)));
+                        }
+                        "trim" => {
+                            return Ok(crate::filters::chain_trim_like_builtin(&Value::String(
+                                s.clone(),
+                            )));
+                        }
+                        "title" => {
+                            return Ok(crate::filters::filter_title(&Value::String(s.clone())));
                         }
                         _ => {}
                     }
@@ -755,6 +811,14 @@ pub(super) async fn eval_for_output_async(
                                         current =
                                             crate::filters::capitalize_string_slice(&current);
                                     }
+                                    "title" => {
+                                        current = match crate::filters::filter_title(
+                                            &Value::String(std::mem::take(&mut current)),
+                                        ) {
+                                            Value::String(s) => s,
+                                            o => crate::value::value_to_string(&o),
+                                        };
+                                    }
                                     "length" => {
                                         let s = current.chars().count().to_string();
                                         let escape = env.autoescape;
@@ -835,6 +899,28 @@ pub(super) async fn eval_for_output_async(
                                 Ok(s)
                             };
                         }
+                        "trim" => {
+                            let out = crate::filters::chain_trim_like_builtin(input_v.as_ref());
+                            let s = crate::value::value_to_string(&out);
+                            return if env.autoescape
+                                && !crate::value::is_marked_safe(input_v.as_ref())
+                            {
+                                Ok(crate::filters::escape_html(&s))
+                            } else {
+                                Ok(s)
+                            };
+                        }
+                        "title" => {
+                            let out = crate::filters::filter_title(input_v.as_ref());
+                            let s = crate::value::value_to_string(&out);
+                            return if env.autoescape
+                                && !crate::value::is_marked_safe(input_v.as_ref())
+                            {
+                                Ok(crate::filters::escape_html(&s))
+                            } else {
+                                Ok(s)
+                            };
+                        }
                         _ => {}
                     }
                 }
@@ -865,6 +951,24 @@ pub(super) async fn eval_for_output_async(
                                 Ok(crate::filters::escape_html(&out))
                             } else {
                                 Ok(out)
+                            };
+                        }
+                        "trim" => {
+                            let out = crate::filters::chain_trim_like_builtin(&Value::String(s.clone()));
+                            let t = crate::value::value_to_string(&out);
+                            return if env.autoescape {
+                                Ok(crate::filters::escape_html(&t))
+                            } else {
+                                Ok(t)
+                            };
+                        }
+                        "title" => {
+                            let out = crate::filters::filter_title(&Value::String(s.clone()));
+                            let t = crate::value::value_to_string(&out);
+                            return if env.autoescape {
+                                Ok(crate::filters::escape_html(&t))
+                            } else {
+                                Ok(t)
                             };
                         }
                         _ => {}

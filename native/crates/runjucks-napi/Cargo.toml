@@ -23,7 +23,8 @@ simd-json = { version = "0.17.0", features = ["serde_impl"], optional = true }
 napi-build = "2"
 
 [features]
-default = []
-# Optional faster JSON parse for **string** context ingress (`renderStringFromJson`). Measure with
-# `perf/context-boundary.mjs` before enabling in production builds.
+# `simd-json` for `renderStringFromJson` / `renderStringFromJsonBuffer` (see `parse_json_context_bytes`).
+# Disable with `cargo build -p runjucks-napi --no-default-features` if you need strict `serde_json`
+# parse errors only.
+default = ["fast-json"]
 fast-json = ["dep:simd-json"]

@@ -22,7 +22,7 @@ npm run perf:context
 # optional JSON: npm run perf:context:json
 ```
 
-See [`context-boundary.mjs`](context-boundary.mjs). A large **delta** between `large` and `small` mean ms suggests JSON marshalling dominates; a **small** delta suggests the Rust renderer dominates.
+See [`context-boundary.mjs`](context-boundary.mjs). It reports **object** vs **JSON string** vs **JSON Buffer** ingress for the same large context. A large **delta** between `object_large` and `object_small` mean ms suggests N-API object marshalling dominates; compare `speedup_vs_object_large` for the JSON paths. **`simd-json`** JSON parse is **on by default** for `runjucks-napi`; use `cargo build -p runjucks-napi --no-default-features` for `serde_json`-only parse.
 
 A **release** build of the `.node` binary is required (`npm run build`, not `build:debug`); otherwise Rust hot loops are massively skewed and comparisons to Nunjucks are meaningless.
 
@@ -91,7 +91,7 @@ PGO can improve the **renderer** binary (Criterion) **without** source changes. 
 
 Paths and `llvm-profdata` availability vary by platform; on macOS you may use `xcrun llvm-profdata`. **BOLT** (post-link) is optional and Linux-specific — see LLVM docs.
 
-**Faster JSON parse in Rust** is optional: use **`renderStringFromJson(template, JSON.stringify(ctx))`** so the addon receives JSON text and parses in Rust. Build `runjucks-napi` with **`--features fast-json`** to use `simd-json` for that parse step. Only worth it if **context-boundary** probes and profiles show **ingress** dominates; parity check: [`__test__/json-ingress.test.mjs`](../__test__/json-ingress.test.mjs).
+**Faster JSON parse in Rust:** use **`renderStringFromJson`** / **`renderStringFromJsonBuffer`** so the addon receives JSON text or UTF-8 bytes; the default **`runjucks-napi`** build uses **`simd-json`** for that parse. Parity check: [`__test__/json-ingress.test.mjs`](../__test__/json-ingress.test.mjs).
 
 ## What it measures
 

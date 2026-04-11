@@ -2,6 +2,8 @@
 
 /**
  * Convert a value to JSON-serializable data for `renderString` / `renderTemplate` context.
+ * For **large** contexts, prefer `JSON.stringify(serializeContextForRender(ctx))` (or a `Buffer`
+ * of UTF-8 JSON) with `renderStringFromJson` / `renderStringFromJsonBuffer` — see `perf/context-boundary.mjs`.
  * `Map` becomes a plain object (string keys); `Set` becomes an array. Nested values use the same replacer.
  *
  * @param {unknown} value

@@ -2,7 +2,7 @@
 
 ## Scope
 
-This note tracks a focused pass on Node↔Rust boundary overhead affecting `npm run perf`, plus the immediate low-risk optimization shipped in this change set.
+This note tracks a focused pass on Node↔Rust boundary overhead affecting `npm run perf`, plus the immediate low-risk optimization shipped in this change set. For the full perf backlog, tiered priorities (P0–P3), and harness commands, see [`RUNJUCKS_PERF.md`](RUNJUCKS_PERF.md).
 
 Inputs reviewed:
 
@@ -89,7 +89,8 @@ This section ties **public napi-rs documentation**, common **Node native-addon**
 | Mechanism | Role | FFI / conversion cost |
 |-----------|------|------------------------|
 | **`context: serde_json::Value`** on `renderString` / `renderTemplate` / `Template#render` | napi-rs converts the JS object graph into `serde_json::Value` **before** Rust render runs | **High**: full traversal + allocation; scales with object size (see [`perf/context-boundary.mjs`](../perf/context-boundary.mjs) comment: dominated by `serde_json::Value::from_napi_value`). |
-| **`renderStringFromJson` / env variant** | JS passes **JSON text**; Rust parses with `serde_json` or optional **`simd-json`** (`fast-json` feature) | **Medium**: one UTF-8 parse in Rust; avoids per-property N-API `get` dispatch. Still copies string bytes. |
+| **`renderStringFromJson` / env variant** | JS passes **JSON text**; Rust parses with **`simd-json`** by default (`fast-json` in default features; `--no-default-features` → `serde_json`) | **Medium**: one UTF-8 parse in Rust; avoids per-property N-API `get` dispatch. Still copies string bytes. |
+| **`renderStringFromJsonBuffer` / env variant** | JS passes **`Buffer` / `Uint8Array`** (UTF-8 JSON); same Rust parse as string path without an extra Rust `String` wrapper for the payload | **Same order as JSON string**; use when the context is already bytes (e.g. from a socket or `fs.readFile`). |
 | **`JsFnRef::call`** for filters, globals, tests, extensions, `setLoaderCallback` | Each invocation: `serde_json::Value` → `to_napi_value` per arg, `napi_call_function`, then `from_napi_value` on return | **Per callback**: multiple conversions + JS call; hot templates with many custom filters amplify this. |
 | **`Arc<Mutex<Environment>>`** | Serializes access to the Rust `Environment` from NAPI | **Lock contention**: unlikely on typical single-threaded Node sync render, but every public method pays lock acquire (see [`RUNJUCKS_PERF.md`](RUNJUCKS_PERF.md) P2 note on theoretical `RwLock`). |
 | **String template name** on `renderTemplate` / `render` | UTF-16/UTF-8 string into Rust on every call | **Small but non-zero**; named-template microbenches (`synth_named_template_interp`) still lose partly for this + loader path (addressed in part by `cache_key_cow`). |
@@ -123,7 +124,7 @@ High-throughput tools (**SWC**, **Rspack**, **Oxc**, etc.) are often cited as **
 
 | Idea | Rationale | Effort / risk |
 |------|-----------|----------------|
-| **Promote `renderStringFromJson` + `fast-json`** where apps control serialization | Avoids property-by-property N-API object walk; already implemented behind feature flag | Low for **callers**; requires **documenting** and optional **CI** build matrix slice. |
+| **Promote `renderStringFromJson` / `renderStringFromJsonBuffer`** where apps control serialization | Avoids property-by-property N-API object walk; **`simd-json`** parse is **default** in `runjucks-napi` | Document in app integration guides; optional CI slice with `--no-default-features` if needed. |
 | **Accept `Buffer` / `Uint8Array` for JSON context** (new overload or method) | Same as string path but avoids extra JS string copy in some pipelines; parse `&[u8]` in Rust | Medium: API + types + tests; same semantics as JSON string. |
 | **Template handle API** (register name → `u32` / opaque id; render by id) | Cuts repeated **template name** string marshaling and map lookups on **tight loops** | Medium–high: new public API, must preserve loader/map semantics. |
 | **Reduce filter/global FFI churn** | Today each `JsFnRef::call` allocates `Vec<napi_value>` and converts args with **`to_napi_value`**. Batching is **hard** without template compile-time knowledge; micro-opts (reuse buffers, small-string paths) are **low yield** unless profiling shows dominance | Low–medium per experiment. |

@@ -585,4 +585,5 @@ module.exports.configure = nativeBinding.configure
 module.exports.render = nativeBinding.render
 module.exports.renderString = nativeBinding.renderString
 module.exports.renderStringFromJson = nativeBinding.renderStringFromJson
+module.exports.renderStringFromJsonBuffer = nativeBinding.renderStringFromJsonBuffer
 module.exports.reset = nativeBinding.reset

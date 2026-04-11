@@ -2,7 +2,7 @@
 
 **Audience:** maintainers optimizing throughput and memory. For **users**, see [Performance](docs/src/content/docs/guides/performance.mdx) (practical tips, published snapshot), [JavaScript API](docs/src/content/docs/guides/javascript-api.md) (caching behavior), and [Limitations](docs/src/content/docs/guides/limitations.md). This file is the **engineering plan** for profiling, hot-path work, and what *not* to chase; it is not the public product doc.
 
-**Related:** [NUNJUCKS_PARITY.md](NUNJUCKS_PARITY.md) (behavior vs Nunjucks), [perf/README.md](perf/README.md) (Node harness), [native/crates/runjucks-core/benches/render_hotspots.rs](native/crates/runjucks-core/benches/render_hotspots.rs) (Rust-only **render** Criterion benches), [native/crates/runjucks-core/benches/parse_hotspots.rs](native/crates/runjucks-core/benches/parse_hotspots.rs) (**lex + parse** only).
+**Related:** [NUNJUCKS_PARITY.md](NUNJUCKS_PARITY.md) (behavior vs Nunjucks), [FFI_OVERHEAD_PROFILE_2026-04-11.md](FFI_OVERHEAD_PROFILE_2026-04-11.md) (Node/Rust boundary: profiling notes, **napi-rs** research, prioritized ingress ideas), [perf/README.md](perf/README.md) (Node harness), [native/crates/runjucks-core/benches/render_hotspots.rs](native/crates/runjucks-core/benches/render_hotspots.rs) (Rust-only **render** Criterion benches), [native/crates/runjucks-core/benches/parse_hotspots.rs](native/crates/runjucks-core/benches/parse_hotspots.rs) (**lex + parse** only).
 
 ---
 
@@ -26,7 +26,7 @@ Runjucks time is spent in roughly four buckets:
 
 1. **Lex + parse** — mitigated by **parsed-template caching** on [`Environment`](native/crates/runjucks-core/src/environment.rs) (inline + named, `ParseSignature` invalidation) and **per-`Template` AST** in [runjucks-napi](native/crates/runjucks-napi/src/lib.rs).
 2. **Render / eval** — [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs): `CtxStack`, loops, expressions, filters, string building.
-3. **Node boundary** — N-API: JSON context marshalling, `Mutex<Environment>` lock per call, optional JS callbacks (filters/globals).
+3. **Node boundary** — N-API: JSON context marshalling, `Mutex<Environment>` lock per call, optional JS callbacks (filters/globals). Maintainer-oriented breakdown and napi-rs-oriented ideas: [FFI_OVERHEAD_PROFILE_2026-04-11.md](FFI_OVERHEAD_PROFILE_2026-04-11.md).
 4. **Comparison to Nunjucks** — upstream runs hot templates in **V8**; Runjucks pays for **Rust + serde_json::Value + FFI**. **5–10× vs Nunjucks on every microbench is not a realistic global bar**; target **worst rows** on [perf/run.mjs](perf/run.mjs) and **Criterion** deltas on Rust-only benches.
 
 ---
@@ -35,7 +35,7 @@ Runjucks time is spent in roughly four buckets:
 
 | Area | What | Where |
 |------|------|--------|
-| **Inline parse cache** | Hash of source + `ParseSignature` → `Arc<Node>` | [`environment.rs`](native/crates/runjucks-core/src/environment.rs): `parse_or_cached_inline`, `inline_parse_cache` (`Arc<Mutex<HashMap<…>>>` for `Send`/`Sync`) |
+| **Inline parse cache** | `ahash::AHasher` hash of source bytes + `ParseSignature` → `Arc<Node>`; hit path still checks stored source `==` lookup `&str` | [`environment.rs`](native/crates/runjucks-core/src/environment.rs): `parse_or_cached_inline`, `hash_source`, `inline_parse_cache` (`Arc<Mutex<HashMap<…>>>` for `Send`/`Sync`) |
 | **Named parse cache** | `TemplateLoader::cache_key` + loaded source equality; map loader returns `Some(name)` | [`loader.rs`](native/crates/runjucks-core/src/loader.rs), [`load_and_parse_named`](native/crates/runjucks-core/src/environment.rs) |
 | **Nested composition** | Include / extends / import / from / scan_literal_import_graph use cache | [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs) |
 | **NAPI `Template` AST** | `cached_ast` + `render_parsed` / `parse_or_cached_inline` | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
@@ -50,7 +50,7 @@ Runjucks time is spent in roughly four buckets:
 | **Lexer / parser pre-capacity** | `tokenize` output `Vec` heuristic; root `nodes` in `parse_template_tokens` | [`lexer.rs`](native/crates/runjucks-core/src/lexer.rs), [`parser/template.rs`](native/crates/runjucks-core/src/parser/template.rs) |
 | **Variable `upper` / `lower` / `length` fast path** | Plain `Expr::Variable` input + no args + no custom filter → `resolve_variable_ref` + dispatch (mirrors literal fast path semantics) | [`eval_to_value` / `eval_for_output` → `Expr::Filter`](native/crates/runjucks-core/src/renderer.rs) |
 | **`is` test borrow (empty args)** | Plain variable LHS + no test args → `resolve_variable_ref` + `apply_is_test` without an extra `eval_to_value` clone | [`BinOp::Is`](native/crates/runjucks-core/src/renderer.rs) |
-| **JSON string ingress (optional)** | `renderStringFromJson` parses JSON text then renders; build `runjucks-napi` with `--features fast-json` for `simd-json` parse | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
+| **JSON / Buffer ingress** | `renderStringFromJson` / `renderStringFromJsonBuffer`; default `runjucks-napi` build uses **`simd-json`** (`fast-json`). `--no-default-features` → `serde_json` parse only | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
 | **`Node::Text` backing** | `Arc<str>` per segment; render copies into output string once | [`ast.rs`](native/crates/runjucks-core/src/ast.rs), [`parser/template.rs`](native/crates/runjucks-core/src/parser/template.rs) |
 | **`CtxStack` slots** | `ahash::AHashMap<String, Arc<Value>>` per frame (fast string-key lookup); `inject_loop` uses `Arc::make_mut` | [`renderer.rs`](native/crates/runjucks-core/src/renderer.rs) (`CtxStack`, `inject_loop`) |
 | **Unary + `resolve_variable_ref`** | Plain `Expr::Variable` under unary `+` / `-` / `not` avoids extra `Value` clone where applicable | [`eval_to_value`](native/crates/runjucks-core/src/renderer.rs) |
@@ -123,7 +123,7 @@ First P1 tranche is **shipped** (see **P0** and **Changelog**). [`tests/perf_reg
 |-------|--------|
 | **Context-boundary probe** | [`perf/context-boundary.mjs`](perf/context-boundary.mjs) + `npm run perf:context` — same template, small vs large nested context (isolates N-API + JSON materialization vs Rust render). |
 | **PGO** | **Documented** in [`perf/README.md`](perf/README.md) (instrument → train → `llvm-profdata` → `profile-use`); not CI-gated. |
-| **Faster JSON (`simd-json` / `sonic-rs`)** | **Deferred** until `perf:context` and profiles show **ingress** dominates; then prototype behind `cfg` in `runjucks-napi` and re-run parity. |
+| **Faster JSON (`sonic-rs`, etc.)** | **`simd-json`** is **default** for JSON-context ingress in `runjucks-napi`; further parsers only if profiles justify. |
 | **Extension `flatten()`** | [`CtxStack::revision`](native/crates/runjucks-core/src/renderer.rs) bumps on frame/set/set_local/inject_loop; [`RenderState::extension_context_cache`](native/crates/runjucks-core/src/renderer.rs) reuses merged `Value` when **stack identity and revision** both match (adjacent extension tags with no binding change). [`CtxStack::flatten`](native/crates/runjucks-core/src/renderer.rs) uses `Map::with_capacity`. |
 | **`for` + `loop`** | Criterion [`for_200_loop_index_and_item`](native/crates/runjucks-core/benches/render_hotspots.rs) for baseline; **skipping** `inject_loop` when the body does not reference `loop` is **not** shipped (nested `loop` / shadowing makes static analysis error-prone). |
 
@@ -161,6 +161,8 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 
 **Machine-readable output:** `node perf/run.mjs --json` (or `npm run perf:json`) writes [`perf/last-run.json`](perf/last-run.json) with per-row timings and `summary.avg_nj_over_rj`.
 
+**FFI / napi-rs focus:** When isolating `serde_json::Value::from_napi_value` vs Rust render cost, use **`perf:context`** and read [FFI_OVERHEAD_PROFILE_2026-04-11.md](FFI_OVERHEAD_PROFILE_2026-04-11.md) (local snapshots, named-template path, research synthesis with external links).
+
 **Coverage:** Default throughput cases are [`perf/synthetic.mjs`](perf/synthetic.mjs) (including optional `renderMode: 'template'` + `templateName` for `renderTemplate` / Nunjucks `env.render`) plus allowlisted conformance vectors. This does not stress `setLoaderRoot` / `setLoaderCallback`; use app-level profiling for those.
 
 | Step | Command / artifact |
@@ -173,7 +175,7 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 | **Rust-only parse cost** | `cd native && cargo bench -p runjucks_core --bench parse_hotspots` or `npm run bench:rust:parse` |
 | **Flamegraph (Linux)** | `cargo install flamegraph && cd native && cargo flamegraph --bench render_hotspots -p runjucks_core` (same for `parse_hotspots`) |
 | **Regression gate** | `npm test`, `cargo test --manifest-path native/Cargo.toml -p runjucks_core`, `node --test __test__/parity.test.mjs` |
-| **Fast JSON parse (maintainers)** | `cargo build -p runjucks-napi --features fast-json` when profiling shows JSON parse dominates after using `renderStringFromJson` |
+| **Fast JSON parse (maintainers)** | Default: `simd-json` via `fast-json`. To force **`serde_json`** only: `cargo build -p runjucks-napi --no-default-features` |
 
 **Interpretation:** `nj/rj` in [perf/run.mjs](perf/run.mjs) is **Nunjucks mean / Runjucks mean**; **`> 1`** means Runjucks faster. Compare **release** builds only. V8 vs Rust + FFI means **some rows will stay &lt; 1×** even when the engine is healthy.
 
@@ -190,8 +192,49 @@ Until then, treat P3 rows as **research** only. See [`Non-goals`](#non-goals-sam
 | AST | [`ast.rs`](native/crates/runjucks-core/src/ast.rs) |
 | Parser | [`parser/`](native/crates/runjucks-core/src/parser/) |
 | NAPI, `Template`, env lock, `renderStringFromJson` | [`runjucks-napi/src/lib.rs`](native/crates/runjucks-napi/src/lib.rs) |
+| **Node/Rust FFI notes** (ingress, callbacks, napi-rs docs) | [`FFI_OVERHEAD_PROFILE_2026-04-11.md`](FFI_OVERHEAD_PROFILE_2026-04-11.md) |
 | Perf harness | [`perf/run.mjs`](perf/run.mjs), [`perf/run-async.mjs`](perf/run-async.mjs), [`perf/harness-env.mjs`](perf/harness-env.mjs), [`perf/synthetic.mjs`](perf/synthetic.mjs), [`perf/context-boundary.mjs`](perf/context-boundary.mjs) |
 | P1 regression tests | [`tests/perf_regressions.rs`](native/crates/runjucks-core/tests/perf_regressions.rs) |
+
+---
+
+## Local measurement snapshot (2026-04-11)
+
+**Setup:** macOS, `cargo bench --manifest-path native/Cargo.toml -p runjucks_core --bench …`, release. Criterion’s `change:` lines compare to whatever was last stored under `native/target/criterion/`; treat the **absolute `time:`** band as the comparable signal when variance or stale baselines dominate.
+
+### `render_hotspots`
+
+| Benchmark | Time (typical band from one run) |
+|-----------|----------------------------------|
+| `for_200_int_concat` | ~67–70 µs |
+| `for_200_var_plus_context_int` | ~74 µs |
+| `for_200_loop_index_and_item` | ~98–101 µs |
+| `many_vars_80` | ~15–16 µs |
+| `nested_for_small` | ~4.0 µs |
+| `literal_string_upper_filter` | ~1.24–1.33 µs |
+| `attr_chain_three_depth` | ~1.84–1.94 µs |
+| `literal_string_length_filter` | ~1.21–1.24 µs |
+| `variable_chained_upper_lower_filters` | ~1.57–1.67 µs |
+| `variable_trim_upper_filters` | ~1.49–1.51 µs |
+| `variable_trim_capitalize_filters` | ~1.55 µs |
+| `variable_lower_title_filters` | ~1.67–1.68 µs |
+
+### `parse_hotspots`
+
+| Benchmark | Time (typical band) |
+|-----------|---------------------|
+| `tokenize_large_plain_400_lines` | ~336–353 µs |
+| `tokenize_many_interpolations_80` | ~10.3–10.4 µs |
+| `parse_cold_large_plain` | ~335–353 µs |
+| `parse_cold_many_interpolations` | ~10.5–11.1 µs |
+| `parse_cold_heavy_nested_for` | ~195–204 µs |
+| `parse_vs_render_cold_render_string_for200` | ~74–74.5 µs |
+| `parse_vs_render_render_only_for200` | ~77–88 µs (noisy) |
+
+### Follow-up tries (not shipped)
+
+- **`fill_loop_object` via `Map::get_mut`:** Measured a large regression on `for_200_loop_index_and_item` (~+30–50% vs `insert` on current `serde_json` `Map`); keep `insert` for loop fields.
+- **`hash_source` with `ahash::AHasher`:** Full-bench run showed mixed Criterion `change:`; isolated `many_vars_80` did not reproduce a clear win — left on `DefaultHasher` until a dedicated microbench proves a gain.
 
 ---
 
@@ -210,3 +253,7 @@ When you ship a perf track, add a one-line bullet with **date + PR/ref + area** 
 - **2026-03 — Follow-on:** Fused chains allow **`trim`** and **`capitalize`** with other string filters; **`length` must be last** in the fused chain (any interleaving of `upper`/`lower`/`trim`/`capitalize` before that — fixes `trim`→`upper` order that the old validator rejected). [`chain_capitalize_like_builtin`](native/crates/runjucks-core/src/filters.rs) dedupes `apply_builtin` `capitalize`. Criterion: `variable_trim_upper_filters`, `variable_trim_capitalize_filters`. Synthetics `synth_var_trim_upper`, `synth_var_trim_capitalize` ([`perf/synthetic.mjs`](perf/synthetic.mjs)). Single-comparison `a == b` uses `resolve_variable_ref` for a plain variable LHS with RHS evaluated first to satisfy borrow rules.
 - **2026-03 — Async throughput:** [`perf/run-async.mjs`](perf/run-async.mjs) + `npm run perf:async` / `perf:async:json`; [`asyncSyntheticCases`](perf/synthetic.mjs) / [`asyncSyncParityCases`](perf/synthetic.mjs) — Runjucks-only (no Nunjucks baseline); optional sync-vs-async ratio row for the same `for` template.
 - **2026-04 — Named-template cache + FFI path:** `TemplateLoader::cache_key_cow` so map loaders can return `Cow::Borrowed(name)` and avoid per-render key allocations on parse-cache hits; follow-on skips redundant reloads when named-template cache keys are stable; extension merged-context cache invalidated by **`stack_identity` + `CtxStack::revision`** (not revision alone). Details: [`FFI_OVERHEAD_PROFILE_2026-04-11.md`](FFI_OVERHEAD_PROFILE_2026-04-11.md).
+- **2026-04-11 — Measurement round:** Criterion snapshot + negative experiments recorded in **Local measurement snapshot** above (`fill_loop_object` `get_mut` path; `AHasher` for `hash_source`). No engine change merged from that pass.
+- **2026-04-11 — Shipped:** Inline parse-cache key hashing [`hash_source`](native/crates/runjucks-core/src/environment.rs) uses **`ahash::AHasher`** on UTF-8 bytes (still `String` equality on cache hit for correctness). `Expr::Call` **`joiner()`** handle path uses **`resolve_variable_ref`** + `parse_joiner_id` on `&Value` (sync + async). **Measured** (Criterion, release, same session): `many_vars_80` ~**1.5%** faster vs prior median (~13.49 µs → ~13.29 µs); new microbench `joiner_set_and_three_calls` ~**18–24%** faster with the borrow path (~2.29 µs → ~1.87 µs). Other rows within noise.
+- **2026-04-11 — Node / FFI ingress:** [`renderStringFromJsonBuffer`](native/crates/runjucks-napi/src/lib.rs) + `Environment#renderStringFromJsonBuffer` (UTF-8 JSON as `Buffer` / `Uint8Array`). [`perf/context-boundary.mjs`](../perf/context-boundary.mjs) now benchmarks **object** vs **JSON string** vs **JSON Buffer** on the same large context; sample run: **~1.58×** vs `renderString` for JSON string, **~1.60×** for Buffer (large context ~1 KiB JSON, template unchanged).
+- **2026-04-11 —** `runjucks-napi` **default** features now include **`fast-json`** (`simd-json` for JSON context parse). Use **`cargo build -p runjucks-napi --no-default-features`** for `serde_json`-only parse.

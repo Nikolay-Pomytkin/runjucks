@@ -9,6 +9,7 @@ import { Environment } from '../index.js'
 const ENV_METHODS = [
   'renderString',
   'renderStringFromJson',
+  'renderStringFromJsonBuffer',
   'setAutoescape',
   'setDev',
   'setRandomSeed',

@@ -337,7 +337,7 @@ pub fn collect_attr_chain_from_getattr<'a>(mut e: &'a Expr) -> Option<(&'a str, 
     }
 }
 
-/// Peels a chain of built-in `upper` / `lower` / `capitalize` / `trim` / `length` filters.
+/// Peels a chain of built-in `upper` / `lower` / `capitalize` / `trim` / `title` / `length` filters.
 /// Returns filter names in **application** order and the leaf expression.
 pub fn peel_builtin_upper_lower_length_chain<'a>(
     mut e: &'a Expr,
@@ -350,7 +350,10 @@ pub fn peel_builtin_upper_lower_length_chain<'a>(
                 if args.is_empty() && !custom_filters.contains_key(name) =>
             {
                 let n = name.as_str();
-                if !matches!(n, "upper" | "lower" | "length" | "trim" | "capitalize") {
+                if !matches!(
+                    n,
+                    "upper" | "lower" | "length" | "trim" | "capitalize" | "title"
+                ) {
                     return None;
                 }
                 names.push(n);
@@ -377,7 +380,7 @@ pub fn builtin_filter_chain_application_order_valid(rev_names: &[&str]) -> bool 
     let last = rev_names.len() - 1;
     for (i, &name) in rev_names.iter().enumerate() {
         match name {
-            "upper" | "lower" | "trim" | "capitalize" => {}
+            "upper" | "lower" | "trim" | "capitalize" | "title" => {}
             "length" => {
                 if i != last {
                     return false;
@@ -410,6 +413,10 @@ pub fn apply_builtin_filter_chain_on_cow_value(
             }
             "capitalize" => {
                 let t = crate::filters::chain_capitalize_like_builtin(current.as_ref());
+                current = Cow::Owned(t);
+            }
+            "title" => {
+                let t = crate::filters::filter_title(current.as_ref());
                 current = Cow::Owned(t);
             }
             "length" => {

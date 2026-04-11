@@ -334,7 +334,7 @@ fn capitalize_word(word: &str) -> String {
     }
 }
 
-fn filter_title(input: &Value) -> Value {
+pub(crate) fn filter_title(input: &Value) -> Value {
     let s = value_to_string_raw(input);
     let out = s
         .split(' ')

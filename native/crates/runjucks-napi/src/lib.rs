@@ -1,7 +1,7 @@
 #![deny(clippy::all)]
 
 use napi::bindgen_prelude::ToNapiValue;
-use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown};
+use napi::bindgen_prelude::{Buffer, FromNapiValue, JsValue, Unknown};
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
 use runjucks_core::ast::Node;
@@ -430,28 +430,46 @@ fn render_with_env(
         .map_err(|e: RunjucksError| Error::from_reason(e.to_string()))
 }
 
-/// Parses JSON text to [`serde_json::Value`]. With the **`fast-json`** crate feature, uses `simd-json`
-/// (same semantic result for valid JSON; invalid JSON errors may differ slightly in message text).
-fn parse_json_context_string(ctx: String) -> napi::Result<serde_json::Value> {
+/// Parses JSON bytes to [`serde_json::Value`]. By default the **`fast-json`** crate feature is enabled
+/// and this uses **`simd-json`** (same semantic result for valid JSON; invalid JSON errors may differ
+/// slightly in message text vs `serde_json`). Build with `--no-default-features` to use `serde_json`
+/// only.
+fn parse_json_context_bytes(bytes: Vec<u8>) -> napi::Result<serde_json::Value> {
     #[cfg(feature = "fast-json")]
     {
-        let mut bytes = ctx.into_bytes();
+        let mut bytes = bytes;
         simd_json::serde::from_slice::<serde_json::Value>(&mut bytes)
             .map_err(|e| Error::from_reason(format!("JSON parse: {e}")))
     }
     #[cfg(not(feature = "fast-json"))]
     {
-        serde_json::from_str(&ctx).map_err(|e| Error::from_reason(e.to_string()))
+        serde_json::from_slice(&bytes).map_err(|e| Error::from_reason(e.to_string()))
     }
 }
 
+fn parse_json_context_string(ctx: String) -> napi::Result<serde_json::Value> {
+    parse_json_context_bytes(ctx.into_bytes())
+}
+
 /// Like [`render_string`], but the context is **JSON text** (e.g. from `JSON.stringify(ctx)` in JS).
-/// Skips N-API object→JSON conversion on the JS side when you already have a string; Rust still
-/// parses to `serde_json::Value` before render. Build with `--features fast-json` on `runjucks-napi`
-/// for a faster JSON parse when profiling shows ingress dominates.
+/// Skips N-API object→JSON conversion on the JS side when you already have a string; Rust parses to
+/// `serde_json::Value` before render (**`simd-json`** by default; use `--no-default-features` for
+/// `serde_json`-only parse).
 #[napi(js_name = "renderStringFromJson")]
 pub fn render_string_from_json(template: String, context_json: String) -> napi::Result<String> {
     let ctx = parse_json_context_string(context_json)?;
+    render_with_env(&Environment::default(), template, ctx)
+}
+
+/// Same as [`render_string_from_json`], but context is **UTF-8 JSON bytes** (e.g. `Buffer` /
+/// `Uint8Array`). Avoids an extra Rust `String` allocation when the payload is already binary;
+/// still parses to `serde_json::Value` before render.
+#[napi(js_name = "renderStringFromJsonBuffer")]
+pub fn render_string_from_json_buffer(
+    template: String,
+    context_json: Buffer,
+) -> napi::Result<String> {
+    let ctx = parse_json_context_bytes(context_json.into())?;
     render_with_env(&Environment::default(), template, ctx)
 }
 
@@ -687,6 +705,22 @@ impl JsEnvironment {
         context_json: String,
     ) -> Result<String> {
         let ctx = parse_json_context_string(context_json)?;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        with_render_napi_env(env.raw(), || render_with_env(&inner, template, ctx))
+    }
+
+    /// Same as [`render_string_from_json_buffer`] for this environment.
+    #[napi(js_name = "renderStringFromJsonBuffer")]
+    pub fn render_string_from_json_buffer_env(
+        &self,
+        env: Env,
+        template: String,
+        context_json: Buffer,
+    ) -> Result<String> {
+        let ctx = parse_json_context_bytes(context_json.into())?;
         let inner = self
             .inner
             .lock()
