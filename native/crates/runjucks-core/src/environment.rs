@@ -397,8 +397,9 @@ impl Environment {
                 }
                 drop(cache);
                 let src = loader.load(name)?;
+                let key_after_load = loader.cache_key_cow(name).map(Cow::into_owned);
                 return self.parse_with_named_cache_precomputed(
-                    Some(key.into_owned()),
+                    key_after_load,
                     sig,
                     loader_id,
                     &src,

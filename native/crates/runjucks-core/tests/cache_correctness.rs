@@ -7,6 +7,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 fn echo_handler() -> CustomExtensionHandler {
     Arc::new(|_ctx, args, body| {
@@ -219,4 +220,46 @@ fn stable_loader_uses_cache_key_cow_without_fallback_to_cache_key() {
     let out2 = env.render_template("main.njk", json!({ "x": 2 })).unwrap();
     assert_eq!(out1, "1");
     assert_eq!(out2, "2");
+}
+
+struct CanonicalKeyAfterLoad {
+    loads: Arc<AtomicUsize>,
+    canonicalized: Mutex<bool>,
+}
+
+impl TemplateLoader for CanonicalKeyAfterLoad {
+    fn load(&self, _name: &str) -> runjucks_core::errors::Result<String> {
+        self.loads.fetch_add(1, Ordering::SeqCst);
+        *self.canonicalized.lock().unwrap() = true;
+        Ok("{{ x }}".to_string())
+    }
+
+    fn cache_key_cow<'a>(&self, name: &'a str) -> Option<std::borrow::Cow<'a, str>> {
+        if *self.canonicalized.lock().unwrap() {
+            Some(std::borrow::Cow::Owned(format!("canon:{name}")))
+        } else {
+            Some(std::borrow::Cow::Borrowed(name))
+        }
+    }
+
+    fn cache_keys_are_stable(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn stable_loader_recomputes_cache_key_after_load() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let loader = Arc::new(CanonicalKeyAfterLoad {
+        loads: Arc::clone(&loads),
+        canonicalized: Mutex::new(false),
+    });
+    let mut env = Environment::default();
+    env.loader = Some(loader);
+
+    let out1 = env.render_template("main.njk", json!({ "x": 1 })).unwrap();
+    let out2 = env.render_template("main.njk", json!({ "x": 2 })).unwrap();
+    assert_eq!(out1, "1");
+    assert_eq!(out2, "2");
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
 }
