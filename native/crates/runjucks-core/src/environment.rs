@@ -395,6 +395,14 @@ impl Environment {
                         return Ok(Arc::clone(&c.ast));
                     }
                 }
+                drop(cache);
+                let src = loader.load(name)?;
+                return self.parse_with_named_cache_precomputed(
+                    Some(key.into_owned()),
+                    sig,
+                    loader_id,
+                    &src,
+                );
             }
         }
         let src = loader.load(name)?;
@@ -409,10 +417,21 @@ impl Environment {
     ) -> Result<Arc<Node>> {
         let sig = self.current_parse_signature();
         let loader_id = loader_identity(loader);
-        if let Some(key) = loader.cache_key_cow(name) {
+        let key = loader.cache_key_cow(name).map(Cow::into_owned);
+        self.parse_with_named_cache_precomputed(key, sig, loader_id, src)
+    }
+
+    fn parse_with_named_cache_precomputed(
+        &self,
+        key: Option<String>,
+        sig: ParseSignature,
+        loader_id: usize,
+        src: &str,
+    ) -> Result<Arc<Node>> {
+        if let Some(key) = key {
             {
                 let cache = self.named_parse_cache.lock().unwrap();
-                if let Some(c) = cache.get(key.as_ref()) {
+                if let Some(c) = cache.get(key.as_str()) {
                     if c.sig == sig
                         && c.loader_id == Some(loader_id)
                         && c.source.as_deref() == Some(src)
@@ -425,7 +444,7 @@ impl Environment {
             let arc = Arc::new(node);
             let mut cache = self.named_parse_cache.lock().unwrap();
             cache.insert(
-                key.into_owned(),
+                key,
                 CachedParse {
                     sig,
                     ast: Arc::clone(&arc),
@@ -433,11 +452,10 @@ impl Environment {
                     source: Some(src.to_string()),
                 },
             );
-            Ok(arc)
-        } else {
-            let node = self.parse_source_to_ast(src)?;
-            Ok(Arc::new(node))
+            return Ok(arc);
         }
+        let node = self.parse_source_to_ast(src)?;
+        Ok(Arc::new(node))
     }
 
     /// Clears the named-template parse cache (e.g. after replacing the template loader).
@@ -739,11 +757,7 @@ impl Environment {
 
     /// Registers an async global function. Called as `(positional_args…, kwargs) → Promise<Value>`.
     #[cfg(feature = "async")]
-    pub fn add_async_global_callable(
-        &mut self,
-        name: String,
-        f: AsyncCustomGlobalFn,
-    ) -> &mut Self {
+    pub fn add_async_global_callable(&mut self, name: String, f: AsyncCustomGlobalFn) -> &mut Self {
         let mut m = serde_json::Map::new();
         m.insert(RJ_CALLABLE.to_string(), Value::Bool(true));
         self.globals.insert(name.clone(), Value::Object(m));
@@ -775,7 +789,13 @@ impl Environment {
         let mut state = renderer::RenderState::new(loader_ref, self.random_seed);
         state.push_template(name)?;
         renderer::scan_literal_extends_graph(self, &mut state, ast.as_ref(), loader.as_ref())?;
-        let out = crate::async_renderer::entry::render_entry_async(self, &mut state, ast.as_ref(), &mut stack).await?;
+        let out = crate::async_renderer::entry::render_entry_async(
+            self,
+            &mut state,
+            ast.as_ref(),
+            &mut stack,
+        )
+        .await?;
         state.pop_template();
         Ok(out)
     }

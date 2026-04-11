@@ -186,3 +186,37 @@ fn named_cache_skips_reload_when_loader_keys_are_stable() {
     assert_eq!(out2, "2");
     assert_eq!(loads.load(Ordering::SeqCst), 1);
 }
+
+struct CowOnlyStableLoader {
+    src: String,
+}
+
+impl TemplateLoader for CowOnlyStableLoader {
+    fn load(&self, _name: &str) -> runjucks_core::errors::Result<String> {
+        Ok(self.src.clone())
+    }
+
+    fn cache_key(&self, _name: &str) -> Option<String> {
+        panic!("cache_key() should not be called when cache_key_cow() is implemented")
+    }
+
+    fn cache_key_cow<'a>(&self, name: &'a str) -> Option<std::borrow::Cow<'a, str>> {
+        Some(std::borrow::Cow::Borrowed(name))
+    }
+
+    fn cache_keys_are_stable(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn stable_loader_uses_cache_key_cow_without_fallback_to_cache_key() {
+    let mut env = Environment::default();
+    env.loader = Some(Arc::new(CowOnlyStableLoader {
+        src: "{{ x }}".into(),
+    }));
+    let out1 = env.render_template("main.njk", json!({ "x": 1 })).unwrap();
+    let out2 = env.render_template("main.njk", json!({ "x": 2 })).unwrap();
+    assert_eq!(out1, "1");
+    assert_eq!(out2, "2");
+}
