@@ -7,7 +7,7 @@ export declare class Environment {
   /** Same as [`render_string`], but context is a JSON string (see [`render_string_from_json`]). */
   renderStringFromJson(template: string, contextJson: string): string
   /** Same as [`render_string_from_json_buffer`] for this environment. */
-  renderStringFromJsonBuffer(template: string, contextJson: Buffer): string
+  renderStringFromJsonBuffer(template: string, contextJson: Uint8Array): string
   setAutoescape(enabled: boolean): void
   setDev(enabled: boolean): void
   /** Fixes the PRNG used by `| random` for reproducible tests (omit / pass `undefined` to use a fresh non-deterministic seed per render). */
@@ -129,7 +129,7 @@ export declare function renderStringFromJson(template: string, contextJson: stri
  * `Uint8Array`). Avoids an extra Rust `String` allocation when the payload is already binary;
  * still parses to `serde_json::Value` before render.
  */
-export declare function renderStringFromJsonBuffer(template: string, contextJson: Buffer): string
+export declare function renderStringFromJsonBuffer(template: string, contextJson: Uint8Array): string
 
 /** Clears the module-level default environment (for tests; matches Nunjucks `reset`). */
 export declare function reset(): void

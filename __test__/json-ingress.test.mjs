@@ -47,3 +47,25 @@ test('renderStringFromJsonBuffer matches renderStringFromJson (module)', () => {
   const b = renderStringFromJsonBuffer(tpl, Buffer.from(json, 'utf8'))
   assert.equal(a, b)
 })
+
+test('renderStringFromJsonBuffer accepts Uint8Array (e.g. TextEncoder)', () => {
+  const tpl = '{{ x }}'
+  const ctx = { x: 42 }
+  const json = JSON.stringify(ctx)
+  const bytes = new TextEncoder().encode(json)
+  assert.ok(bytes instanceof Uint8Array)
+  const a = renderStringFromJson(tpl, json)
+  const b = renderStringFromJsonBuffer(tpl, bytes)
+  assert.equal(a, b)
+})
+
+test('Environment.renderStringFromJsonBuffer accepts Uint8Array', () => {
+  const env = new Environment()
+  const tpl = '{{ x }}'
+  const ctx = { x: 7 }
+  const json = JSON.stringify(ctx)
+  const bytes = new TextEncoder().encode(json)
+  const a = env.renderString(tpl, ctx)
+  const b = env.renderStringFromJsonBuffer(tpl, bytes)
+  assert.equal(a, b)
+})

@@ -1,7 +1,7 @@
 #![deny(clippy::all)]
 
 use napi::bindgen_prelude::ToNapiValue;
-use napi::bindgen_prelude::{Buffer, FromNapiValue, JsValue, Unknown};
+use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown, Uint8Array};
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
 use runjucks_core::ast::Node;
@@ -467,9 +467,9 @@ pub fn render_string_from_json(template: String, context_json: String) -> napi::
 #[napi(js_name = "renderStringFromJsonBuffer")]
 pub fn render_string_from_json_buffer(
     template: String,
-    context_json: Buffer,
+    context_json: Uint8Array,
 ) -> napi::Result<String> {
-    let ctx = parse_json_context_bytes(context_json.into())?;
+    let ctx = parse_json_context_bytes(context_json.as_ref().to_vec())?;
     render_with_env(&Environment::default(), template, ctx)
 }
 
@@ -718,9 +718,9 @@ impl JsEnvironment {
         &self,
         env: Env,
         template: String,
-        context_json: Buffer,
+        context_json: Uint8Array,
     ) -> Result<String> {
-        let ctx = parse_json_context_bytes(context_json.into())?;
+        let ctx = parse_json_context_bytes(context_json.as_ref().to_vec())?;
         let inner = self
             .inner
             .lock()
