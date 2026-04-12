@@ -11,7 +11,12 @@ npm run build
 npm run perf
 # optional: machine-readable output for local trend logs (gitignored)
 npm run perf:json
+# only inline macro-library cases (renderString + templateMap, autoescape off, throwOnUndefined on)
+npm run perf:inmem-macros
+npm run perf:inmem-macros:json
 ```
+
+You can filter any subset by name prefix: `node perf/run.mjs --prefix=synth_`, `node perf/run.mjs --prefix=conf:`.
 
 ### N-API context vs render (Runjucks only)
 
@@ -96,6 +101,7 @@ Paths and `llvm-profdata` availability vary by platform; on macOS you may use `x
 ## What it measures
 
 - **Synthetic** templates in [`synthetic.mjs`](synthetic.mjs) (size / loops / filters).
+- **Inline macro library** scenarios in [`inmemory-macro-harness.mjs`](inmemory-macro-harness.mjs): `renderString` with `templateMap` paths like `macros/*.njk`, **`autoescape: false`**, **`throwOnUndefined: true`** — representative of workloads that ship many small templates in memory (e.g. LLM system prompts) without embedding any proprietary text. Case names are prefixed with **`inmem_macro_`** for easy filtering in `--json` output.
 - **Conformance subset** via IDs in [`conformance-allowlist.json`](conformance-allowlist.json), loaded through [`__test__/conformance/load-fixtures.mjs`](../__test__/conformance/load-fixtures.mjs) (same vectors as Rust + Node): `render_cases.json`, `filter_cases.json`, and `tag_parity_cases.json`.
 
 Each case:

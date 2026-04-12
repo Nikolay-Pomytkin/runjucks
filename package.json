@@ -99,7 +99,9 @@
     "perf:async": "node perf/run-async.mjs",
     "perf:async:json": "node perf/run-async.mjs --json",
     "perf:context": "node perf/context-boundary.mjs",
-    "perf:context:json": "node perf/context-boundary.mjs --json"
+    "perf:context:json": "node perf/context-boundary.mjs --json",
+    "perf:inmem-macros": "node perf/run.mjs --prefix=inmem_macro",
+    "perf:inmem-macros:json": "node perf/run.mjs --prefix=inmem_macro --json"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0",
