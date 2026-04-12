@@ -4,7 +4,9 @@
 //! These functions have no `&mut` state dependencies and can be called from any context.
 
 use crate::ast::{CompareOp, Expr};
+use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
+use crate::renderer::CtxStack;
 use crate::value::is_undefined_value;
 use serde_json::{json, Map, Value};
 use std::borrow::Cow;
@@ -12,14 +14,17 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use crate::globals::{
-    builtin_range, cycler_handle_value, is_builtin_marker_value, joiner_handle_value,
-    CyclerState, JoinerState,
+    builtin_range, cycler_handle_value, is_builtin_marker_value, joiner_handle_value, CyclerState,
+    JoinerState,
 };
 
 use ahash::AHashMap;
 
 /// `{% extends %}` parent expression plus block name → AST bodies.
-pub type ExtendsLayout = (Expr, std::collections::HashMap<String, Vec<crate::ast::Node>>);
+pub type ExtendsLayout = (
+    Expr,
+    std::collections::HashMap<String, Vec<crate::ast::Node>>,
+);
 
 /// Nunjucks truthiness: `null`, `false`, `0`/`NaN`, and `""` are falsy.
 pub fn is_truthy(v: &Value) -> bool {
@@ -247,10 +252,16 @@ pub fn fill_loop_object(m: &mut Map<String, Value>, i: usize, len: usize) {
 }
 
 /// Reuses the same `loop` object map in the innermost frame when possible.
-pub fn inject_loop(frames: &mut Vec<AHashMap<String, Arc<Value>>>, i: usize, len: usize) {
-    let inner = frames
-        .last_mut()
-        .expect("inject_loop requires an active frame");
+pub fn inject_loop(
+    frames: &mut Vec<Arc<AHashMap<String, Arc<Value>>>>,
+    i: usize,
+    len: usize,
+) {
+    let inner = Arc::make_mut(
+        frames
+            .last_mut()
+            .expect("inject_loop requires an active frame"),
+    );
     match inner.get_mut("loop") {
         Some(arc) => match Arc::make_mut(arc) {
             Value::Object(m) => fill_loop_object(m, i, len),
@@ -334,6 +345,68 @@ pub fn collect_attr_chain_from_getattr<'a>(mut e: &'a Expr) -> Option<(&'a str, 
             }
             _ => return None,
         }
+    }
+}
+
+/// Resolves a plain variable or dotted attribute chain (`foo.bar.baz`) without cloning the final
+/// value when it still points into the live stack/global bindings.
+pub fn resolve_plain_value_or_attr_chain_ref<'a, F>(
+    env: &'a Environment,
+    stack: &'a CtxStack,
+    expr: &'a Expr,
+    mut skip_root: F,
+) -> Result<Option<Cow<'a, Value>>>
+where
+    F: FnMut(&str) -> bool,
+{
+    match expr {
+        Expr::Variable(name) => {
+            if skip_root(name) {
+                Ok(None)
+            } else {
+                env.resolve_variable_ref(stack, name).map(Some)
+            }
+        }
+        Expr::GetAttr { .. } => {
+            let Some((root_name, attrs)) = collect_attr_chain_from_getattr(expr) else {
+                return Ok(None);
+            };
+            if skip_root(root_name) {
+                return Ok(None);
+            }
+
+            let mut cur = if stack.defined(root_name) {
+                stack
+                    .get_ref(root_name)
+                    .expect("internal error: variable marked defined but missing from stack")
+            } else if let Some(v) = env.globals.get(root_name) {
+                v
+            } else if env.throw_on_undefined {
+                return Err(RunjucksError::new(format!(
+                    "undefined variable: `{root_name}`"
+                )));
+            } else {
+                return Ok(Some(Cow::Owned(crate::value::undefined_value())));
+            };
+
+            for attr in attrs {
+                if is_undefined_value(cur) || cur.is_null() {
+                    return Ok(Some(Cow::Owned(crate::value::undefined_value())));
+                }
+                match cur {
+                    Value::Object(obj) => {
+                        let Some(next) = obj.get(attr) else {
+                            return Ok(Some(Cow::Owned(crate::value::undefined_value())));
+                        };
+                        cur = next;
+                    }
+                    _ => return Ok(Some(Cow::Owned(crate::value::undefined_value()))),
+                }
+            }
+
+            Ok(Some(Cow::Borrowed(cur)))
+        }
+        _ => Ok(None),
     }
 }
 

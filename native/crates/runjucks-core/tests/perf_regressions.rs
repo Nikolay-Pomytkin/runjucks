@@ -368,7 +368,8 @@ fn binary_add_two_context_variables() {
     let env = Environment::default();
     let ctx = json!({ "a": 10, "b": 32 });
     assert_eq!(
-        env.render_string("{{ a + b }}".into(), ctx.clone()).unwrap(),
+        env.render_string("{{ a + b }}".into(), ctx.clone())
+            .unwrap(),
         "42"
     );
 }
@@ -444,4 +445,194 @@ fn joiner_call_path_matches_comma_separated_output() {
         )
         .unwrap();
     assert_eq!(out, "a,b,c");
+}
+
+#[test]
+fn for_loop_without_loop_binding_still_renders_items() {
+    let env = Environment::default();
+    let tpl = "{% for n in nums %}{{ n }}{% endfor %}";
+    let out = env
+        .render_string(tpl.into(), json!({ "nums": [1, 2, 3] }))
+        .unwrap();
+    assert_eq!(out, "123");
+}
+
+#[test]
+fn for_loop_with_loop_binding_keeps_metadata_semantics() {
+    let env = Environment::default();
+    let tpl = "{% for n in nums %}{{ loop.index0 }}:{{ n }}|{% endfor %}";
+    let out = env
+        .render_string(tpl.into(), json!({ "nums": [10, 20] }))
+        .unwrap();
+    assert_eq!(out, "0:10|1:20|");
+}
+
+#[test]
+fn switch_uses_first_matching_case_and_fallthrough_on_empty_body() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% switch kind %}",
+        "{% case 'x' %}",
+        "{% case 'y' %}Y",
+        "{% default %}D",
+        "{% endswitch %}",
+    );
+    let out = env
+        .render_string(tpl.into(), json!({ "kind": "x" }))
+        .unwrap();
+    assert_eq!(out, "Y");
+}
+
+#[test]
+fn inline_if_with_variable_predicate_matches_expected_branch() {
+    let env = Environment::default();
+    let t = "{{ 'A' if flag else 'B' }}";
+    assert_eq!(
+        env.render_string(t.into(), json!({ "flag": true }))
+            .unwrap(),
+        "A"
+    );
+    assert_eq!(
+        env.render_string(t.into(), json!({ "flag": false }))
+            .unwrap(),
+        "B"
+    );
+}
+
+#[test]
+fn repeated_renders_keep_loop_visible_inside_include() {
+    let env = Environment::default();
+    let ctx = json!({ "nums": [4, 5, 6] });
+    let tpl = "{% for n in nums %}{{ loop.index0 }}:{{ n }}|{% endfor %}";
+    let first = env.render_string(tpl.into(), ctx.clone()).unwrap();
+    let second = env.render_string(tpl.into(), ctx).unwrap();
+    assert_eq!(first, "0:4|1:5|2:6|");
+    assert_eq!(second, "0:4|1:5|2:6|");
+}
+
+#[test]
+fn macro_default_expression_not_evaluated_when_arg_is_passed() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% macro m(x=missing.attr) %}{{ x }}{% endmacro %}",
+        "{{ m('ok') }}",
+    );
+    let out = env.render_string(tpl.into(), json!({})).unwrap();
+    assert_eq!(out, "ok");
+}
+
+#[test]
+fn caller_default_expression_not_evaluated_when_arg_is_passed() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% macro wrap() %}{{ caller('ok') }}{% endmacro %}",
+        "{% call(x=missing.attr) wrap() %}{{ x }}{% endcall %}",
+    );
+    let out = env.render_string(tpl.into(), json!({})).unwrap();
+    assert_eq!(out, "ok");
+}
+
+#[test]
+fn macro_set_does_not_leak_back_to_caller_scope() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% set x = 'outer' %}",
+        "{% macro mutate() %}{% set x = 'inner' %}{{ x }}{% endmacro %}",
+        "{{ mutate() }}|{{ x }}",
+    );
+    let out = env.render_string(tpl.into(), json!({})).unwrap();
+    assert_eq!(out, "inner|outer");
+}
+
+#[test]
+fn macro_param_rebind_does_not_mutate_caller_binding() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% macro mutate(row) %}{% set row = 'inner' %}{{ row }}{% endmacro %}",
+        "{{ mutate(row) }}|{{ row.msg }}",
+    );
+    let out = env
+        .render_string(tpl.into(), json!({ "row": { "msg": "outer" } }))
+        .unwrap();
+    assert_eq!(out, "inner|outer");
+}
+
+#[test]
+fn fused_filter_chain_on_attr_chain_matches_expected_output() {
+    let env = Environment::default();
+    let ctx = json!({
+        "row": {
+            "payload": {
+                "title": "  Hello World  "
+            }
+        }
+    });
+    let out = env
+        .render_string("{{ row.payload.title | trim | upper }}".into(), ctx)
+        .unwrap();
+    assert_eq!(out, "HELLO WORLD");
+}
+
+#[test]
+fn attr_chain_filter_fast_path_respects_custom_overrides() {
+    let mut env = Environment::default();
+    env.add_filter(
+        "upper",
+        Arc::new(|input, _args| Ok(Value::String(format!("custom:{}", value_to_string(input))))),
+    );
+    let out = env
+        .render_string(
+            "{{ row.payload.title | upper }}".into(),
+            json!({ "row": { "payload": { "title": "hello" } } }),
+        )
+        .unwrap();
+    assert_eq!(out, "custom:hello");
+}
+
+#[test]
+fn if_condition_on_attr_chain_uses_expected_branch() {
+    let env = Environment::default();
+    let tpl = "{% if row.enabled %}yes{% else %}no{% endif %}";
+    assert_eq!(
+        env.render_string(tpl.into(), json!({ "row": { "enabled": true } }))
+            .unwrap(),
+        "yes"
+    );
+    assert_eq!(
+        env.render_string(tpl.into(), json!({ "row": { "enabled": false } }))
+            .unwrap(),
+        "no"
+    );
+}
+
+#[test]
+fn switch_on_attr_chain_matches_literal_case() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% switch row.kind %}",
+        "{% case 'warn' %}W",
+        "{% case 'ok' %}O",
+        "{% default %}D",
+        "{% endswitch %}",
+    );
+    let out = env
+        .render_string(tpl.into(), json!({ "row": { "kind": "ok" } }))
+        .unwrap();
+    assert_eq!(out, "O");
+}
+
+#[test]
+fn inline_if_on_attr_chain_uses_expected_branch() {
+    let env = Environment::default();
+    let tpl = "{{ 'up' if row.enabled else 'down' }}";
+    assert_eq!(
+        env.render_string(tpl.into(), json!({ "row": { "enabled": true } }))
+            .unwrap(),
+        "up"
+    );
+    assert_eq!(
+        env.render_string(tpl.into(), json!({ "row": { "enabled": false } }))
+            .unwrap(),
+        "down"
+    );
 }

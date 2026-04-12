@@ -1,15 +1,14 @@
 #![deny(clippy::all)]
 
 use napi::bindgen_prelude::ToNapiValue;
-use napi::bindgen_prelude::{FromNapiValue, JsValue, Unknown, Uint8Array};
+use napi::bindgen_prelude::{FromNapiValue, JsValue, Uint8Array, Unknown};
 use napi::{check_pending_exception, check_status, sys, Env, Error, Result, Status, ValueType};
 use napi_derive::napi;
 use runjucks_core::ast::Node;
 use runjucks_core::value::value_to_string;
 use runjucks_core::{
-    file_system_loader, loader::TemplateLoader, map_loader, AsyncCustomFilter,
-    AsyncCustomGlobalFn, CustomFilter, CustomGlobalFn, CustomTest, Environment, RunjucksError,
-    Tags,
+    file_system_loader, loader::TemplateLoader, map_loader, AsyncCustomFilter, AsyncCustomGlobalFn,
+    CustomFilter, CustomGlobalFn, CustomTest, Environment, RunjucksError, Tags,
 };
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -294,35 +293,37 @@ fn napi_custom_filter(js: Arc<JsFnRef>) -> CustomFilter {
 /// The JS function is called synchronously on the Node main thread (same as sync filters).
 /// This bridges `addAsyncFilter` so that the async renderer can invoke these filters.
 fn napi_async_custom_filter_from_sync(js: Arc<JsFnRef>) -> AsyncCustomFilter {
-    Arc::new(move |input: &serde_json::Value, args: &[serde_json::Value]| {
-        let js = js.clone();
-        let input = input.clone();
-        let args = args.to_vec();
-        Box::pin(async move {
-            let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
-                RunjucksError::new(
-                    "async custom filter invoked without an active Node N-API render context",
-                )
-            })?;
-            if active != js.env {
-                return Err(RunjucksError::new(
-                    "N-API environment mismatch during async custom filter call",
-                ));
-            }
-            let mut call_args: Vec<serde_json::Value> = Vec::with_capacity(1 + args.len());
-            call_args.push(input);
-            call_args.extend(args);
-            js.call(&call_args)
-                .map_err(|e: Error| RunjucksError::new(e.to_string()))
-        })
-            as Pin<
-                Box<
-                    dyn std::future::Future<
-                        Output = runjucks_core::errors::Result<serde_json::Value>,
-                    > + Send,
-                >,
-            >
-    })
+    Arc::new(
+        move |input: &serde_json::Value, args: &[serde_json::Value]| {
+            let js = js.clone();
+            let input = input.clone();
+            let args = args.to_vec();
+            Box::pin(async move {
+                let active = RENDER_NAPI_ENV.with(|c| c.get()).ok_or_else(|| {
+                    RunjucksError::new(
+                        "async custom filter invoked without an active Node N-API render context",
+                    )
+                })?;
+                if active != js.env {
+                    return Err(RunjucksError::new(
+                        "N-API environment mismatch during async custom filter call",
+                    ));
+                }
+                let mut call_args: Vec<serde_json::Value> = Vec::with_capacity(1 + args.len());
+                call_args.push(input);
+                call_args.extend(args);
+                js.call(&call_args)
+                    .map_err(|e: Error| RunjucksError::new(e.to_string()))
+            })
+                as Pin<
+                    Box<
+                        dyn std::future::Future<
+                                Output = runjucks_core::errors::Result<serde_json::Value>,
+                            > + Send,
+                    >,
+                >
+        },
+    )
 }
 
 /// Creates an [`AsyncCustomGlobalFn`] backed by a synchronous JS function reference.
@@ -355,8 +356,8 @@ fn napi_async_custom_global_from_sync(js: Arc<JsFnRef>) -> AsyncCustomGlobalFn {
                 as Pin<
                     Box<
                         dyn std::future::Future<
-                            Output = runjucks_core::errors::Result<serde_json::Value>,
-                        > + Send,
+                                Output = runjucks_core::errors::Result<serde_json::Value>,
+                            > + Send,
                     >,
                 >
         },
@@ -364,7 +365,10 @@ fn napi_async_custom_global_from_sync(js: Arc<JsFnRef>) -> AsyncCustomGlobalFn {
 }
 
 /// Wraps a `Result<String>` as a resolved/rejected JS `Promise`.
-fn wrap_result_as_promise(napi_env: sys::napi_env, result: Result<String>) -> Result<Unknown<'static>> {
+fn wrap_result_as_promise(
+    napi_env: sys::napi_env,
+    result: Result<String>,
+) -> Result<Unknown<'static>> {
     unsafe {
         let mut deferred = ptr::null_mut();
         let mut promise = ptr::null_mut();

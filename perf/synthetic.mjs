@@ -70,6 +70,29 @@ export function syntheticCases() {
       context: { a: true, b: true, c: true },
     },
     {
+      name: 'synth_conditional_macro_iter_switch_filters',
+      template:
+        "{% macro fmt(v) -%}{% switch v.kind %}{% case 'warn' %}{{ v.msg | trim | upper }}{% case 'ok' %}{{ v.msg | trim | lower }}{% default %}{{ v.msg | trim }}{% endswitch %}{%- endmacro %}{% for v in rows %}{% if v.enabled %}{{ fmt(v) }}{% endif %}{% endfor %}",
+      context: {
+        rows: Array.from({ length: 80 }, (_, i) => ({
+          enabled: i % 3 !== 0,
+          kind: i % 2 === 0 ? 'warn' : 'ok',
+          msg: `  Row ${i}  `,
+        })),
+      },
+    },
+    {
+      name: 'synth_switch_in_for_with_attr_filters',
+      template:
+        "{% for row in rows %}{% switch row.type %}{% case 'a' %}{{ row.payload.title | trim | upper }}{% case 'b' %}{{ row.payload.title | trim | lower }}{% default %}{{ row.payload.title | trim }}{% endswitch %}{% endfor %}",
+      context: {
+        rows: Array.from({ length: 120 }, (_, i) => ({
+          type: i % 3 === 0 ? 'a' : i % 3 === 1 ? 'b' : 'c',
+          payload: { title: `  T${i}  ` },
+        })),
+      },
+    },
+    {
       name: 'synth_named_template_interp',
       renderMode: 'template',
       templateName: 'main.njk',

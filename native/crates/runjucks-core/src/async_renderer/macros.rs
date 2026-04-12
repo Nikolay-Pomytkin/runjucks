@@ -9,6 +9,7 @@ use crate::renderer::{
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use super::eval::eval_to_value_async;
 use super::nodes::render_children_async;
@@ -22,31 +23,70 @@ pub(super) async fn render_macro_body_async(
     outer: &mut CtxStack,
     module_closure: Option<&HashMap<String, Value>>,
 ) -> Result<String> {
-    let mut inner = outer.flatten();
-    if let Some(mc) = module_closure {
-        for (k, v) in mc {
-            inner.insert(k.clone(), v.clone());
+    let positional: Vec<Arc<Value>> = positional.iter().cloned().map(Arc::new).collect();
+    let kwargs: Vec<(String, Arc<Value>)> = kwargs
+        .iter()
+        .map(|(k, v)| (k.clone(), Arc::new(v.clone())))
+        .collect();
+    render_macro_body_shared_async(env, state, m, &positional, &kwargs, outer, module_closure)
+        .await
+}
+
+pub(super) async fn render_macro_body_shared_async(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    m: &MacroDef,
+    positional: &[Arc<Value>],
+    kwargs: &[(String, Arc<Value>)],
+    outer: &mut CtxStack,
+    module_closure: Option<&HashMap<String, Value>>,
+) -> Result<String> {
+    let mut stack = outer.fork_isolated();
+    stack.push_frame();
+    let mut bindings = Vec::with_capacity(m.params.len());
+    if kwargs.is_empty() {
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value_async(env, state, d, outer).await?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            bindings.push((p.name.clone(), val));
+        }
+    } else {
+        let kw_lookup: HashMap<&str, &Arc<Value>> =
+            kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
+                Arc::clone(*v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value_async(env, state, d, outer).await?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            bindings.push((p.name.clone(), val));
         }
     }
-    for p in &m.params {
-        let val = if let Some(ref d) = p.default {
-            eval_to_value_async(env, state, d, outer).await?
-        } else {
-            Value::Null
-        };
-        inner.insert(p.name.clone(), val);
-    }
-    for (i, p) in m.params.iter().enumerate() {
-        if let Some(v) = positional.get(i) {
-            inner.insert(p.name.clone(), v.clone());
+    {
+        let inner = Arc::make_mut(
+            stack
+                .frames
+                .last_mut()
+                .expect("macro body requires an active local frame"),
+        );
+        if let Some(mc) = module_closure {
+            for (k, v) in mc {
+                inner.insert(k.clone(), Arc::new(v.clone()));
+            }
+        }
+        for (name, val) in bindings {
+            inner.insert(name, val);
         }
     }
-    for (k, v) in kwargs {
-        if m.params.iter().any(|p| p.name == *k) {
-            inner.insert(k.clone(), v.clone());
-        }
-    }
-    let mut stack = CtxStack::from_root(inner);
     render_children_async(env, state, &m.body, &mut stack).await
 }
 
@@ -65,23 +105,18 @@ pub(super) async fn render_caller_invocation_async(
         return render_children_async(env, state, &frame.body, stack).await;
     }
     stack.push_frame();
-    for p in &frame.params {
-        let val = if let Some(ref d) = p.default {
+    let kw_lookup: HashMap<&str, &Value> = kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    for (i, p) in frame.params.iter().enumerate() {
+        let val = if let Some(v) = positional.get(i) {
+            v.clone()
+        } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
+            (*v).clone()
+        } else if let Some(ref d) = p.default {
             eval_to_value_async(env, state, d, stack).await?
         } else {
             Value::Null
         };
         stack.set_local(&p.name, val);
-    }
-    for (i, p) in frame.params.iter().enumerate() {
-        if let Some(v) = positional.get(i) {
-            stack.set_local(&p.name, v.clone());
-        }
-    }
-    for (k, v) in kwargs {
-        if frame.params.iter().any(|p| p.name == *k) {
-            stack.set_local(k, v.clone());
-        }
     }
     let out = render_children_async(env, state, &frame.body, stack).await?;
     stack.pop_frame();
@@ -131,8 +166,19 @@ fn build_block_chains_async<'a>(
     env: &'a Environment,
     state: &'a mut RenderState<'_>,
     ctx_stack: &'a mut CtxStack,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<HashMap<String, Vec<Vec<Node>>>>> + 'a>> {
-    Box::pin(build_block_chains_inner(parent_name, parent_ast, immediate_child_overrides, loader, visited, env, state, ctx_stack))
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<HashMap<String, Vec<Vec<Node>>>>> + 'a>,
+> {
+    Box::pin(build_block_chains_inner(
+        parent_name,
+        parent_ast,
+        immediate_child_overrides,
+        loader,
+        visited,
+        env,
+        state,
+        ctx_stack,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

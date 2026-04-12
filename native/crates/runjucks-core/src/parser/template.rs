@@ -1036,9 +1036,9 @@ fn parse_node(tokens: &[Token], i: &mut usize, ctx: &ParseCtx<'_>) -> Result<Nod
                 "verbatim" => parse_raw_block(tokens, i, &["endverbatim"]),
                 "elif" | "elseif" | "else" | "endif" | "endfor" | "endeach" | "endall"
                 | "endblock" | "endmacro" | "endfilter" | "endcall" | "case" | "default"
-                | "endswitch" | "endset" | "endraw" | "endverbatim" => Err(RunjucksError::new(format!(
-                    "unexpected `{{%{body}%}}` (no matching opening tag)"
-                ))),
+                | "endswitch" | "endset" | "endraw" | "endverbatim" => Err(RunjucksError::new(
+                    format!("unexpected `{{%{body}%}}` (no matching opening tag)"),
+                )),
                 _ => {
                     if ctx.ext_closing.contains(kw.as_str()) {
                         return Err(RunjucksError::new(format!(

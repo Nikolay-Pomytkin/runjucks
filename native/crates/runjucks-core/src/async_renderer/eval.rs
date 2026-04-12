@@ -8,13 +8,16 @@ use crate::render_common::{
     add_like_js, apply_builtin_filter_chain_on_cow_value, as_number,
     collect_attr_chain_from_getattr, compare_values, eval_in, is_test_parts, is_truthy,
     jinja_slice_array, json_num, peel_builtin_upper_lower_length_chain,
+    resolve_plain_value_or_attr_chain_ref,
 };
 use crate::renderer::{CtxStack, RenderState};
 use crate::value::{is_undefined_value, mark_safe, undefined_value};
 use serde_json::{json, Map, Value};
 use std::borrow::Cow;
 
-use super::macros::{render_caller_invocation_async, render_macro_body_async};
+use super::macros::{
+    render_caller_invocation_async, render_macro_body_async, render_macro_body_shared_async,
+};
 use super::nodes::render_children_async;
 
 fn try_dispatch_builtin(
@@ -51,6 +54,7 @@ fn filter_chain_has_async_override(env: &Environment, e: &Expr) -> bool {
 
 fn try_apply_peeled_builtin_filter_chain_value(
     env: &Environment,
+    state: &RenderState<'_>,
     stack: &mut CtxStack,
     e: &Expr,
 ) -> Option<Result<Value>> {
@@ -58,44 +62,45 @@ fn try_apply_peeled_builtin_filter_chain_value(
         return None;
     }
     let (rev_names, leaf) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters)?;
-    match leaf {
-        Expr::Variable(var_name) => {
-            let v = match env.resolve_variable_ref(stack, var_name) {
-                Ok(v) => v,
-                Err(e) => return Some(Err(e)),
-            };
-            Some(apply_builtin_filter_chain_on_cow_value(v, &rev_names))
-        }
-        Expr::Literal(Value::String(s)) => {
-            let mut current = s.clone();
-            for n in &rev_names {
-                match *n {
-                    "upper" => current = current.to_uppercase(),
-                    "lower" => current = current.to_lowercase(),
-                    "trim" => {
-                        current = current
-                            .trim_matches(|c: char| c.is_whitespace())
-                            .to_string();
+    let skip_root = |root_name: &str| {
+        state.macro_namespaces.contains_key(root_name)
+            || state.macro_namespace_values.contains_key(root_name)
+    };
+    match resolve_plain_value_or_attr_chain_ref(env, stack, leaf, skip_root) {
+        Ok(Some(v)) => Some(apply_builtin_filter_chain_on_cow_value(v, &rev_names)),
+        Ok(None) => match leaf {
+            Expr::Literal(Value::String(s)) => {
+                let mut current = s.clone();
+                for n in &rev_names {
+                    match *n {
+                        "upper" => current = current.to_uppercase(),
+                        "lower" => current = current.to_lowercase(),
+                        "trim" => {
+                            current = current
+                                .trim_matches(|c: char| c.is_whitespace())
+                                .to_string();
+                        }
+                        "capitalize" => {
+                            current = crate::filters::capitalize_string_slice(&current);
+                        }
+                        "title" => {
+                            current = match crate::filters::filter_title(&Value::String(
+                                std::mem::take(&mut current),
+                            )) {
+                                Value::String(s) => s,
+                                o => crate::value::value_to_string(&o),
+                            };
+                        }
+                        "length" => return Some(Ok(json!(current.chars().count()))),
+                        _ => unreachable!(),
                     }
-                    "capitalize" => {
-                        current = crate::filters::capitalize_string_slice(&current);
-                    }
-                    "title" => {
-                        current = match crate::filters::filter_title(&Value::String(std::mem::take(
-                            &mut current,
-                        ))) {
-                            Value::String(s) => s,
-                            o => crate::value::value_to_string(&o),
-                        };
-                    }
-                    "length" => return Some(Ok(json!(current.chars().count()))),
-                    _ => unreachable!(),
                 }
+                Some(Ok(Value::String(current)))
             }
-            Some(Ok(Value::String(current)))
-        }
-        Expr::Literal(Value::Array(a)) if rev_names == ["length"] => Some(Ok(json!(a.len()))),
-        _ => None,
+            Expr::Literal(Value::Array(a)) if rev_names == ["length"] => Some(Ok(json!(a.len()))),
+            _ => None,
+        },
+        Err(e) => Some(Err(e)),
     }
 }
 
@@ -159,6 +164,73 @@ where
     f(a.as_ref(), b.as_ref())
 }
 
+async fn render_macro_call_no_kwargs_async(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    mdef: &crate::ast::MacroDef,
+    args: &[Expr],
+    stack: &mut CtxStack,
+    module_closure: Option<&std::collections::HashMap<String, Value>>,
+) -> Result<String> {
+    match args {
+        [] => render_macro_body_shared_async(env, state, mdef, &[], &[], stack, module_closure)
+            .await,
+        [a0] => {
+            let arg0 = eval_to_shared_value_async(env, state, a0, stack).await?;
+            let arg_vals = [arg0];
+            render_macro_body_shared_async(env, state, mdef, &arg_vals, &[], stack, module_closure)
+                .await
+        }
+        [a0, a1] => {
+            let arg0 = eval_to_shared_value_async(env, state, a0, stack).await?;
+            let arg1 = eval_to_shared_value_async(env, state, a1, stack).await?;
+            let arg_vals = [arg0, arg1];
+            render_macro_body_shared_async(env, state, mdef, &arg_vals, &[], stack, module_closure)
+                .await
+        }
+        [a0, a1, a2] => {
+            let arg0 = eval_to_shared_value_async(env, state, a0, stack).await?;
+            let arg1 = eval_to_shared_value_async(env, state, a1, stack).await?;
+            let arg2 = eval_to_shared_value_async(env, state, a2, stack).await?;
+            let arg_vals = [arg0, arg1, arg2];
+            render_macro_body_shared_async(env, state, mdef, &arg_vals, &[], stack, module_closure)
+                .await
+        }
+        _ => {
+            let mut arg_vals = Vec::with_capacity(args.len());
+            for a in args {
+                arg_vals.push(eval_to_value_async(env, state, a, stack).await?);
+            }
+            render_macro_body_async(env, state, mdef, &arg_vals, &[], stack, module_closure).await
+        }
+    }
+}
+
+async fn eval_to_shared_value_async(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    e: &Expr,
+    stack: &mut CtxStack,
+) -> Result<std::sync::Arc<Value>> {
+    match e {
+        Expr::Variable(name) => {
+            if let Some(v) = stack.get_shared(name) {
+                Ok(v)
+            } else if let Some(v) = env.globals.get(name) {
+                Ok(std::sync::Arc::new(v.clone()))
+            } else if env.throw_on_undefined {
+                Err(RunjucksError::new(format!("undefined variable: `{name}`")))
+            } else {
+                Ok(std::sync::Arc::new(undefined_value()))
+            }
+        }
+        Expr::Literal(v) => Ok(std::sync::Arc::new(v.clone())),
+        _ => Ok(std::sync::Arc::new(
+            eval_to_value_async(env, state, e, stack).await?,
+        )),
+    }
+}
+
 async fn eval_to_value_inner(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -213,24 +285,30 @@ async fn eval_to_value_inner(
             ))),
             BinOp::Sub => {
                 eval_binary_pair_async(env, state, stack, left, right, |a, b| {
-                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
-                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
+                    let x =
+                        as_number(a).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
+                    let y =
+                        as_number(b).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
                     Ok(json_num(x - y))
                 })
                 .await
             }
             BinOp::Mul => {
                 eval_binary_pair_async(env, state, stack, left, right, |a, b| {
-                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
-                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
+                    let x =
+                        as_number(a).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
+                    let y =
+                        as_number(b).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
                     Ok(json_num(x * y))
                 })
                 .await
             }
             BinOp::Div => {
                 eval_binary_pair_async(env, state, stack, left, right, |a, b| {
-                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
-                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
+                    let x =
+                        as_number(a).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
+                    let y =
+                        as_number(b).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
                     Ok(json!(x / y))
                 })
                 .await
@@ -250,8 +328,10 @@ async fn eval_to_value_inner(
             }
             BinOp::Mod => {
                 eval_binary_pair_async(env, state, stack, left, right, |a, b| {
-                    let x = as_number(a).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
-                    let y = as_number(b).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
+                    let x =
+                        as_number(a).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
+                    let y =
+                        as_number(b).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
                     Ok(json_num(x % y))
                 })
                 .await
@@ -306,7 +386,11 @@ async fn eval_to_value_inner(
                         Expr::Variable(n) => env.resolve_variable_ref(stack, n)?,
                         _ => Cow::Owned(eval_to_value_async(env, state, left, stack).await?),
                     };
-                    return Ok(Value::Bool(env.apply_is_test(test_name, v.as_ref(), &[])?));
+                    return Ok(Value::Bool(env.apply_is_test(
+                        test_name,
+                        v.as_ref(),
+                        &[],
+                    )?));
                 }
                 let mut arg_vals = Vec::with_capacity(arg_exprs.len());
                 for ae in arg_exprs {
@@ -361,8 +445,19 @@ async fn eval_to_value_inner(
             then_expr,
             else_expr,
         } => {
-            let c = eval_to_value_async(env, state, cond, stack).await?;
-            if is_truthy(&c) {
+            let cond_truthy = {
+                let skip_root = |root_name: &str| {
+                    state.macro_namespaces.contains_key(root_name)
+                        || state.macro_namespace_values.contains_key(root_name)
+                };
+                if let Some(v) = resolve_plain_value_or_attr_chain_ref(env, stack, cond, skip_root)?
+                {
+                    is_truthy(v.as_ref())
+                } else {
+                    is_truthy(&eval_to_value_async(env, state, cond, stack).await?)
+                }
+            };
+            if cond_truthy {
                 eval_to_value_async(env, state, then_expr, stack).await
             } else if let Some(els) = else_expr {
                 eval_to_value_async(env, state, els, stack).await
@@ -423,8 +518,7 @@ async fn eval_to_value_inner(
             } => {
                 let start_v = eval_slice_bound_async(env, state, s.as_deref(), stack).await?;
                 let stop_v = eval_slice_bound_async(env, state, st.as_deref(), stack).await?;
-                let step_v =
-                    eval_slice_bound_async(env, state, step_e.as_deref(), stack).await?;
+                let step_v = eval_slice_bound_async(env, state, step_e.as_deref(), stack).await?;
                 if let Expr::Variable(name) = base.as_ref() {
                     let base_val = env.resolve_variable_ref(stack, name)?;
                     if is_undefined_value(base_val.as_ref()) || base_val.as_ref().is_null() {
@@ -455,22 +549,17 @@ async fn eval_to_value_inner(
                             let idx = n
                                 .as_u64()
                                 .or_else(|| n.as_f64().map(|x| x as u64))
-                                .unwrap_or(0)
-                                as usize;
+                                .unwrap_or(0) as usize;
                             match base_val.as_ref() {
                                 Value::Array(a) => {
-                                    return Ok(
-                                        a.get(idx).cloned().unwrap_or_else(undefined_value)
-                                    );
+                                    return Ok(a.get(idx).cloned().unwrap_or_else(undefined_value));
                                 }
                                 _ => return Ok(undefined_value()),
                             }
                         }
                         Expr::Literal(Value::String(k)) => match base_val.as_ref() {
                             Value::Object(o) => {
-                                return Ok(
-                                    o.get(k).cloned().unwrap_or_else(undefined_value)
-                                );
+                                return Ok(o.get(k).cloned().unwrap_or_else(undefined_value));
                             }
                             _ => return Ok(undefined_value()),
                         },
@@ -505,6 +594,39 @@ async fn eval_to_value_inner(
             args,
             kwargs,
         } => {
+            if kwargs.is_empty() {
+                if let Expr::Variable(name) = callee.as_ref() {
+                    if let Some(mdef) = state.lookup_macro(name).cloned() {
+                        let s = render_macro_call_no_kwargs_async(
+                            env,
+                            state,
+                            mdef.as_ref(),
+                            args,
+                            stack,
+                            None,
+                        )
+                        .await?;
+                        return Ok(mark_safe(s));
+                    }
+                }
+                if let Expr::GetAttr { base, attr } = callee.as_ref() {
+                    if let Expr::Variable(ns) = base.as_ref() {
+                        if let Some(mdef) = state.lookup_namespaced_macro(ns, attr).cloned() {
+                            let mc = state.macro_namespace_values.get(ns).cloned();
+                            let s = render_macro_call_no_kwargs_async(
+                                env,
+                                state,
+                                mdef.as_ref(),
+                                args,
+                                stack,
+                                mc.as_ref(),
+                            )
+                            .await?;
+                            return Ok(mark_safe(s));
+                        }
+                    }
+                }
+            }
             let mut arg_vals = Vec::with_capacity(args.len());
             for a in args {
                 arg_vals.push(eval_to_value_async(env, state, a, stack).await?);
@@ -592,7 +714,13 @@ async fn eval_to_value_inner(
                 }
                 if let Some(mdef) = state.lookup_macro(name).cloned() {
                     let s = render_macro_body_async(
-                        env, state, &mdef, &arg_vals, &kw_vals, stack, None,
+                        env,
+                        state,
+                        mdef.as_ref(),
+                        &arg_vals,
+                        &kw_vals,
+                        stack,
+                        None,
                     )
                     .await?;
                     return Ok(mark_safe(s));
@@ -624,7 +752,7 @@ async fn eval_to_value_inner(
                         let s = render_macro_body_async(
                             env,
                             state,
-                            &mdef,
+                            mdef.as_ref(),
                             &arg_vals,
                             &kw_vals,
                             stack,
@@ -642,11 +770,14 @@ async fn eval_to_value_inner(
         Expr::Filter { name, input, args } => {
             // Fast-path: builtin filter chain on variable/literal (no async needed)
             if args.is_empty() {
-                if let Some(r) = try_apply_peeled_builtin_filter_chain_value(env, stack, e) {
+                if let Some(r) = try_apply_peeled_builtin_filter_chain_value(env, state, stack, e) {
                     return r;
                 }
             }
-            if args.is_empty() && !env.custom_filters.contains_key(name) && !env.async_custom_filters.contains_key(name) {
+            if args.is_empty()
+                && !env.custom_filters.contains_key(name)
+                && !env.async_custom_filters.contains_key(name)
+            {
                 if let Expr::Variable(var_name) = input.as_ref() {
                     let input_v = env.resolve_variable_ref(stack, var_name)?;
                     match name.as_str() {
@@ -776,26 +907,31 @@ pub(super) async fn eval_for_output_async(
                 if let Some((rev_names, leaf)) =
                     peel_builtin_upper_lower_length_chain(e, &env.custom_filters)
                 {
-                    match leaf {
-                        Expr::Variable(var_name) => {
-                            let v = env.resolve_variable_ref(stack, var_name)?;
-                            let input_safe = crate::value::is_marked_safe(v.as_ref());
-                            match apply_builtin_filter_chain_on_cow_value(v, &rev_names) {
-                                Ok(val) => {
-                                    let s = crate::value::value_to_string(&val);
-                                    let escape = env.autoescape
-                                        && match &val {
-                                            Value::String(_) => !input_safe,
-                                            _ => true,
-                                        };
-                                    if escape {
-                                        return Ok(crate::filters::escape_html(&s));
-                                    }
-                                    return Ok(s);
+                    let skip_root = |root_name: &str| {
+                        state.macro_namespaces.contains_key(root_name)
+                            || state.macro_namespace_values.contains_key(root_name)
+                    };
+                    if let Some(v) =
+                        resolve_plain_value_or_attr_chain_ref(env, stack, leaf, skip_root)?
+                    {
+                        let input_safe = crate::value::is_marked_safe(v.as_ref());
+                        match apply_builtin_filter_chain_on_cow_value(v, &rev_names) {
+                            Ok(val) => {
+                                let s = crate::value::value_to_string(&val);
+                                let escape = env.autoescape
+                                    && match &val {
+                                        Value::String(_) => !input_safe,
+                                        _ => true,
+                                    };
+                                if escape {
+                                    return Ok(crate::filters::escape_html(&s));
                                 }
-                                Err(e) => return Err(e),
+                                return Ok(s);
                             }
+                            Err(e) => return Err(e),
                         }
+                    }
+                    match leaf {
                         Expr::Literal(Value::String(s)) => {
                             let mut current = s.clone();
                             for n in &rev_names {
@@ -808,8 +944,7 @@ pub(super) async fn eval_for_output_async(
                                             .to_string();
                                     }
                                     "capitalize" => {
-                                        current =
-                                            crate::filters::capitalize_string_slice(&current);
+                                        current = crate::filters::capitalize_string_slice(&current);
                                     }
                                     "title" => {
                                         current = match crate::filters::filter_title(
@@ -851,7 +986,10 @@ pub(super) async fn eval_for_output_async(
                     }
                 }
             }
-            if args.is_empty() && !env.custom_filters.contains_key(name) && !env.async_custom_filters.contains_key(name) {
+            if args.is_empty()
+                && !env.custom_filters.contains_key(name)
+                && !env.async_custom_filters.contains_key(name)
+            {
                 if let Expr::Variable(var_name) = input.as_ref() {
                     let input_v = env.resolve_variable_ref(stack, var_name)?;
                     match name.as_str() {
@@ -954,7 +1092,8 @@ pub(super) async fn eval_for_output_async(
                             };
                         }
                         "trim" => {
-                            let out = crate::filters::chain_trim_like_builtin(&Value::String(s.clone()));
+                            let out =
+                                crate::filters::chain_trim_like_builtin(&Value::String(s.clone()));
                             let t = crate::value::value_to_string(&out);
                             return if env.autoescape {
                                 Ok(crate::filters::escape_html(&t))

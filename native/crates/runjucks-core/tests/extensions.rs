@@ -1,8 +1,8 @@
 //! Custom tag extensions ([`Environment::register_extension`]) — parity with Nunjucks `addExtension`
 //! (declarative tags + `process` callback; not Nunjucks’ JS `parse()` API).
 
-use runjucks_core::Environment;
 use runjucks_core::loader::map_loader;
+use runjucks_core::Environment;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;

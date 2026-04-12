@@ -172,10 +172,7 @@ mod tests {
     async fn async_set_tag() {
         let env = Environment::default();
         let out = env
-            .render_string_async(
-                "{% set x = 42 %}{{ x }}".to_string(),
-                json!({}),
-            )
+            .render_string_async("{% set x = 42 %}{{ x }}".to_string(), json!({}))
             .await
             .unwrap();
         assert_eq!(out, "42");

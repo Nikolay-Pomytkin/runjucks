@@ -174,6 +174,47 @@ fn joiner_three_calls(c: &mut Criterion) {
     });
 }
 
+fn conditional_macro_iter_switch_filters(c: &mut Criterion) {
+    let tpl = "{% macro fmt(v) -%}{% switch v.kind %}{% case 'warn' %}{{ v.msg | trim | upper }}{% case 'ok' %}{{ v.msg | trim | lower }}{% default %}{{ v.msg | trim }}{% endswitch %}{%- endmacro %}{% for v in rows %}{% if v.enabled %}{{ fmt(v) }}{% endif %}{% endfor %}".to_string();
+    let rows: Vec<_> = (0..80)
+        .map(|i| {
+            json!({
+                "enabled": i % 3 != 0,
+                "kind": if i % 2 == 0 { "warn" } else { "ok" },
+                "msg": format!("  Row {}  ", i)
+            })
+        })
+        .collect();
+    let env = Environment::default();
+    let ctx = json!({ "rows": rows });
+    c.bench_function("conditional_macro_iter_switch_filters", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+fn switch_in_for_attr_filters(c: &mut Criterion) {
+    let tpl = "{% for row in rows %}{% switch row.type %}{% case 'a' %}{{ row.payload.title | trim | upper }}{% case 'b' %}{{ row.payload.title | trim | lower }}{% default %}{{ row.payload.title | trim }}{% endswitch %}{% endfor %}".to_string();
+    let rows: Vec<_> = (0..120)
+        .map(|i| {
+            json!({
+                "type": if i % 3 == 0 { "a" } else if i % 3 == 1 { "b" } else { "c" },
+                "payload": { "title": format!("  T{}  ", i) }
+            })
+        })
+        .collect();
+    let env = Environment::default();
+    let ctx = json!({ "rows": rows });
+    c.bench_function("switch_in_for_with_attr_filters", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     for_medium,
@@ -188,6 +229,8 @@ criterion_group!(
     variable_trim_then_upper,
     variable_trim_capitalize_chain,
     variable_lower_title_chain,
-    joiner_three_calls
+    joiner_three_calls,
+    conditional_macro_iter_switch_filters,
+    switch_in_for_attr_filters
 );
 criterion_main!(benches);

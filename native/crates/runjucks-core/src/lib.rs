@@ -25,6 +25,8 @@
 //! ```
 
 pub mod ast;
+#[cfg(feature = "async")]
+pub mod async_renderer;
 pub mod environment;
 pub mod errors;
 pub mod extension;
@@ -36,16 +38,13 @@ pub mod loader;
 pub mod parser;
 pub mod render_common;
 pub mod renderer;
-#[cfg(feature = "async")]
-pub mod async_renderer;
 pub mod tag_lex;
 pub mod value;
 
+#[cfg(feature = "async")]
+pub use environment::{AsyncCustomFilter, AsyncCustomGlobalFn};
 pub use environment::{CustomFilter, CustomGlobalFn, CustomTest, Environment};
 pub use errors::RunjucksError;
 pub use extension::{CustomExtensionHandler, ExtensionTagMeta};
 pub use lexer::{LexerOptions, Tags};
 pub use loader::{file_system_loader, map_loader, FileSystemLoader, FnLoader, TemplateLoader};
-#[cfg(feature = "async")]
-pub use environment::{AsyncCustomFilter, AsyncCustomGlobalFn};
-

@@ -3,9 +3,12 @@
 use crate::ast::{Expr, ForVars, Node, SwitchCase};
 use crate::environment::Environment;
 use crate::errors::Result;
-use crate::render_common::{iterable_empty, iterable_from_value, Iterable};
+use crate::render_common::{
+    iterable_empty, iterable_from_value, resolve_plain_value_or_attr_chain_ref, Iterable,
+};
 use crate::renderer::{CtxStack, RenderState};
 use serde_json::Value;
+use std::borrow::Cow;
 
 use super::eval::eval_to_value_async;
 use super::nodes::render_children_async;
@@ -97,14 +100,44 @@ pub(super) async fn render_switch_async(
     default_body: Option<&[Node]>,
     stack: &mut CtxStack,
 ) -> Result<String> {
-    let disc = eval_to_value_async(env, state, disc_expr, stack).await?;
-    let mut start = None;
-    for (i, c) in cases.iter().enumerate() {
-        if eval_to_value_async(env, state, &c.cond, stack).await? == disc {
-            start = Some(i);
-            break;
+    let start = {
+        let skip_root = |root_name: &str| {
+            state.macro_namespaces.contains_key(root_name)
+                || state.macro_namespace_values.contains_key(root_name)
+        };
+        let mut disc = if let Some(v) =
+            resolve_plain_value_or_attr_chain_ref(env, stack, disc_expr, skip_root)?
+        {
+            v
+        } else {
+            Cow::Owned(eval_to_value_async(env, state, disc_expr, stack).await?)
+        };
+        let mut start = None;
+        for (i, c) in cases.iter().enumerate() {
+            let case_val = match &c.cond {
+                Expr::Literal(v) => Cow::Borrowed(v),
+                _ => {
+                    let skip_root = |root_name: &str| {
+                        state.macro_namespaces.contains_key(root_name)
+                            || state.macro_namespace_values.contains_key(root_name)
+                    };
+                    if let Some(v) =
+                        resolve_plain_value_or_attr_chain_ref(env, stack, &c.cond, skip_root)?
+                    {
+                        v
+                    } else {
+                        disc = Cow::Owned(disc.into_owned());
+                        Cow::Owned(eval_to_value_async(env, state, &c.cond, stack).await?)
+                    }
+                }
+            };
+            if case_val.as_ref() == disc.as_ref() {
+                start = Some(i);
+                break;
+            }
         }
-    }
+        start
+    };
     let mut acc = String::new();
     if let Some(mut idx) = start {
         loop {

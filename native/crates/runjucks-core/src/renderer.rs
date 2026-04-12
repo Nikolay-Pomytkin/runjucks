@@ -9,7 +9,8 @@ use crate::render_common::{
     add_like_js, apply_builtin_filter_chain_on_cow_value, as_number,
     collect_attr_chain_from_getattr, compare_values, eval_in, is_test_parts, is_truthy,
     iterable_empty, iterable_from_value, jinja_slice_array, json_num,
-    peel_builtin_upper_lower_length_chain, ExtendsLayout, Iterable,
+    peel_builtin_upper_lower_length_chain, resolve_plain_value_or_attr_chain_ref, ExtendsLayout,
+    Iterable,
 };
 use crate::value::{is_undefined_value, mark_safe, undefined_value};
 use ahash::AHashMap;
@@ -29,7 +30,7 @@ use std::sync::Arc;
 /// Frame maps use [`ahash::AHashMap`] for faster string-key lookup on hot paths (many distinct variables).
 #[derive(Debug, Clone)]
 pub struct CtxStack {
-    pub(crate) frames: Vec<AHashMap<String, Arc<Value>>>,
+    pub(crate) frames: Vec<Arc<AHashMap<String, Arc<Value>>>>,
     stack_id: u64,
     /// Incremented on any binding change (frames, `set`, `set_local`, `loop` injection).
     /// Used to reuse merged extension context snapshots when the stack is unchanged.
@@ -37,14 +38,31 @@ pub struct CtxStack {
 }
 
 impl CtxStack {
-    pub fn from_root(root: Map<String, Value>) -> Self {
+    fn next_stack_id() -> u64 {
         static NEXT_STACK_ID: AtomicU64 = AtomicU64::new(1);
+        NEXT_STACK_ID.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn from_root(root: Map<String, Value>) -> Self {
         let mapped: AHashMap<String, Arc<Value>> =
             root.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
+        Self::from_shared_root(mapped)
+    }
+
+    pub(crate) fn from_shared_root(root: AHashMap<String, Arc<Value>>) -> Self {
         Self {
-            frames: vec![mapped],
-            stack_id: NEXT_STACK_ID.fetch_add(1, Ordering::Relaxed),
+            frames: vec![Arc::new(root)],
+            stack_id: Self::next_stack_id(),
             revision: 0,
+        }
+    }
+
+    /// Isolated fork that reuses existing frame maps until a write occurs.
+    pub(crate) fn fork_isolated(&self) -> Self {
+        Self {
+            frames: self.frames.clone(),
+            stack_id: Self::next_stack_id(),
+            revision: self.revision,
         }
     }
 
@@ -60,7 +78,7 @@ impl CtxStack {
     }
 
     pub fn push_frame(&mut self) {
-        self.frames.push(AHashMap::new());
+        self.frames.push(Arc::new(AHashMap::new()));
         self.bump_revision();
     }
 
@@ -81,6 +99,16 @@ impl CtxStack {
         None
     }
 
+    /// Clones the shared handle for the innermost binding of `name`.
+    pub fn get_shared(&self, name: &str) -> Option<Arc<Value>> {
+        for f in self.frames.iter().rev() {
+            if let Some(v) = f.get(name) {
+                return Some(Arc::clone(v));
+            }
+        }
+        None
+    }
+
     pub fn get(&self, name: &str) -> Value {
         self.get_ref(name).cloned().unwrap_or(Value::Null)
     }
@@ -91,15 +119,16 @@ impl CtxStack {
 
     pub fn set(&mut self, name: &str, value: Value) {
         let arc = Arc::new(value);
-        for f in self.frames.iter_mut().rev() {
-            if f.contains_key(name) {
-                f.insert(name.to_string(), arc);
-                self.bump_revision();
-                return;
-            }
+        if let Some(idx) = (0..self.frames.len())
+            .rev()
+            .find(|&idx| self.frames[idx].contains_key(name))
+        {
+            Arc::make_mut(&mut self.frames[idx]).insert(name.to_string(), arc);
+            self.bump_revision();
+            return;
         }
         if let Some(inner) = self.frames.last_mut() {
-            inner.insert(name.to_string(), arc);
+            Arc::make_mut(inner).insert(name.to_string(), arc);
             self.bump_revision();
         }
     }
@@ -107,7 +136,7 @@ impl CtxStack {
     /// Assign in the innermost frame only (for `for` / `loop.*` bindings so inner loops can shadow).
     pub fn set_local(&mut self, name: &str, value: Value) {
         if let Some(inner) = self.frames.last_mut() {
-            inner.insert(name.to_string(), Arc::new(value));
+            Arc::make_mut(inner).insert(name.to_string(), Arc::new(value));
             self.bump_revision();
         }
     }
@@ -117,12 +146,13 @@ impl CtxStack {
         let cap: usize = self.frames.iter().map(|f| f.len()).sum();
         let mut m = Map::with_capacity(cap);
         for f in &self.frames {
-            for (k, v) in f {
+            for (k, v) in f.as_ref() {
                 m.insert(k.clone(), v.as_ref().clone());
             }
         }
         m
     }
+
 }
 
 /// One active `{% call %}`: body to render for `caller()` / `caller(args…)`, plus optional formal parameters.
@@ -136,9 +166,9 @@ pub struct CallerFrame {
 pub struct RenderState<'a> {
     pub loader: Option<&'a (dyn TemplateLoader + Send + Sync)>,
     pub stack: Vec<String>,
-    pub macro_scopes: Vec<HashMap<String, MacroDef>>,
+    pub macro_scopes: Vec<HashMap<String, Arc<MacroDef>>>,
     /// `{% import "x" as ns %}` — macros callable as `ns.macro_name()`.
-    pub macro_namespaces: HashMap<String, HashMap<String, MacroDef>>,
+    pub macro_namespaces: HashMap<String, HashMap<String, Arc<MacroDef>>>,
     /// Top-level `{% set %}` exports from each `import … as ns` namespace (`ns.name`): single- and
     /// multi-target `=` forms (same value per target) and block `{% set x %}…{% endset %}`, evaluated
     /// in source order. Also used with `macro_namespaces` for resolving `ns.*`.
@@ -158,6 +188,9 @@ pub struct RenderState<'a> {
     /// Cached `stack.flatten()` for [`Node::ExtensionTag`] when both stack identity and
     /// [`CtxStack::revision`] match.
     extension_context_cache: Option<(usize, u64, Value)>,
+    /// Cache whether a `for` body reads `loop` (keyed by body slice address + len) so repeated
+    /// renders of the same parsed template don't re-scan the subtree each call.
+    loop_usage_cache: HashMap<(usize, usize), bool>,
 }
 
 impl<'a> RenderState<'a> {
@@ -182,6 +215,7 @@ impl<'a> RenderState<'a> {
             joiners: Vec::new(),
             rng,
             extension_context_cache: None,
+            loop_usage_cache: HashMap::new(),
         }
     }
 
@@ -199,7 +233,7 @@ impl<'a> RenderState<'a> {
         self.stack.pop();
     }
 
-    pub fn push_macros(&mut self, defs: HashMap<String, MacroDef>) {
+    pub fn push_macros(&mut self, defs: HashMap<String, Arc<MacroDef>>) {
         self.macro_scopes.push(defs);
     }
 
@@ -207,7 +241,7 @@ impl<'a> RenderState<'a> {
         self.macro_scopes.pop();
     }
 
-    pub fn lookup_macro(&self, name: &str) -> Option<&MacroDef> {
+    pub fn lookup_macro(&self, name: &str) -> Option<&Arc<MacroDef>> {
         for scope in self.macro_scopes.iter().rev() {
             if let Some(m) = scope.get(name) {
                 return Some(m);
@@ -216,7 +250,7 @@ impl<'a> RenderState<'a> {
         None
     }
 
-    pub fn lookup_namespaced_macro(&self, ns: &str, macro_name: &str) -> Option<&MacroDef> {
+    pub fn lookup_namespaced_macro(&self, ns: &str, macro_name: &str) -> Option<&Arc<MacroDef>> {
         self.macro_namespaces
             .get(ns)
             .and_then(|m| m.get(macro_name))
@@ -425,14 +459,14 @@ fn render_with_state(
 }
 
 /// Top-level `{% macro %}` definitions only (Nunjucks `getExported` surface for macro libraries).
-pub(crate) fn collect_top_level_macros(root: &Node) -> HashMap<String, MacroDef> {
+pub(crate) fn collect_top_level_macros(root: &Node) -> HashMap<String, Arc<MacroDef>> {
     let mut m = HashMap::new();
     let Node::Root(children) = root else {
         return m;
     };
     for n in children {
         if let Node::MacroDef(def) = n {
-            m.insert(def.name.clone(), def.clone());
+            m.insert(def.name.clone(), Arc::new(def.clone()));
         }
     }
     m
@@ -577,7 +611,7 @@ fn render_node(
             let mut defs = HashMap::new();
             for n in nodes.iter() {
                 if let Node::MacroDef(m) = n {
-                    defs.insert(m.name.clone(), m.clone());
+                    defs.insert(m.name.clone(), Arc::new(m.clone()));
                 }
             }
             let had_macros = !defs.is_empty();
@@ -603,7 +637,20 @@ fn render_node(
         Node::If { branches } => {
             for br in branches {
                 if let Some(cond) = &br.cond {
-                    if !is_truthy(&eval_to_value(env, state, cond, stack)?) {
+                    let cond_truthy = {
+                        let skip_root = |root_name: &str| {
+                            state.macro_namespaces.contains_key(root_name)
+                                || state.macro_namespace_values.contains_key(root_name)
+                        };
+                        if let Some(v) =
+                            resolve_plain_value_or_attr_chain_ref(env, stack, cond, skip_root)?
+                        {
+                            is_truthy(v.as_ref())
+                        } else {
+                            is_truthy(&eval_to_value(env, state, cond, stack)?)
+                        }
+                    };
+                    if !cond_truthy {
                         continue;
                     }
                 }
@@ -825,7 +872,7 @@ fn render_node(
             let res = render_macro_body(
                 env,
                 state,
-                &mdef,
+                mdef.as_ref(),
                 &arg_vals,
                 &kw_vals,
                 stack,
@@ -883,14 +930,44 @@ fn render_switch(
     default_body: Option<&[Node]>,
     stack: &mut CtxStack,
 ) -> Result<String> {
-    let disc = eval_to_value(env, state, disc_expr, stack)?;
-    let mut start = None;
-    for (i, c) in cases.iter().enumerate() {
-        if eval_to_value(env, state, &c.cond, stack)? == disc {
-            start = Some(i);
-            break;
+    let start = {
+        let skip_root = |root_name: &str| {
+            state.macro_namespaces.contains_key(root_name)
+                || state.macro_namespace_values.contains_key(root_name)
+        };
+        let mut disc = if let Some(v) =
+            resolve_plain_value_or_attr_chain_ref(env, stack, disc_expr, skip_root)?
+        {
+            v
+        } else {
+            Cow::Owned(eval_to_value(env, state, disc_expr, stack)?)
+        };
+        let mut start = None;
+        for (i, c) in cases.iter().enumerate() {
+            let case_val = match &c.cond {
+                Expr::Literal(v) => Cow::Borrowed(v),
+                _ => {
+                    let skip_root = |root_name: &str| {
+                        state.macro_namespaces.contains_key(root_name)
+                            || state.macro_namespace_values.contains_key(root_name)
+                    };
+                    if let Some(v) =
+                        resolve_plain_value_or_attr_chain_ref(env, stack, &c.cond, skip_root)?
+                    {
+                        v
+                    } else {
+                        disc = Cow::Owned(disc.into_owned());
+                        Cow::Owned(eval_to_value(env, state, &c.cond, stack)?)
+                    }
+                }
+            };
+            if case_val.as_ref() == disc.as_ref() {
+                start = Some(i);
+                break;
+            }
         }
-    }
+        start
+    };
     let mut acc = String::new();
     if let Some(mut idx) = start {
         loop {
@@ -916,6 +993,168 @@ fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
     stack.bump_revision();
 }
 
+fn expr_uses_variable_name(expr: &Expr, needle: &str) -> bool {
+    match expr {
+        Expr::Variable(name) => name == needle,
+        Expr::Literal(_) => false,
+        Expr::Unary { expr, .. } => expr_uses_variable_name(expr, needle),
+        Expr::Binary { left, right, .. } => {
+            expr_uses_variable_name(left, needle) || expr_uses_variable_name(right, needle)
+        }
+        Expr::Compare { head, rest } => {
+            expr_uses_variable_name(head, needle)
+                || rest
+                    .iter()
+                    .any(|(_, rhs)| expr_uses_variable_name(rhs, needle))
+        }
+        Expr::InlineIf {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            expr_uses_variable_name(cond, needle)
+                || expr_uses_variable_name(then_expr, needle)
+                || else_expr
+                    .as_ref()
+                    .is_some_and(|e| expr_uses_variable_name(e, needle))
+        }
+        Expr::GetAttr { base, .. } => expr_uses_variable_name(base, needle),
+        Expr::GetItem { base, index } => {
+            expr_uses_variable_name(base, needle) || expr_uses_variable_name(index, needle)
+        }
+        Expr::Slice { start, stop, step } => {
+            start
+                .as_ref()
+                .is_some_and(|e| expr_uses_variable_name(e, needle))
+                || stop
+                    .as_ref()
+                    .is_some_and(|e| expr_uses_variable_name(e, needle))
+                || step
+                    .as_ref()
+                    .is_some_and(|e| expr_uses_variable_name(e, needle))
+        }
+        Expr::Call {
+            callee,
+            args,
+            kwargs,
+        } => {
+            expr_uses_variable_name(callee, needle)
+                || args.iter().any(|e| expr_uses_variable_name(e, needle))
+                || kwargs
+                    .iter()
+                    .any(|(_, e)| expr_uses_variable_name(e, needle))
+        }
+        Expr::Filter { input, args, .. } => {
+            expr_uses_variable_name(input, needle)
+                || args.iter().any(|e| expr_uses_variable_name(e, needle))
+        }
+        Expr::List(items) => items.iter().any(|e| expr_uses_variable_name(e, needle)),
+        Expr::Dict(pairs) => pairs
+            .iter()
+            .any(|(k, v)| expr_uses_variable_name(k, needle) || expr_uses_variable_name(v, needle)),
+        Expr::RegexLiteral { .. } => false,
+    }
+}
+
+fn nodes_use_variable_name(nodes: &[Node], needle: &str) -> bool {
+    nodes.iter().any(|n| node_uses_variable_name(n, needle))
+}
+
+fn node_uses_variable_name(node: &Node, needle: &str) -> bool {
+    match node {
+        Node::Root(children) => nodes_use_variable_name(children, needle),
+        Node::Text(_) | Node::MacroDef(_) => false,
+        Node::Output(exprs) => exprs.iter().any(|e| expr_uses_variable_name(e, needle)),
+        Node::If { branches } => branches.iter().any(|br| {
+            br.cond
+                .as_ref()
+                .is_some_and(|e| expr_uses_variable_name(e, needle))
+                || nodes_use_variable_name(&br.body, needle)
+        }),
+        Node::Switch {
+            expr,
+            cases,
+            default_body,
+        } => {
+            expr_uses_variable_name(expr, needle)
+                || cases.iter().any(|c| {
+                    expr_uses_variable_name(&c.cond, needle)
+                        || nodes_use_variable_name(&c.body, needle)
+                })
+                || default_body
+                    .as_ref()
+                    .is_some_and(|nodes| nodes_use_variable_name(nodes, needle))
+        }
+        Node::For {
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_variable_name(iter, needle)
+                || nodes_use_variable_name(body, needle)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|nodes| nodes_use_variable_name(nodes, needle))
+        }
+        Node::Set { value, body, .. } => {
+            value
+                .as_ref()
+                .is_some_and(|e| expr_uses_variable_name(e, needle))
+                || body
+                    .as_ref()
+                    .is_some_and(|nodes| nodes_use_variable_name(nodes, needle))
+        }
+        Node::Include {
+            template,
+            with_context,
+            ..
+        } => {
+            expr_uses_variable_name(template, needle)
+                || (needle == "loop" && !matches!(with_context, Some(false)))
+        }
+        Node::Import { template, .. } | Node::FromImport { template, .. } => {
+            expr_uses_variable_name(template, needle)
+        }
+        Node::Extends { parent } => expr_uses_variable_name(parent, needle),
+        Node::Block { body, .. } => nodes_use_variable_name(body, needle),
+        Node::FilterBlock { args, body, .. } => {
+            args.iter().any(|e| expr_uses_variable_name(e, needle))
+                || nodes_use_variable_name(body, needle)
+        }
+        Node::CallBlock { callee, body, .. } => {
+            expr_uses_variable_name(callee, needle) || nodes_use_variable_name(body, needle)
+        }
+        Node::ExtensionTag { body, .. } => body
+            .as_ref()
+            .is_some_and(|nodes| nodes_use_variable_name(nodes, needle)),
+        Node::AsyncEach {
+            iter,
+            body,
+            else_body,
+            ..
+        }
+        | Node::AsyncAll {
+            iter,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_variable_name(iter, needle)
+                || nodes_use_variable_name(body, needle)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|nodes| nodes_use_variable_name(nodes, needle))
+        }
+        Node::IfAsync { branches } => branches.iter().any(|br| {
+            br.cond
+                .as_ref()
+                .is_some_and(|e| expr_uses_variable_name(e, needle))
+                || nodes_use_variable_name(&br.body, needle)
+        }),
+    }
+}
+
 fn render_for(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -938,12 +1177,23 @@ fn render_for(
     stack.push_frame();
     let mut acc = String::new();
 
+    let loop_key = (body.as_ptr() as usize, body.len());
+    let needs_loop_object = if let Some(cached) = state.loop_usage_cache.get(&loop_key) {
+        *cached
+    } else {
+        let computed = nodes_use_variable_name(body, "loop");
+        state.loop_usage_cache.insert(loop_key, computed);
+        computed
+    };
+
     match (vars, it) {
         (ForVars::Single(x), Iterable::Rows(items)) => {
             let len = items.len();
             acc.reserve(len.saturating_mul(16));
             for (i, item) in items.into_iter().enumerate() {
-                inject_loop(stack, i, len);
+                if needs_loop_object {
+                    inject_loop(stack, i, len);
+                }
                 stack.set_local(x, item);
                 acc.push_str(&render_children(env, state, body, stack)?);
             }
@@ -952,7 +1202,9 @@ fn render_for(
             let len = rows.len();
             acc.reserve(len.saturating_mul(16));
             for (i, row) in rows.into_iter().enumerate() {
-                inject_loop(stack, i, len);
+                if needs_loop_object {
+                    inject_loop(stack, i, len);
+                }
                 if let Value::Array(cols) = row {
                     for (u, name) in names.iter().enumerate() {
                         let cell = cols.get(u).cloned().unwrap_or(Value::Null);
@@ -970,7 +1222,9 @@ fn render_for(
             let len = pairs.len();
             acc.reserve(len.saturating_mul(16));
             for (i, (k, v)) in pairs.into_iter().enumerate() {
-                inject_loop(stack, i, len);
+                if needs_loop_object {
+                    inject_loop(stack, i, len);
+                }
                 stack.set_local(&names[0], Value::String(k));
                 stack.set_local(&names[1], v);
                 acc.push_str(&render_children(env, state, body, stack)?);
@@ -1038,6 +1292,7 @@ fn filter_chain_has_async_override(env: &Environment, e: &Expr) -> bool {
 
 fn try_apply_peeled_builtin_filter_chain_value(
     env: &Environment,
+    state: &RenderState<'_>,
     stack: &mut CtxStack,
     e: &Expr,
 ) -> Option<Result<Value>> {
@@ -1046,44 +1301,45 @@ fn try_apply_peeled_builtin_filter_chain_value(
         return None;
     }
     let (rev_names, leaf) = peel_builtin_upper_lower_length_chain(e, &env.custom_filters)?;
-    match leaf {
-        Expr::Variable(var_name) => {
-            let v = match env.resolve_variable_ref(stack, var_name) {
-                Ok(v) => v,
-                Err(e) => return Some(Err(e)),
-            };
-            Some(apply_builtin_filter_chain_on_cow_value(v, &rev_names))
-        }
-        Expr::Literal(Value::String(s)) => {
-            let mut current = s.clone();
-            for n in &rev_names {
-                match *n {
-                    "upper" => current = current.to_uppercase(),
-                    "lower" => current = current.to_lowercase(),
-                    "trim" => {
-                        current = current
-                            .trim_matches(|c: char| c.is_whitespace())
-                            .to_string();
+    let skip_root = |root_name: &str| {
+        state.macro_namespaces.contains_key(root_name)
+            || state.macro_namespace_values.contains_key(root_name)
+    };
+    match resolve_plain_value_or_attr_chain_ref(env, stack, leaf, skip_root) {
+        Ok(Some(v)) => Some(apply_builtin_filter_chain_on_cow_value(v, &rev_names)),
+        Ok(None) => match leaf {
+            Expr::Literal(Value::String(s)) => {
+                let mut current = s.clone();
+                for n in &rev_names {
+                    match *n {
+                        "upper" => current = current.to_uppercase(),
+                        "lower" => current = current.to_lowercase(),
+                        "trim" => {
+                            current = current
+                                .trim_matches(|c: char| c.is_whitespace())
+                                .to_string();
+                        }
+                        "capitalize" => {
+                            current = crate::filters::capitalize_string_slice(&current);
+                        }
+                        "title" => {
+                            current = match crate::filters::filter_title(&Value::String(
+                                std::mem::take(&mut current),
+                            )) {
+                                Value::String(s) => s,
+                                o => crate::value::value_to_string(&o),
+                            };
+                        }
+                        "length" => return Some(Ok(json!(current.chars().count()))),
+                        _ => unreachable!(),
                     }
-                    "capitalize" => {
-                        current = crate::filters::capitalize_string_slice(&current);
-                    }
-                    "title" => {
-                        current = match crate::filters::filter_title(&Value::String(std::mem::take(
-                            &mut current,
-                        ))) {
-                            Value::String(s) => s,
-                            o => crate::value::value_to_string(&o),
-                        };
-                    }
-                    "length" => return Some(Ok(json!(current.chars().count()))),
-                    _ => unreachable!(),
                 }
+                Some(Ok(Value::String(current)))
             }
-            Some(Ok(Value::String(current)))
-        }
-        Expr::Literal(Value::Array(a)) if rev_names == ["length"] => Some(Ok(json!(a.len()))),
-        _ => None,
+            Expr::Literal(Value::Array(a)) if rev_names == ["length"] => Some(Ok(json!(a.len()))),
+            _ => None,
+        },
+        Err(e) => Some(Err(e)),
     }
 }
 
@@ -1115,26 +1371,31 @@ fn eval_for_output(
                 if let Some((rev_names, leaf)) =
                     peel_builtin_upper_lower_length_chain(e, &env.custom_filters)
                 {
-                    match leaf {
-                        Expr::Variable(var_name) => {
-                            let v = env.resolve_variable_ref(stack, var_name)?;
-                            let input_safe = crate::value::is_marked_safe(v.as_ref());
-                            match apply_builtin_filter_chain_on_cow_value(v, &rev_names) {
-                                Ok(val) => {
-                                    let s = crate::value::value_to_string(&val);
-                                    let escape = env.autoescape
-                                        && match &val {
-                                            Value::String(_) => !input_safe,
-                                            _ => true,
-                                        };
-                                    if escape {
-                                        return Ok(crate::filters::escape_html(&s));
-                                    }
-                                    return Ok(s);
+                    let skip_root = |root_name: &str| {
+                        state.macro_namespaces.contains_key(root_name)
+                            || state.macro_namespace_values.contains_key(root_name)
+                    };
+                    if let Some(v) =
+                        resolve_plain_value_or_attr_chain_ref(env, stack, leaf, skip_root)?
+                    {
+                        let input_safe = crate::value::is_marked_safe(v.as_ref());
+                        match apply_builtin_filter_chain_on_cow_value(v, &rev_names) {
+                            Ok(val) => {
+                                let s = crate::value::value_to_string(&val);
+                                let escape = env.autoescape
+                                    && match &val {
+                                        Value::String(_) => !input_safe,
+                                        _ => true,
+                                    };
+                                if escape {
+                                    return Ok(crate::filters::escape_html(&s));
                                 }
-                                Err(e) => return Err(e),
+                                return Ok(s);
                             }
+                            Err(e) => return Err(e),
                         }
+                    }
+                    match leaf {
                         Expr::Literal(Value::String(s)) => {
                             let mut current = s.clone();
                             for n in &rev_names {
@@ -1292,7 +1553,8 @@ fn eval_for_output(
                             };
                         }
                         "trim" => {
-                            let out = crate::filters::chain_trim_like_builtin(&Value::String(s.clone()));
+                            let out =
+                                crate::filters::chain_trim_like_builtin(&Value::String(s.clone()));
                             let t = crate::value::value_to_string(&out);
                             return if env.autoescape {
                                 Ok(crate::filters::escape_html(&t))
@@ -1386,31 +1648,69 @@ fn render_macro_body(
     outer: &mut CtxStack,
     module_closure: Option<&HashMap<String, Value>>,
 ) -> Result<String> {
-    let mut inner = outer.flatten();
-    if let Some(mc) = module_closure {
-        for (k, v) in mc {
-            inner.insert(k.clone(), v.clone());
+    let positional: Vec<Arc<Value>> = positional.iter().cloned().map(Arc::new).collect();
+    let kwargs: Vec<(String, Arc<Value>)> = kwargs
+        .iter()
+        .map(|(k, v)| (k.clone(), Arc::new(v.clone())))
+        .collect();
+    render_macro_body_shared(env, state, m, &positional, &kwargs, outer, module_closure)
+}
+
+fn render_macro_body_shared(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    m: &MacroDef,
+    positional: &[Arc<Value>],
+    kwargs: &[(String, Arc<Value>)],
+    outer: &mut CtxStack,
+    module_closure: Option<&HashMap<String, Value>>,
+) -> Result<String> {
+    let mut stack = outer.fork_isolated();
+    stack.push_frame();
+    let mut bindings = Vec::with_capacity(m.params.len());
+    if kwargs.is_empty() {
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value(env, state, d, outer)?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            bindings.push((p.name.clone(), val));
+        }
+    } else {
+        let kw_lookup: HashMap<&str, &Arc<Value>> =
+            kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
+                Arc::clone(*v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value(env, state, d, outer)?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            bindings.push((p.name.clone(), val));
         }
     }
-    for p in &m.params {
-        let val = if let Some(ref d) = p.default {
-            eval_to_value(env, state, d, outer)?
-        } else {
-            Value::Null
-        };
-        inner.insert(p.name.clone(), val);
-    }
-    for (i, p) in m.params.iter().enumerate() {
-        if let Some(v) = positional.get(i) {
-            inner.insert(p.name.clone(), v.clone());
+    {
+        let inner = Arc::make_mut(
+            stack
+                .frames
+                .last_mut()
+                .expect("macro body requires an active local frame"),
+        );
+        if let Some(mc) = module_closure {
+            for (k, v) in mc {
+                inner.insert(k.clone(), Arc::new(v.clone()));
+            }
+        }
+        for (name, val) in bindings {
+            inner.insert(name, val);
         }
     }
-    for (k, v) in kwargs {
-        if m.params.iter().any(|p| p.name == *k) {
-            inner.insert(k.clone(), v.clone());
-        }
-    }
-    let mut stack = CtxStack::from_root(inner);
     render_children(env, state, &m.body, &mut stack)
 }
 
@@ -1430,27 +1730,83 @@ fn render_caller_invocation(
         return render_children(env, state, &frame.body, stack);
     }
     stack.push_frame();
-    for p in &frame.params {
-        let val = if let Some(ref d) = p.default {
+    let kw_lookup: HashMap<&str, &Value> = kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    for (i, p) in frame.params.iter().enumerate() {
+        let val = if let Some(v) = positional.get(i) {
+            v.clone()
+        } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
+            (*v).clone()
+        } else if let Some(ref d) = p.default {
             eval_to_value(env, state, d, stack)?
         } else {
             Value::Null
         };
         stack.set_local(&p.name, val);
     }
-    for (i, p) in frame.params.iter().enumerate() {
-        if let Some(v) = positional.get(i) {
-            stack.set_local(&p.name, v.clone());
-        }
-    }
-    for (k, v) in kwargs {
-        if frame.params.iter().any(|p| p.name == *k) {
-            stack.set_local(k, v.clone());
-        }
-    }
     let out = render_children(env, state, &frame.body, stack)?;
     stack.pop_frame();
     Ok(out)
+}
+
+fn render_macro_call_no_kwargs(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    mdef: &MacroDef,
+    args: &[Expr],
+    stack: &mut CtxStack,
+    module_closure: Option<&HashMap<String, Value>>,
+) -> Result<String> {
+    match args {
+        [] => render_macro_body_shared(env, state, mdef, &[], &[], stack, module_closure),
+        [a0] => {
+            let arg0 = eval_to_shared_value(env, state, a0, stack)?;
+            let arg_vals = [arg0];
+            render_macro_body_shared(env, state, mdef, &arg_vals, &[], stack, module_closure)
+        }
+        [a0, a1] => {
+            let arg0 = eval_to_shared_value(env, state, a0, stack)?;
+            let arg1 = eval_to_shared_value(env, state, a1, stack)?;
+            let arg_vals = [arg0, arg1];
+            render_macro_body_shared(env, state, mdef, &arg_vals, &[], stack, module_closure)
+        }
+        [a0, a1, a2] => {
+            let arg0 = eval_to_shared_value(env, state, a0, stack)?;
+            let arg1 = eval_to_shared_value(env, state, a1, stack)?;
+            let arg2 = eval_to_shared_value(env, state, a2, stack)?;
+            let arg_vals = [arg0, arg1, arg2];
+            render_macro_body_shared(env, state, mdef, &arg_vals, &[], stack, module_closure)
+        }
+        _ => {
+            let arg_vals: Vec<Value> = args
+                .iter()
+                .map(|a| eval_to_value(env, state, a, stack))
+                .collect::<Result<_>>()?;
+            render_macro_body(env, state, mdef, &arg_vals, &[], stack, module_closure)
+        }
+    }
+}
+
+fn eval_to_shared_value(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    e: &Expr,
+    stack: &mut CtxStack,
+) -> Result<Arc<Value>> {
+    match e {
+        Expr::Variable(name) => {
+            if let Some(v) = stack.get_shared(name) {
+                Ok(v)
+            } else if let Some(v) = env.globals.get(name) {
+                Ok(Arc::new(v.clone()))
+            } else if env.throw_on_undefined {
+                Err(RunjucksError::new(format!("undefined variable: `{name}`")))
+            } else {
+                Ok(Arc::new(undefined_value()))
+            }
+        }
+        Expr::Literal(v) => Ok(Arc::new(v.clone())),
+        _ => Ok(Arc::new(eval_to_value(env, state, e, stack)?)),
+    }
 }
 
 /// Left-to-right binary operands: borrow vars/literals; if RHS needs full eval, own LHS first so
@@ -1526,9 +1882,9 @@ fn eval_to_value(
             }
         },
         Expr::Binary { op, left, right } => match op {
-            BinOp::Add => eval_binary_pair(env, state, stack, left, right, |a, b| {
-                Ok(add_like_js(a, b))
-            }),
+            BinOp::Add => {
+                eval_binary_pair(env, state, stack, left, right, |a, b| Ok(add_like_js(a, b)))
+            }
             BinOp::Concat => Ok(Value::String(format!(
                 "{}{}",
                 eval_for_output(env, state, left, stack)?,
@@ -1669,8 +2025,19 @@ fn eval_to_value(
             then_expr,
             else_expr,
         } => {
-            let c = eval_to_value(env, state, cond, stack)?;
-            if is_truthy(&c) {
+            let cond_truthy = {
+                let skip_root = |root_name: &str| {
+                    state.macro_namespaces.contains_key(root_name)
+                        || state.macro_namespace_values.contains_key(root_name)
+                };
+                if let Some(v) = resolve_plain_value_or_attr_chain_ref(env, stack, cond, skip_root)?
+                {
+                    is_truthy(v.as_ref())
+                } else {
+                    is_truthy(&eval_to_value(env, state, cond, stack)?)
+                }
+            };
+            if cond_truthy {
                 eval_to_value(env, state, then_expr, stack)
             } else if let Some(els) = else_expr {
                 eval_to_value(env, state, els, stack)
@@ -1807,6 +2174,37 @@ fn eval_to_value(
             args,
             kwargs,
         } => {
+            if kwargs.is_empty() {
+                if let Expr::Variable(name) = callee.as_ref() {
+                    if let Some(mdef) = state.lookup_macro(name).cloned() {
+                        let s = render_macro_call_no_kwargs(
+                            env,
+                            state,
+                            mdef.as_ref(),
+                            args,
+                            stack,
+                            None,
+                        )?;
+                        return Ok(mark_safe(s));
+                    }
+                }
+                if let Expr::GetAttr { base, attr } = callee.as_ref() {
+                    if let Expr::Variable(ns) = base.as_ref() {
+                        if let Some(mdef) = state.lookup_namespaced_macro(ns, attr).cloned() {
+                            let mc = state.macro_namespace_values.get(ns).cloned();
+                            let s = render_macro_call_no_kwargs(
+                                env,
+                                state,
+                                mdef.as_ref(),
+                                args,
+                                stack,
+                                mc.as_ref(),
+                            )?;
+                            return Ok(mark_safe(s));
+                        }
+                    }
+                }
+            }
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
@@ -1891,7 +2289,15 @@ fn eval_to_value(
                     return Ok(mark_safe(s));
                 }
                 if let Some(mdef) = state.lookup_macro(name).cloned() {
-                    let s = render_macro_body(env, state, &mdef, &arg_vals, &kw_vals, stack, None)?;
+                    let s = render_macro_body(
+                        env,
+                        state,
+                        mdef.as_ref(),
+                        &arg_vals,
+                        &kw_vals,
+                        stack,
+                        None,
+                    )?;
                     return Ok(mark_safe(s));
                 }
                 if arg_vals.is_empty() {
@@ -1922,7 +2328,7 @@ fn eval_to_value(
                         let s = render_macro_body(
                             env,
                             state,
-                            &mdef,
+                            mdef.as_ref(),
                             &arg_vals,
                             &kw_vals,
                             stack,
@@ -1938,7 +2344,7 @@ fn eval_to_value(
         }
         Expr::Filter { name, input, args } => {
             if args.is_empty() {
-                if let Some(r) = try_apply_peeled_builtin_filter_chain_value(env, stack, e) {
+                if let Some(r) = try_apply_peeled_builtin_filter_chain_value(env, state, stack, e) {
                     return r;
                 }
             }

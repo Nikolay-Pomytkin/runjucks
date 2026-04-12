@@ -3,20 +3,17 @@
 use crate::ast::{Expr, Node};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
-use crate::render_common::is_truthy;
-use crate::renderer::{
-    collect_top_level_macros, scan_literal_import_graph, CtxStack, RenderState,
-};
+use crate::render_common::{is_truthy, resolve_plain_value_or_attr_chain_ref};
+use crate::renderer::{collect_top_level_macros, scan_literal_import_graph, CtxStack, RenderState};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use super::entry::render_entry_async;
 use super::eval::{eval_for_output_async, eval_to_value_async};
-use super::loops::{
-    render_async_all, render_async_each, render_for_async, render_switch_async,
-};
+use super::loops::{render_async_all, render_async_each, render_for_async, render_switch_async};
 use super::macros::render_macro_body_async;
 
 pub(super) fn render_node_async<'a>(
@@ -39,7 +36,7 @@ async fn render_node_inner(
             let mut defs = HashMap::new();
             for n in nodes.iter() {
                 if let crate::ast::Node::MacroDef(m) = n {
-                    defs.insert(m.name.clone(), m.clone());
+                    defs.insert(m.name.clone(), Arc::new(m.clone()));
                 }
             }
             let had_macros = !defs.is_empty();
@@ -65,7 +62,20 @@ async fn render_node_inner(
         Node::If { branches } => {
             for br in branches {
                 if let Some(cond) = &br.cond {
-                    if !is_truthy(&eval_to_value_async(env, state, cond, stack).await?) {
+                    let cond_truthy = {
+                        let skip_root = |root_name: &str| {
+                            state.macro_namespaces.contains_key(root_name)
+                                || state.macro_namespace_values.contains_key(root_name)
+                        };
+                        if let Some(v) =
+                            resolve_plain_value_or_attr_chain_ref(env, stack, cond, skip_root)?
+                        {
+                            is_truthy(v.as_ref())
+                        } else {
+                            is_truthy(&eval_to_value_async(env, state, cond, stack).await?)
+                        }
+                    };
+                    if !cond_truthy {
                         continue;
                     }
                 }
@@ -190,9 +200,7 @@ async fn render_node_inner(
                 } else if let Some(v) = exported_sets.get(export_name) {
                     stack.set(local, v.clone());
                 } else {
-                    return Err(RunjucksError::new(format!(
-                        "cannot import '{export_name}'"
-                    )));
+                    return Err(RunjucksError::new(format!("cannot import '{export_name}'")));
                 }
             }
             state.push_macros(scope);
@@ -202,15 +210,14 @@ async fn render_node_inner(
             "`extends` is only valid at the top level of a loaded template",
         )),
         Node::Block { name, body } => {
-            let to_render: Vec<crate::ast::Node> =
-                if let Some(ref chains) = state.block_chains {
-                    chains
-                        .get(name)
-                        .and_then(|ch| ch.first().cloned())
-                        .unwrap_or_else(|| body.clone())
-                } else {
-                    body.clone()
-                };
+            let to_render: Vec<crate::ast::Node> = if let Some(ref chains) = state.block_chains {
+                chains
+                    .get(name)
+                    .and_then(|ch| ch.first().cloned())
+                    .unwrap_or_else(|| body.clone())
+            } else {
+                body.clone()
+            };
             let prev_super = state.super_context.take();
             state.super_context = Some((name.clone(), 0));
             let out = render_children_async(env, state, &to_render, stack).await;
@@ -298,7 +305,7 @@ async fn render_node_inner(
             let res = render_macro_body_async(
                 env,
                 state,
-                &mdef,
+                mdef.as_ref(),
                 &arg_vals,
                 &kw_vals,
                 stack,
@@ -345,7 +352,20 @@ async fn render_node_inner(
         Node::IfAsync { branches } => {
             for br in branches {
                 if let Some(cond) = &br.cond {
-                    if !is_truthy(&eval_to_value_async(env, state, cond, stack).await?) {
+                    let cond_truthy = {
+                        let skip_root = |root_name: &str| {
+                            state.macro_namespaces.contains_key(root_name)
+                                || state.macro_namespace_values.contains_key(root_name)
+                        };
+                        if let Some(v) =
+                            resolve_plain_value_or_attr_chain_ref(env, stack, cond, skip_root)?
+                        {
+                            is_truthy(v.as_ref())
+                        } else {
+                            is_truthy(&eval_to_value_async(env, state, cond, stack).await?)
+                        }
+                    };
+                    if !cond_truthy {
                         continue;
                     }
                 }
@@ -389,7 +409,7 @@ async fn render_output_async(
 fn resolve_macro_target(
     state: &RenderState<'_>,
     macro_target: &Expr,
-) -> Result<crate::ast::MacroDef> {
+) -> Result<Arc<crate::ast::MacroDef>> {
     if let Expr::Variable(name) = macro_target {
         state
             .lookup_macro(name)
