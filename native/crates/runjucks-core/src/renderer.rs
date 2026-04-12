@@ -997,6 +997,7 @@ fn render_children(
     stack: &mut CtxStack,
 ) -> Result<String> {
     let mut out = String::new();
+    // Heuristic capacity; revisit only when allocation profiles show reallocations here.
     out.reserve(nodes.len().saturating_mul(32));
     for child in nodes {
         out.push_str(&render_node(env, state, child, stack)?);
@@ -1011,6 +1012,7 @@ fn render_output(
     stack: &mut CtxStack,
 ) -> Result<String> {
     let mut out = String::new();
+    // Heuristic capacity; revisit only when allocation profiles show reallocations here.
     out.reserve(exprs.len().saturating_mul(24));
     for e in exprs {
         out.push_str(&eval_for_output(env, state, e, stack)?);
@@ -1065,6 +1067,14 @@ fn try_apply_peeled_builtin_filter_chain_value(
                     }
                     "capitalize" => {
                         current = crate::filters::capitalize_string_slice(&current);
+                    }
+                    "title" => {
+                        current = match crate::filters::filter_title(&Value::String(std::mem::take(
+                            &mut current,
+                        ))) {
+                            Value::String(s) => s,
+                            o => crate::value::value_to_string(&o),
+                        };
                     }
                     "length" => return Some(Ok(json!(current.chars().count()))),
                     _ => unreachable!(),
@@ -1138,6 +1148,14 @@ fn eval_for_output(
                                     }
                                     "capitalize" => {
                                         current = crate::filters::capitalize_string_slice(&current);
+                                    }
+                                    "title" => {
+                                        current = match crate::filters::filter_title(
+                                            &Value::String(std::mem::take(&mut current)),
+                                        ) {
+                                            Value::String(s) => s,
+                                            o => crate::value::value_to_string(&o),
+                                        };
                                     }
                                     "length" => {
                                         let s = current.chars().count().to_string();
@@ -1219,6 +1237,28 @@ fn eval_for_output(
                                 Ok(s)
                             };
                         }
+                        "trim" => {
+                            let out = crate::filters::chain_trim_like_builtin(input_v.as_ref());
+                            let s = crate::value::value_to_string(&out);
+                            return if env.autoescape
+                                && !crate::value::is_marked_safe(input_v.as_ref())
+                            {
+                                Ok(crate::filters::escape_html(&s))
+                            } else {
+                                Ok(s)
+                            };
+                        }
+                        "title" => {
+                            let out = crate::filters::filter_title(input_v.as_ref());
+                            let s = crate::value::value_to_string(&out);
+                            return if env.autoescape
+                                && !crate::value::is_marked_safe(input_v.as_ref())
+                            {
+                                Ok(crate::filters::escape_html(&s))
+                            } else {
+                                Ok(s)
+                            };
+                        }
                         _ => {}
                     }
                 }
@@ -1249,6 +1289,24 @@ fn eval_for_output(
                                 Ok(crate::filters::escape_html(&out))
                             } else {
                                 Ok(out)
+                            };
+                        }
+                        "trim" => {
+                            let out = crate::filters::chain_trim_like_builtin(&Value::String(s.clone()));
+                            let t = crate::value::value_to_string(&out);
+                            return if env.autoescape {
+                                Ok(crate::filters::escape_html(&t))
+                            } else {
+                                Ok(t)
+                            };
+                        }
+                        "title" => {
+                            let out = crate::filters::filter_title(&Value::String(s.clone()));
+                            let t = crate::value::value_to_string(&out);
+                            return if env.autoescape {
+                                Ok(crate::filters::escape_html(&t))
+                            } else {
+                                Ok(t)
                             };
                         }
                         _ => {}
@@ -1395,6 +1453,36 @@ fn render_caller_invocation(
     Ok(out)
 }
 
+/// Left-to-right binary operands: borrow vars/literals; if RHS needs full eval, own LHS first so
+/// `stack` can be borrowed mutably without overlapping `resolve_variable_ref` borrows.
+fn eval_binary_pair<F>(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    stack: &mut CtxStack,
+    left: &Box<Expr>,
+    right: &Box<Expr>,
+    f: F,
+) -> Result<Value>
+where
+    F: FnOnce(&Value, &Value) -> Result<Value>,
+{
+    let a = match left.as_ref() {
+        Expr::Variable(name) => env.resolve_variable_ref(stack, name)?,
+        Expr::Literal(v) => Cow::Borrowed(v),
+        _ => Cow::Owned(eval_to_value(env, state, left.as_ref(), stack)?),
+    };
+    let b = match right.as_ref() {
+        Expr::Variable(name) => env.resolve_variable_ref(stack, name)?,
+        Expr::Literal(v) => Cow::Borrowed(v),
+        _ => {
+            let ao = a.into_owned();
+            let bv = eval_to_value(env, state, right.as_ref(), stack)?;
+            return f(&ao, &bv);
+        }
+    };
+    f(a.as_ref(), b.as_ref())
+}
+
 fn eval_to_value(
     env: &Environment,
     state: &mut RenderState<'_>,
@@ -1438,60 +1526,47 @@ fn eval_to_value(
             }
         },
         Expr::Binary { op, left, right } => match op {
-            BinOp::Add => Ok(add_like_js(
-                &eval_to_value(env, state, left, stack)?,
-                &eval_to_value(env, state, right, stack)?,
-            )),
+            BinOp::Add => eval_binary_pair(env, state, stack, left, right, |a, b| {
+                Ok(add_like_js(a, b))
+            }),
             BinOp::Concat => Ok(Value::String(format!(
                 "{}{}",
                 eval_for_output(env, state, left, stack)?,
                 eval_for_output(env, state, right, stack)?
             ))),
-            BinOp::Sub => {
-                let a = eval_to_value(env, state, left, stack)?;
-                let b = eval_to_value(env, state, right, stack)?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
+            BinOp::Sub => eval_binary_pair(env, state, stack, left, right, |a, b| {
+                let x = as_number(a).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
+                let y = as_number(b).ok_or_else(|| RunjucksError::new("`-` expects numbers"))?;
                 Ok(json_num(x - y))
-            }
-            BinOp::Mul => {
-                let a = eval_to_value(env, state, left, stack)?;
-                let b = eval_to_value(env, state, right, stack)?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
+            }),
+            BinOp::Mul => eval_binary_pair(env, state, stack, left, right, |a, b| {
+                let x = as_number(a).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
+                let y = as_number(b).ok_or_else(|| RunjucksError::new("`*` expects numbers"))?;
                 Ok(json_num(x * y))
-            }
-            BinOp::Div => {
-                let a = eval_to_value(env, state, left, stack)?;
-                let b = eval_to_value(env, state, right, stack)?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
+            }),
+            BinOp::Div => eval_binary_pair(env, state, stack, left, right, |a, b| {
+                let x = as_number(a).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
+                let y = as_number(b).ok_or_else(|| RunjucksError::new("`/` expects numbers"))?;
                 Ok(json!(x / y))
-            }
-            BinOp::FloorDiv => {
-                let a = eval_to_value(env, state, left, stack)?;
-                let b = eval_to_value(env, state, right, stack)?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
+            }),
+            BinOp::FloorDiv => eval_binary_pair(env, state, stack, left, right, |a, b| {
+                let x = as_number(a).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
+                let y = as_number(b).ok_or_else(|| RunjucksError::new("`//` expects numbers"))?;
                 if y == 0.0 {
                     return Err(RunjucksError::new("division by zero"));
                 }
                 Ok(json_num((x / y).floor()))
-            }
-            BinOp::Mod => {
-                let a = eval_to_value(env, state, left, stack)?;
-                let b = eval_to_value(env, state, right, stack)?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
+            }),
+            BinOp::Mod => eval_binary_pair(env, state, stack, left, right, |a, b| {
+                let x = as_number(a).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
+                let y = as_number(b).ok_or_else(|| RunjucksError::new("`%` expects numbers"))?;
                 Ok(json_num(x % y))
-            }
-            BinOp::Pow => {
-                let a = eval_to_value(env, state, left, stack)?;
-                let b = eval_to_value(env, state, right, stack)?;
-                let x = as_number(&a).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
-                let y = as_number(&b).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
+            }),
+            BinOp::Pow => eval_binary_pair(env, state, stack, left, right, |a, b| {
+                let x = as_number(a).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
+                let y = as_number(b).ok_or_else(|| RunjucksError::new("`**` expects numbers"))?;
                 Ok(json!(x.powf(y)))
-            }
+            }),
             BinOp::And => {
                 let l = eval_to_value(env, state, left, stack)?;
                 if !is_truthy(&l) {
@@ -1820,8 +1895,8 @@ fn eval_to_value(
                     return Ok(mark_safe(s));
                 }
                 if arg_vals.is_empty() {
-                    let v = env.resolve_variable(stack, name)?;
-                    if let Some(id) = parse_joiner_id(&v) {
+                    let v = env.resolve_variable_ref(stack, name)?;
+                    if let Some(id) = parse_joiner_id(v.as_ref()) {
                         if let Some(j) = state.joiners.get_mut(id) {
                             return Ok(Value::String(j.invoke()));
                         }
@@ -1899,6 +1974,12 @@ fn eval_to_value(
                                 input_v.as_ref(),
                             ));
                         }
+                        "trim" => {
+                            return Ok(crate::filters::chain_trim_like_builtin(input_v.as_ref()));
+                        }
+                        "title" => {
+                            return Ok(crate::filters::filter_title(input_v.as_ref()));
+                        }
                         _ => {}
                     }
                 }
@@ -1909,6 +1990,14 @@ fn eval_to_value(
                         "length" => return Ok(json!(s.chars().count())),
                         "capitalize" => {
                             return Ok(Value::String(crate::filters::capitalize_string_slice(s)));
+                        }
+                        "trim" => {
+                            return Ok(crate::filters::chain_trim_like_builtin(&Value::String(
+                                s.clone(),
+                            )));
+                        }
+                        "title" => {
+                            return Ok(crate::filters::filter_title(&Value::String(s.clone())));
                         }
                         _ => {}
                     }

@@ -16,6 +16,8 @@ jobs:
       - run: cargo test --manifest-path native/Cargo.toml
       - name: runjucks_core async feature tests
         run: cargo test --manifest-path native/Cargo.toml -p runjucks_core --features async
+      - name: runjucks-napi without fast-json (serde_json-only ingress)
+        run: cargo check --manifest-path native/Cargo.toml -p runjucks-napi --no-default-features
 
   js-tests:
     runs-on: ubuntu-latest

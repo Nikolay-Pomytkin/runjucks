@@ -27,7 +27,7 @@ The table below is generated from a **committed** JSON report ([`docs/src/data/p
 1. **Reuse environments and templates** — Prefer keeping a long-lived `Environment` and reusing `Template` objects instead of parsing the same string on every request.
 2. **Ship a release native addon in production** — Build with `npm run build` (release). Debug builds are much slower; see [Development](./development/).
 3. **Keep contexts JSON-friendly** — The context is converted to JSON-compatible values for the engine. Very large or deeply nested objects cost more to cross the boundary and to look up; structure data to match what templates actually read.
-4. **Optional JSON-string ingress** — If profiling shows that **JSON serialization** of the context is a bottleneck, you can pass a **JSON string** (`renderStringFromJson`) instead of a live object so Rust parses the payload once. Advanced builds can enable a faster JSON parser in the native addon; see [`RUNJUCKS_PERF.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/RUNJUCKS_PERF.md) in the repository.
+4. **JSON-string or Buffer ingress** — For large contexts, prefer **`renderStringFromJson`** (JSON text) or **`renderStringFromJsonBuffer`** (UTF-8 bytes) so Rust parses once instead of walking a live JS object over N-API. The default native build uses **`simd-json`** for that parse; maintainers can use `--no-default-features` on `runjucks-napi` for `serde_json` only. See [`RUNJUCKS_PERF.md`](https://github.com/Nikolay-Pomytkin/runjucks/blob/main/RUNJUCKS_PERF.md).
 5. **Compare fairly vs Nunjucks** — Microbenchmarks differ by workload; Runjucks aims to improve worst-case CPU-heavy rows. Treat numbers from `npm run perf` as directional, not a universal speedup factor.
 
 ## Measuring

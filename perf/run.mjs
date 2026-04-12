@@ -3,6 +3,7 @@
  * Run from package root: `npm run build && npm run perf`
  * Optional: `node perf/run.mjs --json` for machine-readable output.
  * Optional: `node perf/run.mjs --cold` — Runjucks uses a fresh Environment each iteration (cold parse); default reuses one env (warm parsed-template cache).
+ * Optional: `node perf/run.mjs --prefix=inmem_macro` — only cases whose name starts with that string (e.g. inline macro-library scenarios).
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -10,6 +11,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Bench } from 'tinybench'
+import { inlineMacroLibraryCases } from './inmemory-macro-harness.mjs'
 import { syntheticCases } from './synthetic.mjs'
 import { conformanceCasesById } from '../__test__/conformance/load-fixtures.mjs'
 import {
@@ -41,6 +43,18 @@ const allowlist = JSON.parse(
 
 const jsonOut = process.argv.includes('--json')
 const coldRunjucks = process.argv.includes('--cold')
+
+function parseNamePrefixFilter() {
+  const eq = process.argv.find((a) => a.startsWith('--prefix='))
+  if (eq) return eq.slice('--prefix='.length)
+  const idx = process.argv.indexOf('--prefix')
+  if (idx !== -1 && typeof process.argv[idx + 1] === 'string') {
+    return process.argv[idx + 1]
+  }
+  return null
+}
+
+const namePrefixFilter = parseNamePrefixFilter()
 
 function cloneCtx(ctx) {
   return structuredClone(ctx)
@@ -206,16 +220,30 @@ async function main() {
     } else {
       console.log('Runjucks: warm (one Environment per case; parsed templates cached)')
     }
+    if (namePrefixFilter) {
+      console.log(`Filter: case name prefix "${namePrefixFilter}"`)
+    }
     console.log('')
   }
 
   const conformanceById = conformanceCasesById()
   const conformanceCases = collectAllowlistedCases(conformanceById)
 
-  const all = [
+  let all = [
     ...syntheticCases().map((c) => ({ ...c, expected: undefined })),
+    ...inlineMacroLibraryCases().map((c) => ({ ...c, expected: undefined })),
     ...conformanceCases,
   ]
+
+  if (namePrefixFilter) {
+    all = all.filter((c) => c.name.startsWith(namePrefixFilter))
+    if (all.length === 0) {
+      console.error(
+        `No perf cases match name prefix "${namePrefixFilter}".`,
+      )
+      process.exit(1)
+    }
+  }
 
   const rows = []
   for (const c of all) {
@@ -235,6 +263,7 @@ async function main() {
       runjucksVersion: readRunjucksVersion(),
       nunjucksVersion: njVer,
       mode: coldRunjucks ? 'cold' : 'warm',
+      namePrefixFilter: namePrefixFilter ?? null,
       node: process.version,
       platform: {
         platform: process.platform,

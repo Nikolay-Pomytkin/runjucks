@@ -1,7 +1,8 @@
 //! Rust-only render microbenches (no NAPI). Mirrors `perf/synthetic.mjs` hot cases.
 //!
-//! Run: `cargo bench -p runjucks_core --bench render_hotspots`
-//! Flamegraph (Linux, with `perf`): `cargo install flamegraph && cargo flamegraph --bench render_hotspots -p runjucks_core`
+//! Run from repo root: `cargo bench --manifest-path native/Cargo.toml -p runjucks_core --bench render_hotspots`
+//! Or from `native/`: `cargo bench -p runjucks_core --bench render_hotspots`
+//! Flamegraph (Linux, with `perf`): `cargo install flamegraph && cd native && cargo flamegraph --bench render_hotspots -p runjucks_core`
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use runjucks_core::Environment;
@@ -16,6 +17,19 @@ fn for_medium(c: &mut Criterion) {
             let out = env
                 .render_string(tpl.clone(), json!({ "nums": &nums }))
                 .unwrap();
+            black_box(out)
+        })
+    });
+}
+
+fn for_200_binary_add_context(c: &mut Criterion) {
+    let nums: Vec<u32> = (0..200).collect();
+    let tpl = "{% for n in nums %}{{ n + k }}{% endfor %}".to_string();
+    let env = Environment::default();
+    let ctx = json!({ "nums": &nums, "k": 3 });
+    c.bench_function("for_200_var_plus_context_int", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
             black_box(out)
         })
     });
@@ -135,9 +149,35 @@ fn variable_trim_capitalize_chain(c: &mut Criterion) {
     });
 }
 
+fn variable_lower_title_chain(c: &mut Criterion) {
+    let tpl = "{{ s | lower | title }}".to_string();
+    let env = Environment::default();
+    let ctx = json!({ "s": "hello WORLD" });
+    c.bench_function("variable_lower_title_filters", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+/// `joiner()` handle invoked via `Expr::Call` — exercises `resolve_variable_ref` + `parse_joiner_id`.
+fn joiner_three_calls(c: &mut Criterion) {
+    let tpl = "{% set j = joiner(',') %}{{ j() }}a{{ j() }}b{{ j() }}c".to_string();
+    let env = Environment::default();
+    let ctx = json!({});
+    c.bench_function("joiner_set_and_three_calls", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     for_medium,
+    for_200_binary_add_context,
     for_200_with_loop_index,
     many_vars,
     nested_for,
@@ -146,6 +186,8 @@ criterion_group!(
     literal_length_filter,
     variable_chained_upper_lower,
     variable_trim_then_upper,
-    variable_trim_capitalize_chain
+    variable_trim_capitalize_chain,
+    variable_lower_title_chain,
+    joiner_three_calls
 );
 criterion_main!(benches);

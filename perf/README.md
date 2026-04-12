@@ -11,7 +11,12 @@ npm run build
 npm run perf
 # optional: machine-readable output for local trend logs (gitignored)
 npm run perf:json
+# only inline macro-library cases (renderString + templateMap, autoescape off, throwOnUndefined on)
+npm run perf:inmem-macros
+npm run perf:inmem-macros:json
 ```
+
+You can filter any subset by name prefix: `node perf/run.mjs --prefix=synth_`, `node perf/run.mjs --prefix=conf:`.
 
 ### N-API context vs render (Runjucks only)
 
@@ -22,7 +27,7 @@ npm run perf:context
 # optional JSON: npm run perf:context:json
 ```
 
-See [`context-boundary.mjs`](context-boundary.mjs). A large **delta** between `large` and `small` mean ms suggests JSON marshalling dominates; a **small** delta suggests the Rust renderer dominates.
+See [`context-boundary.mjs`](context-boundary.mjs). It reports **object** vs **JSON string** vs **JSON Buffer** ingress for the same large context. A large **delta** between `object_large` and `object_small` mean ms suggests N-API object marshalling dominates; compare `speedup_vs_object_large` for the JSON paths. **`simd-json`** JSON parse is **on by default** for `runjucks-napi`; use `cargo build -p runjucks-napi --no-default-features` for `serde_json`-only parse.
 
 A **release** build of the `.node` binary is required (`npm run build`, not `build:debug`); otherwise Rust hot loops are massively skewed and comparisons to Nunjucks are meaningless.
 
@@ -91,11 +96,12 @@ PGO can improve the **renderer** binary (Criterion) **without** source changes. 
 
 Paths and `llvm-profdata` availability vary by platform; on macOS you may use `xcrun llvm-profdata`. **BOLT** (post-link) is optional and Linux-specific — see LLVM docs.
 
-**Faster JSON parse in Rust** is optional: use **`renderStringFromJson(template, JSON.stringify(ctx))`** so the addon receives JSON text and parses in Rust. Build `runjucks-napi` with **`--features fast-json`** to use `simd-json` for that parse step. Only worth it if **context-boundary** probes and profiles show **ingress** dominates; parity check: [`__test__/json-ingress.test.mjs`](../__test__/json-ingress.test.mjs).
+**Faster JSON parse in Rust:** use **`renderStringFromJson`** / **`renderStringFromJsonBuffer`** so the addon receives JSON text or UTF-8 bytes; the default **`runjucks-napi`** build uses **`simd-json`** for that parse. Parity check: [`__test__/json-ingress.test.mjs`](../__test__/json-ingress.test.mjs).
 
 ## What it measures
 
 - **Synthetic** templates in [`synthetic.mjs`](synthetic.mjs) (size / loops / filters).
+- **Inline macro library** scenarios in [`inmemory-macro-harness.mjs`](inmemory-macro-harness.mjs): `renderString` with `templateMap` paths like `macros/*.njk`, **`autoescape: false`**, **`throwOnUndefined: true`** — representative of workloads that ship many small templates in memory (e.g. LLM system prompts) without embedding any proprietary text. Case names are prefixed with **`inmem_macro_`** for easy filtering in `--json` output.
 - **Conformance subset** via IDs in [`conformance-allowlist.json`](conformance-allowlist.json), loaded through [`__test__/conformance/load-fixtures.mjs`](../__test__/conformance/load-fixtures.mjs) (same vectors as Rust + Node): `render_cases.json`, `filter_cases.json`, and `tag_parity_cases.json`.
 
 Each case:

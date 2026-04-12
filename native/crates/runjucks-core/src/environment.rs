@@ -15,10 +15,11 @@ use crate::value::{
     is_marked_safe, is_regexp_value, is_undefined_value, undefined_value, value_to_string,
 };
 use crate::{lexer, parser, renderer};
+use ahash::AHasher;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,9 +47,8 @@ fn loader_identity(loader: &(dyn TemplateLoader + Send + Sync)) -> usize {
 }
 
 fn hash_source(s: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
+    let mut h = AHasher::default();
+    h.write(s.as_bytes());
     h.finish()
 }
 

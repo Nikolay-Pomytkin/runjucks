@@ -362,3 +362,86 @@ fn set_in_for_updates_existing_outer_binding() {
     let out = env.render_string(tpl.into(), json!({})).unwrap();
     assert_eq!(out, "122");
 }
+
+#[test]
+fn binary_add_two_context_variables() {
+    let env = Environment::default();
+    let ctx = json!({ "a": 10, "b": 32 });
+    assert_eq!(
+        env.render_string("{{ a + b }}".into(), ctx.clone()).unwrap(),
+        "42"
+    );
+}
+
+#[test]
+fn binary_add_variable_and_literal() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string("{{ x + 2 }}".into(), json!({ "x": 40 }))
+            .unwrap(),
+        "42"
+    );
+}
+
+#[test]
+fn binary_mul_variables_no_extra_resolve_clone_regression() {
+    let env = Environment::default();
+    assert_eq!(
+        env.render_string("{{ x * y }}".into(), json!({ "x": 6, "y": 7 }))
+            .unwrap(),
+        "42"
+    );
+}
+
+#[test]
+fn fused_lower_title_matches_builtin_title_on_lowered_string() {
+    let env = Environment::default();
+    let ctx = json!({ "s": "hello WORLD foo" });
+    let fused = env
+        .render_string("{{ s | lower | title }}".into(), ctx.clone())
+        .unwrap();
+    let sequential = env
+        .render_string("{{ (s | lower) | title }}".into(), ctx)
+        .unwrap();
+    assert_eq!(fused, sequential);
+    assert_eq!(fused, "Hello World Foo");
+}
+
+#[test]
+fn title_fusion_skipped_when_custom_title_registered() {
+    let mut env = Environment::default();
+    env.add_filter(
+        "title",
+        Arc::new(|input, _args| Ok(Value::String(format!("custom:{}", value_to_string(input))))),
+    );
+    let out = env
+        .render_string("{{ 'ab' | title }}".into(), json!({}))
+        .unwrap();
+    assert_eq!(out, "custom:ab");
+}
+
+#[test]
+fn trim_fast_path_on_variable_matches_explicit_filter() {
+    let env = Environment::default();
+    let ctx = json!({ "s": "  hi  " });
+    let a = env
+        .render_string("{{ s | trim }}".into(), ctx.clone())
+        .unwrap();
+    let b = env
+        .render_string("{{ s | trim | upper }}".into(), ctx)
+        .unwrap();
+    assert_eq!(a, "hi");
+    assert_eq!(b, "HI");
+}
+
+#[test]
+fn joiner_call_path_matches_comma_separated_output() {
+    let env = Environment::default();
+    let out = env
+        .render_string(
+            "{% set j = joiner(',') %}{{ j() }}a{{ j() }}b{{ j() }}c".into(),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(out, "a,b,c");
+}
