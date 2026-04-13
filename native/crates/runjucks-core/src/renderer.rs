@@ -491,6 +491,14 @@ fn empty_macro_scope() -> Arc<MacroScopeMap> {
     Arc::clone(EMPTY.get_or_init(|| Arc::new(HashMap::new())))
 }
 
+#[inline]
+fn can_cache_top_level_macros(state: &RenderState<'_>) -> bool {
+    match state.loader {
+        Some(loader) => loader.cache_keys_are_stable(),
+        None => true,
+    }
+}
+
 /// Top-level `{% macro %}` definitions only (Nunjucks `getExported` surface for macro libraries).
 pub(crate) fn collect_top_level_macros(root: &Node) -> Arc<MacroScopeMap> {
     let mut m = HashMap::new();
@@ -513,6 +521,9 @@ pub(crate) fn collect_top_level_macros_cached(
     state: &mut RenderState<'_>,
     root: &Node,
 ) -> Arc<MacroScopeMap> {
+    if !can_cache_top_level_macros(state) {
+        return collect_top_level_macros(root);
+    }
     let Some(key) = root_node_key(root) else {
         return collect_top_level_macros(root);
     };
@@ -993,6 +1004,57 @@ fn render_node_into(
             "`{% ifAsync %}` requires async render mode; use `renderStringAsync()` or `renderTemplateAsync()`",
         )),
         Node::MacroDef(_) => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::parse;
+
+    struct UnstableLoader {
+        templates: HashMap<String, String>,
+    }
+
+    impl TemplateLoader for UnstableLoader {
+        fn load(&self, name: &str) -> Result<String> {
+            self.templates
+                .get(name)
+                .cloned()
+                .ok_or_else(|| RunjucksError::new(format!("template not found: {name}")))
+        }
+    }
+
+    fn parse_root(src: &str) -> Node {
+        let tokens = tokenize(src).expect("tokenize test template");
+        parse(&tokens).expect("parse test template")
+    }
+
+    #[test]
+    fn top_level_macro_cache_is_disabled_for_unstable_loaders() {
+        let root = parse_root("{% macro hello() %}hi{% endmacro %}");
+        let loader = UnstableLoader {
+            templates: HashMap::new(),
+        };
+        let mut state = RenderState::new(Some(&loader), Some(0));
+
+        let defs = collect_top_level_macros_cached(&mut state, &root);
+
+        assert!(defs.contains_key("hello"));
+        assert!(state.top_level_macro_cache.is_empty());
+    }
+
+    #[test]
+    fn top_level_macro_cache_is_retained_for_stable_loaders() {
+        let root = parse_root("{% macro hello() %}hi{% endmacro %}");
+        let loader = HashMap::from([("macros.njk".to_string(), "unused".to_string())]);
+        let mut state = RenderState::new(Some(&loader), Some(0));
+
+        let defs = collect_top_level_macros_cached(&mut state, &root);
+
+        assert!(defs.contains_key("hello"));
+        assert_eq!(state.top_level_macro_cache.len(), 1);
     }
 }
 
