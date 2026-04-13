@@ -4,7 +4,9 @@ use crate::ast::{Expr, Node};
 use crate::environment::Environment;
 use crate::errors::{Result, RunjucksError};
 use crate::render_common::{is_truthy, resolve_plain_value_or_attr_chain_ref};
-use crate::renderer::{collect_top_level_macros, scan_literal_import_graph, CtxStack, RenderState};
+use crate::renderer::{
+    collect_top_level_macros_cached, scan_literal_import_graph, CtxStack, RenderState,
+};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::future::Future;
@@ -13,7 +15,9 @@ use std::sync::Arc;
 
 use super::entry::render_entry_async;
 use super::eval::{eval_for_output_async, eval_to_value_async};
-use super::loops::{render_async_all, render_async_each, render_for_async, render_switch_async};
+use super::loops::{
+    render_async_all, render_async_each, render_for_async_into, render_switch_async_into,
+};
 use super::macros::render_macro_body_async;
 
 pub(super) fn render_node_async<'a>(
@@ -22,43 +26,61 @@ pub(super) fn render_node_async<'a>(
     n: &'a Node,
     stack: &'a mut CtxStack,
 ) -> Pin<Box<dyn Future<Output = Result<String>> + 'a>> {
-    Box::pin(render_node_inner(env, state, n, stack))
+    Box::pin(async move {
+        let mut out = String::new();
+        match n {
+            Node::Root(nodes) => out.reserve(nodes.len().saturating_mul(32)),
+            Node::Output(exprs) => out.reserve(exprs.len().saturating_mul(24)),
+            _ => {}
+        }
+        render_node_into_async(env, state, n, stack, &mut out).await?;
+        Ok(out)
+    })
 }
 
-async fn render_node_inner(
+pub(super) fn render_node_into_async<'a>(
+    env: &'a Environment,
+    state: &'a mut RenderState<'_>,
+    n: &'a Node,
+    stack: &'a mut CtxStack,
+    out: &'a mut String,
+) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+    Box::pin(render_node_into_inner(env, state, n, stack, out))
+}
+
+async fn render_node_into_inner(
     env: &Environment,
     state: &mut RenderState<'_>,
     n: &Node,
     stack: &mut CtxStack,
-) -> Result<String> {
+    out: &mut String,
+) -> Result<()> {
     match n {
         Node::Root(nodes) => {
-            let mut defs = HashMap::new();
-            for n in nodes.iter() {
-                if let crate::ast::Node::MacroDef(m) = n {
-                    defs.insert(m.name.clone(), Arc::new(m.clone()));
-                }
-            }
-            let had_macros = !defs.is_empty();
+            let defs = nodes
+                .iter()
+                .any(|child| matches!(child, Node::MacroDef(_)))
+                .then(|| collect_top_level_macros_cached(state, n));
             let scope_base = state.macro_scopes.len();
-            if had_macros {
+            if let Some(defs) = defs {
                 state.push_macros(defs);
             }
-            let mut out = String::new();
-            out.reserve(nodes.len().saturating_mul(32));
             for child in nodes.iter() {
                 if matches!(child, Node::MacroDef(_) | Node::Extends { .. }) {
                     continue;
                 }
-                out.push_str(&render_node_async(env, state, child, stack).await?);
+                render_node_into_async(env, state, child, stack, out).await?;
             }
             while state.macro_scopes.len() > scope_base {
                 state.pop_macros();
             }
-            Ok(out)
+            Ok(())
         }
-        Node::Text(s) => Ok(s.to_string()),
-        Node::Output(exprs) => render_output_async(env, state, exprs, stack).await,
+        Node::Text(s) => {
+            out.push_str(s);
+            Ok(())
+        }
+        Node::Output(exprs) => render_output_into_async(env, state, exprs, stack, out).await,
         Node::If { branches } => {
             for br in branches {
                 if let Some(cond) = &br.cond {
@@ -79,21 +101,36 @@ async fn render_node_inner(
                         continue;
                     }
                 }
-                return render_children_async(env, state, &br.body, stack).await;
+                return render_children_into_async(env, state, &br.body, stack, out).await;
             }
-            Ok(String::new())
+            Ok(())
         }
         Node::Switch {
             expr,
             cases,
             default_body,
-        } => render_switch_async(env, state, expr, cases, default_body.as_deref(), stack).await,
+        } => {
+            render_switch_async_into(env, state, expr, cases, default_body.as_deref(), stack, out)
+                .await
+        }
         Node::For {
             vars,
             iter,
             body,
             else_body,
-        } => render_for_async(env, state, vars, iter, body, else_body.as_deref(), stack).await,
+        } => {
+            render_for_async_into(
+                env,
+                state,
+                vars,
+                iter,
+                body,
+                else_body.as_deref(),
+                stack,
+                out,
+            )
+            .await
+        }
         Node::Set {
             targets,
             value,
@@ -105,12 +142,14 @@ async fn render_node_inner(
                     stack.set(t, v.clone());
                 }
             } else if let Some(nodes) = body {
-                let s = render_children_async(env, state, nodes, stack).await?;
+                let mut captured = String::new();
+                captured.reserve(nodes.len().saturating_mul(32));
+                render_children_into_async(env, state, nodes, stack, &mut captured).await?;
                 if let Some(t) = targets.first() {
-                    stack.set(t, Value::String(s));
+                    stack.set(t, Value::String(captured));
                 }
             }
-            Ok(String::new())
+            Ok(())
         }
         Node::Include {
             template,
@@ -125,18 +164,20 @@ async fn render_node_inner(
             );
             let included = match env.load_and_parse_named(&name, loader) {
                 Ok(ast) => ast,
-                Err(_) if *ignore_missing => return Ok(String::new()),
+                Err(_) if *ignore_missing => return Ok(()),
                 Err(e) => return Err(e),
             };
             state.push_template(&name)?;
-            let out = if matches!(with_context, Some(false)) {
+            let rendered = if matches!(with_context, Some(false)) {
                 let mut isolated = CtxStack::from_root(Map::new());
                 render_entry_async(env, state, included.as_ref(), &mut isolated).await?
             } else {
-                render_entry_async(env, state, included.as_ref(), stack).await?
+                let mut scoped = CtxStack::from_root(stack.flatten());
+                render_entry_async(env, state, included.as_ref(), &mut scoped).await?
             };
             state.pop_template();
-            Ok(out)
+            out.push_str(&rendered);
+            Ok(())
         }
         Node::Import {
             template,
@@ -152,7 +193,7 @@ async fn render_node_inner(
             let imported = env.load_and_parse_named(&name, loader)?;
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, imported.as_ref(), loader)?;
-            let defs = collect_top_level_macros(imported.as_ref());
+            let defs = collect_top_level_macros_cached(state, imported.as_ref());
             let exported_sets = eval_exported_top_level_sets_async(
                 env,
                 state,
@@ -166,7 +207,7 @@ async fn render_node_inner(
             state
                 .macro_namespace_values
                 .insert(alias.clone(), exported_sets);
-            Ok(String::new())
+            Ok(())
         }
         Node::FromImport {
             template,
@@ -182,7 +223,7 @@ async fn render_node_inner(
             let imported = env.load_and_parse_named(&name, loader)?;
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, imported.as_ref(), loader)?;
-            let defs = collect_top_level_macros(imported.as_ref());
+            let defs = collect_top_level_macros_cached(state, imported.as_ref());
             let exported_sets = eval_exported_top_level_sets_async(
                 env,
                 state,
@@ -203,8 +244,8 @@ async fn render_node_inner(
                     return Err(RunjucksError::new(format!("cannot import '{export_name}'")));
                 }
             }
-            state.push_macros(scope);
-            Ok(String::new())
+            state.push_macros(Arc::new(scope));
+            Ok(())
         }
         Node::Extends { .. } => Err(RunjucksError::new(
             "`extends` is only valid at the top level of a loaded template",
@@ -220,12 +261,14 @@ async fn render_node_inner(
             };
             let prev_super = state.super_context.take();
             state.super_context = Some((name.clone(), 0));
-            let out = render_children_async(env, state, &to_render, stack).await;
+            let res = render_children_into_async(env, state, &to_render, stack, out).await;
             state.super_context = prev_super;
-            out
+            res
         }
         Node::FilterBlock { name, args, body } => {
-            let s = render_children_async(env, state, body, stack).await?;
+            let mut captured = String::new();
+            captured.reserve(body.len().saturating_mul(32));
+            render_children_into_async(env, state, body, stack, &mut captured).await?;
             let arg_vals: Vec<Value> = {
                 let mut v = Vec::with_capacity(args.len());
                 for a in args {
@@ -235,27 +278,30 @@ async fn render_node_inner(
             };
             // Check async filters first, then fall back to sync/builtin
             if let Some(af) = env.async_custom_filters.get(name.as_str()) {
-                let v = af(&Value::String(s), &arg_vals).await?;
-                let out = crate::value::value_to_string(&v);
+                let v = af(&Value::String(captured), &arg_vals).await?;
+                let rendered = crate::value::value_to_string(&v);
                 return if env.autoescape && !crate::value::is_marked_safe(&v) {
-                    Ok(crate::filters::escape_html(&out))
+                    out.push_str(&crate::filters::escape_html(&rendered));
+                    Ok(())
                 } else {
-                    Ok(out)
+                    out.push_str(&rendered);
+                    Ok(())
                 };
             }
             let v = crate::filters::apply_builtin(
                 env,
                 &mut state.rng,
                 name,
-                &Value::String(s),
+                &Value::String(captured),
                 &arg_vals,
             )?;
-            let out = crate::value::value_to_string(&v);
+            let rendered = crate::value::value_to_string(&v);
             if env.autoescape && !crate::value::is_marked_safe(&v) {
-                Ok(crate::filters::escape_html(&out))
+                out.push_str(&crate::filters::escape_html(&rendered));
             } else {
-                Ok(out)
+                out.push_str(&rendered);
             }
+            Ok(())
         }
         Node::CallBlock {
             caller_params,
@@ -313,7 +359,8 @@ async fn render_node_inner(
             )
             .await;
             state.caller_stack.pop();
-            res
+            out.push_str(&res?);
+            Ok(())
         }
         Node::ExtensionTag {
             extension_name,
@@ -326,29 +373,45 @@ async fn render_node_inner(
             })?;
             let ctx_for_handler = Value::Object(stack.flatten());
             let body_s = if let Some(nodes) = body {
-                Some(render_children_async(env, state, nodes, stack).await?)
+                let mut captured = String::new();
+                captured.reserve(nodes.len().saturating_mul(32));
+                render_children_into_async(env, state, nodes, stack, &mut captured).await?;
+                Some(captured)
             } else {
                 None
             };
-            let out = handler(&ctx_for_handler, args.as_str(), body_s)?;
-            Ok(if env.autoescape {
-                crate::filters::escape_html(&out)
+            let rendered = handler(&ctx_for_handler, args.as_str(), body_s)?;
+            if env.autoescape {
+                out.push_str(&crate::filters::escape_html(&rendered));
             } else {
-                out
-            })
+                out.push_str(&rendered);
+            }
+            Ok(())
         }
         Node::AsyncEach {
             vars,
             iter,
             body,
             else_body,
-        } => render_async_each(env, state, vars, iter, body, else_body.as_deref(), stack).await,
+        } => {
+            out.push_str(
+                &render_async_each(env, state, vars, iter, body, else_body.as_deref(), stack)
+                    .await?,
+            );
+            Ok(())
+        }
         Node::AsyncAll {
             vars,
             iter,
             body,
             else_body,
-        } => render_async_all(env, state, vars, iter, body, else_body.as_deref(), stack).await,
+        } => {
+            out.push_str(
+                &render_async_all(env, state, vars, iter, body, else_body.as_deref(), stack)
+                    .await?,
+            );
+            Ok(())
+        }
         Node::IfAsync { branches } => {
             for br in branches {
                 if let Some(cond) = &br.cond {
@@ -369,11 +432,11 @@ async fn render_node_inner(
                         continue;
                     }
                 }
-                return render_children_async(env, state, &br.body, stack).await;
+                return render_children_into_async(env, state, &br.body, stack, out).await;
             }
-            Ok(String::new())
+            Ok(())
         }
-        Node::MacroDef(_) => Ok(String::new()),
+        Node::MacroDef(_) => Ok(()),
     }
 }
 
@@ -385,24 +448,36 @@ pub(super) async fn render_children_async(
 ) -> Result<String> {
     let mut out = String::new();
     out.reserve(nodes.len().saturating_mul(32));
-    for child in nodes {
-        out.push_str(&render_node_async(env, state, child, stack).await?);
-    }
+    render_children_into_async(env, state, nodes, stack, &mut out).await?;
     Ok(out)
 }
 
-async fn render_output_async(
+pub(super) fn render_children_into_async<'a>(
+    env: &'a Environment,
+    state: &'a mut RenderState<'_>,
+    nodes: &'a [Node],
+    stack: &'a mut CtxStack,
+    out: &'a mut String,
+) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+    Box::pin(async move {
+        for child in nodes {
+            render_node_into_async(env, state, child, stack, out).await?;
+        }
+        Ok(())
+    })
+}
+
+async fn render_output_into_async(
     env: &Environment,
     state: &mut RenderState<'_>,
     exprs: &[Expr],
     stack: &mut CtxStack,
-) -> Result<String> {
-    let mut out = String::new();
-    out.reserve(exprs.len().saturating_mul(24));
+    out: &mut String,
+) -> Result<()> {
     for e in exprs {
         out.push_str(&eval_for_output_async(env, state, e, stack).await?);
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Resolve macro from variable or namespace.attribute.
@@ -461,8 +536,11 @@ async fn eval_exported_top_level_sets_async(
                 }
             }
             TopLevelSetExport::FromBlock { target, body } => {
-                let s = render_children_async(env, state, &body, &mut import_stack).await?;
-                let val = Value::String(s);
+                let mut captured = String::new();
+                captured.reserve(body.len().saturating_mul(32));
+                render_children_into_async(env, state, &body, &mut import_stack, &mut captured)
+                    .await?;
+                let val = Value::String(captured);
                 import_stack.set(&target, val.clone());
                 out.insert(target, val);
             }

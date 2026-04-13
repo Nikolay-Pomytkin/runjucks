@@ -173,8 +173,9 @@ async fn render_macro_call_no_kwargs_async(
     module_closure: Option<&std::collections::HashMap<String, Value>>,
 ) -> Result<String> {
     match args {
-        [] => render_macro_body_shared_async(env, state, mdef, &[], &[], stack, module_closure)
-            .await,
+        [] => {
+            render_macro_body_shared_async(env, state, mdef, &[], &[], stack, module_closure).await
+        }
         [a0] => {
             let arg0 = eval_to_shared_value_async(env, state, a0, stack).await?;
             let arg_vals = [arg0];

@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::borrow::Cow;
 
 use super::eval::eval_to_value_async;
-use super::nodes::render_children_async;
+use super::nodes::render_children_into_async;
 
 fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
     crate::render_common::inject_loop(&mut stack.frames, i, len);
@@ -27,32 +27,49 @@ pub(super) async fn render_for_async(
     else_body: Option<&[Node]>,
     stack: &mut CtxStack,
 ) -> Result<String> {
+    let mut out = String::new();
+    render_for_async_into(
+        env, state, vars, iter_expr, body, else_body, stack, &mut out,
+    )
+    .await?;
+    Ok(out)
+}
+
+pub(super) async fn render_for_async_into(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    vars: &ForVars,
+    iter_expr: &Expr,
+    body: &[Node],
+    else_body: Option<&[Node]>,
+    stack: &mut CtxStack,
+    out: &mut String,
+) -> Result<()> {
     let v = eval_to_value_async(env, state, iter_expr, stack).await?;
     let it = iterable_from_value(v);
     if iterable_empty(&it) {
         return if let Some(eb) = else_body {
-            render_children_async(env, state, eb, stack).await
+            render_children_into_async(env, state, eb, stack, out).await
         } else {
-            Ok(String::new())
+            Ok(())
         };
     }
 
     stack.push_frame();
-    let mut acc = String::new();
 
     match (vars, it) {
         (ForVars::Single(x), Iterable::Rows(items)) => {
             let len = items.len();
-            acc.reserve(len.saturating_mul(16));
+            out.reserve(len.saturating_mul(16));
             for (i, item) in items.into_iter().enumerate() {
                 inject_loop(stack, i, len);
                 stack.set_local(x, item);
-                acc.push_str(&render_children_async(env, state, body, stack).await?);
+                render_children_into_async(env, state, body, stack, out).await?;
             }
         }
         (ForVars::Multi(names), Iterable::Rows(rows)) if names.len() >= 2 => {
             let len = rows.len();
-            acc.reserve(len.saturating_mul(16));
+            out.reserve(len.saturating_mul(16));
             for (i, row) in rows.into_iter().enumerate() {
                 inject_loop(stack, i, len);
                 if let Value::Array(cols) = row {
@@ -65,41 +82,42 @@ pub(super) async fn render_for_async(
                         stack.set_local(name, Value::Null);
                     }
                 }
-                acc.push_str(&render_children_async(env, state, body, stack).await?);
+                render_children_into_async(env, state, body, stack, out).await?;
             }
         }
         (ForVars::Multi(names), Iterable::Pairs(pairs)) if names.len() == 2 => {
             let len = pairs.len();
-            acc.reserve(len.saturating_mul(16));
+            out.reserve(len.saturating_mul(16));
             for (i, (k, v)) in pairs.into_iter().enumerate() {
                 inject_loop(stack, i, len);
                 stack.set_local(&names[0], Value::String(k));
                 stack.set_local(&names[1], v);
-                acc.push_str(&render_children_async(env, state, body, stack).await?);
+                render_children_into_async(env, state, body, stack, out).await?;
             }
         }
         (ForVars::Single(_), _) | (ForVars::Multi(_), _) => {
             stack.pop_frame();
             return if let Some(eb) = else_body {
-                render_children_async(env, state, eb, stack).await
+                render_children_into_async(env, state, eb, stack, out).await
             } else {
-                Ok(String::new())
+                Ok(())
             };
         }
     }
 
     stack.pop_frame();
-    Ok(acc)
+    Ok(())
 }
 
-pub(super) async fn render_switch_async(
+pub(super) async fn render_switch_async_into(
     env: &Environment,
     state: &mut RenderState<'_>,
     disc_expr: &Expr,
     cases: &[SwitchCase],
     default_body: Option<&[Node]>,
     stack: &mut CtxStack,
-) -> Result<String> {
+    out: &mut String,
+) -> Result<()> {
     let start = {
         let skip_root = |root_name: &str| {
             state.macro_namespaces.contains_key(root_name)
@@ -138,13 +156,12 @@ pub(super) async fn render_switch_async(
         }
         start
     };
-    let mut acc = String::new();
     if let Some(mut idx) = start {
         loop {
             let body = &cases[idx].body;
-            acc.push_str(&render_children_async(env, state, body, stack).await?);
+            render_children_into_async(env, state, body, stack, out).await?;
             if !body.is_empty() {
-                return Ok(acc);
+                return Ok(());
             }
             idx += 1;
             if idx >= cases.len() {
@@ -153,9 +170,9 @@ pub(super) async fn render_switch_async(
         }
     }
     if let Some(db) = default_body {
-        acc.push_str(&render_children_async(env, state, db, stack).await?);
+        render_children_into_async(env, state, db, stack, out).await?;
     }
-    Ok(acc)
+    Ok(())
 }
 
 /// `{% asyncEach %}` — sequential async iteration (same as `for` in async mode).

@@ -28,8 +28,7 @@ pub(super) async fn render_macro_body_async(
         .iter()
         .map(|(k, v)| (k.clone(), Arc::new(v.clone())))
         .collect();
-    render_macro_body_shared_async(env, state, m, &positional, &kwargs, outer, module_closure)
-        .await
+    render_macro_body_shared_async(env, state, m, &positional, &kwargs, outer, module_closure).await
 }
 
 pub(super) async fn render_macro_body_shared_async(
@@ -42,36 +41,8 @@ pub(super) async fn render_macro_body_shared_async(
     module_closure: Option<&HashMap<String, Value>>,
 ) -> Result<String> {
     let mut stack = outer.fork_isolated();
-    stack.push_frame();
-    let mut bindings = Vec::with_capacity(m.params.len());
+    stack.push_frame_with_capacity(module_closure.map_or(0, HashMap::len) + m.params.len());
     if kwargs.is_empty() {
-        for (i, p) in m.params.iter().enumerate() {
-            let val = if let Some(v) = positional.get(i) {
-                Arc::clone(v)
-            } else if let Some(ref d) = p.default {
-                Arc::new(eval_to_value_async(env, state, d, outer).await?)
-            } else {
-                Arc::new(Value::Null)
-            };
-            bindings.push((p.name.clone(), val));
-        }
-    } else {
-        let kw_lookup: HashMap<&str, &Arc<Value>> =
-            kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
-        for (i, p) in m.params.iter().enumerate() {
-            let val = if let Some(v) = positional.get(i) {
-                Arc::clone(v)
-            } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
-                Arc::clone(*v)
-            } else if let Some(ref d) = p.default {
-                Arc::new(eval_to_value_async(env, state, d, outer).await?)
-            } else {
-                Arc::new(Value::Null)
-            };
-            bindings.push((p.name.clone(), val));
-        }
-    }
-    {
         let inner = Arc::make_mut(
             stack
                 .frames
@@ -83,8 +54,41 @@ pub(super) async fn render_macro_body_shared_async(
                 inner.insert(k.clone(), Arc::new(v.clone()));
             }
         }
-        for (name, val) in bindings {
-            inner.insert(name, val);
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value_async(env, state, d, outer).await?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            inner.insert(p.name.clone(), val);
+        }
+    } else {
+        let kw_lookup: HashMap<&str, &Arc<Value>> =
+            kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        let inner = Arc::make_mut(
+            stack
+                .frames
+                .last_mut()
+                .expect("macro body requires an active local frame"),
+        );
+        if let Some(mc) = module_closure {
+            for (k, v) in mc {
+                inner.insert(k.clone(), Arc::new(v.clone()));
+            }
+        }
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
+                Arc::clone(*v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value_async(env, state, d, outer).await?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            inner.insert(p.name.clone(), val);
         }
     }
     render_children_async(env, state, &m.body, &mut stack).await
@@ -104,19 +108,27 @@ pub(super) async fn render_caller_invocation_async(
         }
         return render_children_async(env, state, &frame.body, stack).await;
     }
-    stack.push_frame();
-    let kw_lookup: HashMap<&str, &Value> = kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    stack.push_frame_with_capacity(frame.params.len());
+    let kw_lookup = (!kwargs.is_empty()).then(|| {
+        kwargs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
+            .collect::<HashMap<_, _>>()
+    });
     for (i, p) in frame.params.iter().enumerate() {
         let val = if let Some(v) = positional.get(i) {
-            v.clone()
-        } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
-            (*v).clone()
+            Arc::new(v.clone())
+        } else if let Some(v) = kw_lookup
+            .as_ref()
+            .and_then(|lookup| lookup.get(p.name.as_str()))
+        {
+            Arc::new((*v).clone())
         } else if let Some(ref d) = p.default {
-            eval_to_value_async(env, state, d, stack).await?
+            Arc::new(eval_to_value_async(env, state, d, stack).await?)
         } else {
-            Value::Null
+            Arc::new(Value::Null)
         };
-        stack.set_local(&p.name, val);
+        stack.insert_local_shared(&p.name, val);
     }
     let out = render_children_async(env, state, &frame.body, stack).await?;
     stack.pop_frame();
