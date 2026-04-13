@@ -346,6 +346,30 @@ fn plain_text_preserves_unicode_and_empty_adjacent_segments() {
 }
 
 #[test]
+fn mixed_text_output_if_switch_concatenation_order_is_stable() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "A",
+        "{{ x }}",
+        "B",
+        "{% if flag %}C{{ y }}{% endif %}",
+        "D",
+        "{% switch kind %}",
+        "{% case 'ok' %}E{{ z }}",
+        "{% default %}F",
+        "{% endswitch %}",
+        "G",
+    );
+    let out = env
+        .render_string(
+            tpl.into(),
+            json!({ "x": 1, "y": 2, "z": 3, "flag": true, "kind": "ok" }),
+        )
+        .unwrap();
+    assert_eq!(out, "A1BC2DE3G");
+}
+
+#[test]
 fn set_in_for_updates_existing_outer_binding() {
     // Nunjucks: `{% set %}` targets the innermost frame that already has the name; outer `x` is
     // updated from inside the loop, so the final `{{ x }}` sees the last assignment.
@@ -533,6 +557,30 @@ fn caller_default_expression_not_evaluated_when_arg_is_passed() {
 }
 
 #[test]
+fn caller_default_expression_can_see_prior_param_binding() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% macro wrap() %}{{ caller('seen') }}{% endmacro %}",
+        "{% call(x, y=x) wrap() %}{{ y }}{% endcall %}",
+    );
+    let out = env.render_string(tpl.into(), json!({})).unwrap();
+    assert_eq!(out, "seen");
+}
+
+#[test]
+fn caller_output_order_and_outer_scope_remain_stable() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% set x = 'outer' %}",
+        "{% macro wrap() %}[{{ caller('A') }}|{{ caller('B') }}]{% endmacro %}",
+        "{% call(item) wrap() %}{{ item }}{{ x }}{% endcall %}",
+        "|{{ x }}",
+    );
+    let out = env.render_string(tpl.into(), json!({})).unwrap();
+    assert_eq!(out, "[Aouter|Bouter]|outer");
+}
+
+#[test]
 fn macro_set_does_not_leak_back_to_caller_scope() {
     let env = Environment::default();
     let tpl = concat!(
@@ -619,6 +667,42 @@ fn switch_on_attr_chain_matches_literal_case() {
         .render_string(tpl.into(), json!({ "row": { "kind": "ok" } }))
         .unwrap();
     assert_eq!(out, "O");
+}
+
+#[test]
+fn filter_block_captures_rendered_body_before_filtering() {
+    let env = Environment::default();
+    let tpl = concat!(
+        "{% filter upper %}",
+        "a{{ x }}",
+        "{% if flag %}b{{ y }}{% endif %}",
+        "{% endfilter %}",
+    );
+    let out = env
+        .render_string(tpl.into(), json!({ "x": "m", "y": "n", "flag": true }))
+        .unwrap();
+    assert_eq!(out, "AMBN");
+}
+
+#[test]
+fn extension_block_receives_rendered_body_string() {
+    let mut env = Environment::default();
+    env.register_extension(
+        "capture",
+        vec![("capture".into(), Some("endcapture".into()))],
+        Arc::new(|_ctx, args, body| Ok(format!("{}=>{}", args.trim(), body.unwrap_or_default()))),
+    )
+    .unwrap();
+    let tpl = concat!(
+        "{% capture tagged %}",
+        "a{{ x }}",
+        "{% if flag %}b{{ y }}{% endif %}",
+        "{% endcapture %}",
+    );
+    let out = env
+        .render_string(tpl.into(), json!({ "x": 1, "y": 2, "flag": true }))
+        .unwrap();
+    assert_eq!(out, "tagged=&gt;a1b2");
 }
 
 #[test]

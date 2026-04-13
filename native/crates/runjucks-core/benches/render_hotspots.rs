@@ -215,6 +215,65 @@ fn switch_in_for_attr_filters(c: &mut Criterion) {
     });
 }
 
+fn macro_call_with_filter_chain_in_loop(c: &mut Criterion) {
+    let tpl = "{% macro fmt(v) -%}{{ v.msg | trim | upper }}|{{ v.alt | trim | lower }}{%- endmacro %}{% for v in rows %}{{ fmt(v) }}{% endfor %}".to_string();
+    let rows: Vec<_> = (0..100)
+        .map(|i| {
+            json!({
+                "msg": format!("  Row {}  ", i),
+                "alt": format!("  ALT {}  ", i)
+            })
+        })
+        .collect();
+    let env = Environment::default();
+    let ctx = json!({ "rows": rows });
+    c.bench_function("macro_call_with_filter_chain_in_loop", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+fn inline_if_filter_chain_dense(c: &mut Criterion) {
+    let tpl = "{% for row in rows %}{{ (row.msg | trim | upper) if row.enabled else (row.msg | trim | lower) }}{% endfor %}".to_string();
+    let rows: Vec<_> = (0..120)
+        .map(|i| {
+            json!({
+                "enabled": i % 2 == 0,
+                "msg": format!("  Dense {}  ", i)
+            })
+        })
+        .collect();
+    let env = Environment::default();
+    let ctx = json!({ "rows": rows });
+    c.bench_function("inline_if_filter_chain_dense", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
+fn call_block_with_args_in_loop(c: &mut Criterion) {
+    let tpl = "{% macro wrap(items) -%}{% for item in items %}[{{ caller(item) }}]{% endfor %}{%- endmacro %}{% call(row, suffix='!') wrap(rows) %}{{ row.msg | trim | upper }}{{ suffix }}{% endcall %}".to_string();
+    let rows: Vec<_> = (0..100)
+        .map(|i| {
+            json!({
+                "msg": format!("  Call {}  ", i)
+            })
+        })
+        .collect();
+    let env = Environment::default();
+    let ctx = json!({ "rows": rows });
+    c.bench_function("call_block_with_args_in_loop", |b| {
+        b.iter(|| {
+            let out = env.render_string(tpl.clone(), ctx.clone()).unwrap();
+            black_box(out)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     for_medium,
@@ -231,6 +290,9 @@ criterion_group!(
     variable_lower_title_chain,
     joiner_three_calls,
     conditional_macro_iter_switch_filters,
-    switch_in_for_attr_filters
+    switch_in_for_attr_filters,
+    macro_call_with_filter_chain_in_loop,
+    inline_if_filter_chain_dense,
+    call_block_with_args_in_loop
 );
 criterion_main!(benches);

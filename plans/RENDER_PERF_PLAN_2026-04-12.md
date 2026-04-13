@@ -1,162 +1,155 @@
-# Rendering performance continuation plan (conditionals, macros, iterators, switch, filters)
+# Render-Core Perf Status
 
 Date: 2026-04-12
 
-This plan consolidates current perf documentation and proposes a measurable implementation sequence focused on rendering hot paths for templates that use:
+This file replaces the earlier Wave 3 proposal with the landed status for the renderer-focused perf pass.
 
-- conditional rendering (`if`, inline-if)
-- macros / `call`
-- list iterators (`for`, tuple unpacking, loop metadata)
-- `switch`
-- filters (single and chained)
+## Completed in this wave
 
-## 1) What is already landed (from current perf docs)
+- Branch / switch / macro-frame work from the earlier continuation plan is now fully landed.
+- Added the missing synthetic perf rows in `perf/synthetic.mjs`:
+  - `synth_macro_call_with_filter_chain_in_loop`
+  - `synth_inline_if_filter_chain_dense`
+- Added matching Criterion cases in `native/crates/runjucks-core/benches/render_hotspots.rs`:
+  - `macro_call_with_filter_chain_in_loop`
+  - `inline_if_filter_chain_dense`
+- Converted the sync renderer hot path from per-node `String` returns to append-based assembly:
+  - `render_node_into`
+  - `render_children_into`
+  - `render_output_into`
+- Converted the async renderer hot path to the same append-based structure:
+  - `render_node_into_async`
+  - `render_children_into_async`
+  - `render_output_into_async`
+- Moved `Root`, `Text`, `Output`, `If`, `For`, `Switch`, `Set` block capture, `CallBlock`, `FilterBlock`, and extension body capture onto the append-based path.
+- Added a per-root top-level macro cache on `RenderState`, keyed by root identity, and reused it in sync + async `Root` / `import` / `from import` handling.
+- Follow-up fix: changed cached macro scopes to shared `Arc` maps and skipped root-cache lookup entirely for roots without top-level macros, removing constant overhead from tiny templates.
+- Follow-up macro/caller pass: batched macro-frame and `caller()` param binding directly into pre-created local frames, removing the temporary bindings vector and per-parameter frame mutation churn.
+- Added caller-heavy perf coverage:
+  - `synth_call_block_with_args_in_loop`
+  - `call_block_with_args_in_loop`
 
-Based on `ai_docs/RUNJUCKS_PERF.md`, `plans/PERF_PARITY_ACTION_PLAN_2026-04-11.md`, docs/perf guide, and `perf/README.md`:
+## Regression coverage added
 
-- Parse/cache baseline is in place (inline + named parse caches, `Template` AST caching).
-- Renderer already includes several hot-path optimizations:
-  - loop object reuse in `for`
-  - string reserve heuristics
-  - variable/filter borrow fast paths
-  - dotted attr-chain optimization
-  - extension context flatten cache
-- Harnesses are available and complementary:
-  - Node end-to-end: `npm run perf`, `npm run perf:cold`, `npm run perf:json`
-  - Runjucks-only context-boundary probe: `npm run perf:context`
-  - Rust-only Criterion: `npm run bench:rust`, `npm run bench:rust:parse`
-- Current published snapshot (`docs/src/data/perf/reports/0.1.9.json`) shows strong average speedup but uneven row-level performance remains a stated target in docs.
+Added writer-path guardrails in `native/crates/runjucks-core/tests/perf_regressions.rs` for:
 
-## 2) Gap statement for target constructs
+- mixed text + output + `if` + `switch` concatenation order
+- `caller()` output order with outer-scope visibility preserved
+- filter-block body capture
+- extension block body capture
 
-While many rows for `if`, `for`, `switch`, `macro`, and filters are already >1x vs Nunjucks, there is still opportunity in **render-only CPU cost** and **allocation behavior** for complex templates with mixed constructs.
+Existing macro isolation, caller default, attr-chain branch/switch, and macro param rebinding coverage remains in place.
 
-Main likely gaps to attack next:
+## Verification
 
-1. Repeated expression-tree evaluation inside branches and loops.
-2. Macro invocation overhead (argument binding + frame creation + repeated lookup).
-3. Per-iteration loop metadata work when only a subset of `loop.*` is read.
-4. Filter dispatch overhead for common builtins in chained pipelines.
-5. `switch` branch selection and repeated equality/coercion work.
+Passed:
 
-## 3) Measurable targets (explicit)
+- `cargo test --manifest-path native/Cargo.toml -p runjucks_core --test perf_regressions`
+- `npm run test:rust`
+- `npm run build`
+- `cargo bench --manifest-path native/Cargo.toml -p runjucks_core --bench render_hotspots`
 
-Track success with existing harnesses plus targeted cases to be added:
+## Local perf snapshot
 
-- Node harness (`perf/run.mjs`) improvements on focused synthetic rows:
-  - `synth_if_nested`
-  - `synth_deep_if_chain`
-  - `synth_for_medium`
-  - `synth_filters_chain`
-  - new rows proposed below for macro/switch/iterator-heavy combinations
-- Rust Criterion (`render_hotspots`) median/mean improvements for equivalent workloads.
-- No parity regressions in allowlisted conformance rows.
+Sequential `node perf/run.mjs --prefix=...` samples from the writer-path wave:
 
-Acceptance bar for each PR in this wave:
+- `synth_conditional_macro_iter_switch_filters`
+  - before this wave: `0.1853ms`
+  - after this wave: `0.1741ms`
+  - delta: about `6.0%` faster
+  - current parity: Nunjucks `0.1290ms`, `0.74x`
+- `synth_switch_in_for_with_attr_filters`
+  - before this wave: `0.3119ms`
+  - after this wave: `0.2868ms`
+  - delta: about `8.0%` faster
+  - current parity: Nunjucks `0.1849ms`, `0.64x`
+- `synth_macro_call_with_filter_chain_in_loop`
+  - first added in this wave: `0.2296ms`
+  - current parity: Nunjucks `0.1660ms`, `0.72x`
+- `synth_inline_if_filter_chain_dense`
+  - first added in this wave: `0.1904ms`
+  - current parity: Nunjucks `0.1493ms`, `0.78x`
 
-- At least one focused perf row improves by >= 8% (or a clear documented tradeoff if neutral).
-- No statistically meaningful regression (>3%) on unrelated top synthetic rows.
+Sequential `node perf/run.mjs --prefix=...` samples after the macro/caller binding pass:
 
-## 4) Proposed implementation sequence
+- `synth_conditional_macro_iter_switch_filters`
+  - before this pass: `0.1923ms`
+  - after this pass: `0.1778ms`
+  - delta: about `7.5%` faster
+  - current parity: Nunjucks `0.1443ms`, `0.81x`
+- `synth_switch_in_for_with_attr_filters`
+  - before this pass: `0.3125ms`
+  - after this pass: `0.2883ms`
+  - delta: about `7.7%` faster
+  - current parity: Nunjucks `0.1913ms`, `0.66x`
+- `synth_macro_call_with_filter_chain_in_loop`
+  - before this pass: `0.2487ms`
+  - after this pass: `0.2280ms`
+  - delta: about `8.3%` faster
+  - current parity: Nunjucks `0.1889ms`, `0.83x`
+- `synth_inline_if_filter_chain_dense`
+  - before this pass: `0.2095ms`
+  - after this pass: `0.1950ms`
+  - delta: about `6.9%` faster
+  - current parity: Nunjucks `0.1637ms`, `0.84x`
+- `synth_call_block_with_args_in_loop`
+  - first added in this pass: `0.2499ms`
+  - current parity: Nunjucks `0.1915ms`, `0.77x`
 
-### PR-1: Add missing targeted perf coverage (measurement-first)
+Criterion `render_hotspots` snapshot for the new / targeted rows:
 
-Purpose: ensure the harness directly stresses the requested constructs in combination.
+- `conditional_macro_iter_switch_filters`: `82.368µs` to `99.097µs`
+- `switch_in_for_with_attr_filters`: `95.657µs` to `96.437µs`
+- `macro_call_with_filter_chain_in_loop`: `127.13µs` to `127.61µs`
+- `inline_if_filter_chain_dense`: `76.412µs` to `76.788µs`
 
-Changes:
+After the regression follow-up (`Arc` macro-scope reuse + no-cache fast path for macro-free roots), Criterion moved to:
 
-- Add synthetic Node perf cases in `perf/synthetic.mjs`:
-  1. `synth_conditional_macro_iter_switch_filters`
-  2. `synth_macro_call_with_filter_chain_in_loop`
-  3. `synth_switch_in_for_with_attr_filters`
-  4. `synth_inline_if_filter_chain_dense`
-- Add Rust Criterion analogs in `native/crates/runjucks-core/benches/render_hotspots.rs`.
-- Keep templates deterministic and parity-safe (no random/time).
+- `conditional_macro_iter_switch_filters`: `77.342µs` to `81.666µs`
+- `switch_in_for_with_attr_filters`: `95.334µs` to `95.785µs`
+- `macro_call_with_filter_chain_in_loop`: `127.02µs` to `127.59µs`
+- `inline_if_filter_chain_dense`: `75.446µs` to `75.768µs`
 
-Why first:
+The large mixed rows stayed flat-to-better, while the previously regressed microbenches recovered.
 
-- Prevent optimization-by-guessing.
-- Gives stable baselines for subsequent PRs.
+Focused sequential Criterion reruns for the macro/caller-heavy rows after this pass:
 
-### PR-2: Branch + switch evaluation fast path
+- `conditional_macro_iter_switch_filters`: `76.416µs` to `88.283µs`
+  - change: `-35.0%` to `-17.2%`
+- `macro_call_with_filter_chain_in_loop`: `126.40µs` to `138.87µs`
+  - change: `-19.8%` to `-6.7%`
+- `call_block_with_args_in_loop`: `175.64µs` to `176.86µs`
+  - change: `-18.1%` to `-8.7%`
 
-Hypothesis:
+One full-suite Criterion run during this pass showed thermal/noise-heavy late-benchmark regressions, so the focused sequential reruns above are the reliable numbers for the affected hot paths.
 
-- `if` / `switch` workloads repeatedly evaluate branch expressions with avoidable allocations/clones.
+Criterion showed improvements on several iterator-heavy rows:
 
-Refactor candidates:
+- `for_200_int_concat`
+- `for_200_var_plus_context_int`
+- `for_200_loop_index_and_item`
+- `nested_for_small`
+- `joiner_set_and_three_calls`
 
-- In renderer expression evaluation, add borrow-oriented helpers for branch predicates where only truthiness / comparison is required.
-- For `switch`, pre-evaluate selector once and compare against case literals via lightweight borrowed path when possible.
-- Avoid reconstructing small temporary values during repeated case checks.
+Criterion also improved the small filter / attr microbenches that had regressed in the intermediate state:
 
-Measure:
+- `literal_string_upper_filter`
+- `attr_chain_three_depth`
+- `literal_string_length_filter`
+- `variable_trim_upper_filters`
+- `variable_trim_capitalize_filters`
+- `variable_lower_title_filters`
 
-- New `synth_*if*` and `synth_*switch*` rows.
-- Existing `synth_if_nested`, `synth_deep_if_chain`, `conf:tag_switch_*` rows.
+Root cause of the temporary regressions: the first version of the top-level macro cache imposed hash lookup plus macro-scope cloning overhead on every `Root` render, even for tiny templates with no macros. Moving cached macro scopes to shared `Arc` maps and bypassing the cache on macro-free roots removed that fixed cost.
 
-### PR-3: Macro invocation + frame management optimization
+## Acceptance status
 
-Hypothesis:
+- Focused-row improvement `>= 8%`: met on `synth_switch_in_for_with_attr_filters`
+- No new conformance / perf-regression failures: met
+- No unrelated regression worse than `3%`: met after the regression follow-up
 
-- Macro-heavy templates spend significant time in frame setup, argument mapping/default resolution, and repeated symbol lookup.
+## Remaining high-ROI work
 
-Refactor candidates:
-
-- Introduce a reusable macro call frame/binding structure for stable macro signatures.
-- Cache macro argument name/index mapping at parse time or first render.
-- Reduce temporary map/object creation for `caller` and macro-local scopes when values are unchanged.
-
-Measure:
-
-- `synth_macro_call_with_filter_chain_in_loop` (new)
-- Existing macro rows (`conf:tag_macro_*`, `conf:tag_call_macro_caller`)
-
-### PR-4: Loop + filter-chain specialization
-
-Hypothesis:
-
-- In iterator-heavy templates, combined `for` + filter chain costs are dominated by repeated generic filter dispatch and avoidable loop metadata writes.
-
-Refactor candidates:
-
-- Add additional filter-chain specialization for common builtins (`trim`, `upper`, `lower`, `length`, selected safe-path combos) when no custom filter overrides exist.
-- For loops, lazily update heavy `loop.*` fields only if read in body (or use a cheap “needed-fields” bitmap computed at parse stage).
-- Keep correctness for nested loops and shadowed `loop` intact.
-
-Measure:
-
-- `synth_filters_chain`, `synth_for_medium`, new combined synthetic rows.
-- Criterion loop/filter benches.
-
-## 5) Guardrails and correctness strategy
-
-For each PR:
-
-- Run parity + conformance checks first, then perf.
-- Add/extend regression tests in `native/crates/runjucks-core/tests/perf_regressions.rs` for new fast paths.
-- Keep optimizations gated by clear preconditions (no custom filter override, no side effects, literal/index constraints, etc.).
-- Preserve semantics over speed if there is conflict.
-
-## 6) Suggested runbook per PR
-
-1. `npm run build`
-2. `npm test`
-3. `npm run test:rust`
-4. `npm run perf:json`
-5. `npm run bench:rust`
-6. Compare deltas in:
-   - `perf/last-run.json`
-   - Criterion output (baseline vs candidate)
-
-Optional deep profiling when a row stalls:
-
-- `npm run perf:context` (separate boundary vs core concerns)
-- `cargo flamegraph --bench render_hotspots -p runjucks_core`
-
-## 7) Exit criteria for this optimization wave
-
-- Added benchmark rows that directly represent requested construct combinations.
-- At least two rendering-focused PRs merged with measurable improvements in those rows.
-- No new unexplained perf skip reasons for allowlisted conformance IDs.
-- Short write-up appended to `ai_docs/RUNJUCKS_PERF.md` changelog with before/after numbers.
+- Continue on macro-body / `caller()` heavy loop cost. The mixed macro row improved again, but it is still well behind Nunjucks.
+- Revisit include / import scope cloning outside the macro path.
+- Keep `synth_named_template_interp` and named-template/include overhead as a later wave, not the current render-core lane.

@@ -21,6 +21,9 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::OnceLock;
+
+type MacroScopeMap = HashMap<String, Arc<MacroDef>>;
 
 /// Nunjucks-style frame stack: inner frames shadow outer; `set` updates the innermost existing binding.
 ///
@@ -78,7 +81,12 @@ impl CtxStack {
     }
 
     pub fn push_frame(&mut self) {
-        self.frames.push(Arc::new(AHashMap::new()));
+        self.push_frame_with_capacity(0);
+    }
+
+    pub(crate) fn push_frame_with_capacity(&mut self, capacity: usize) {
+        self.frames
+            .push(Arc::new(AHashMap::with_capacity(capacity)));
         self.bump_revision();
     }
 
@@ -135,9 +143,13 @@ impl CtxStack {
 
     /// Assign in the innermost frame only (for `for` / `loop.*` bindings so inner loops can shadow).
     pub fn set_local(&mut self, name: &str, value: Value) {
+        self.insert_local_shared(name, Arc::new(value));
+        self.bump_revision();
+    }
+
+    pub(crate) fn insert_local_shared(&mut self, name: &str, value: Arc<Value>) {
         if let Some(inner) = self.frames.last_mut() {
-            Arc::make_mut(inner).insert(name.to_string(), Arc::new(value));
-            self.bump_revision();
+            Arc::make_mut(inner).insert(name.to_string(), value);
         }
     }
 
@@ -152,7 +164,6 @@ impl CtxStack {
         }
         m
     }
-
 }
 
 /// One active `{% call %}`: body to render for `caller()` / `caller(args…)`, plus optional formal parameters.
@@ -166,9 +177,9 @@ pub struct CallerFrame {
 pub struct RenderState<'a> {
     pub loader: Option<&'a (dyn TemplateLoader + Send + Sync)>,
     pub stack: Vec<String>,
-    pub macro_scopes: Vec<HashMap<String, Arc<MacroDef>>>,
+    pub macro_scopes: Vec<Arc<MacroScopeMap>>,
     /// `{% import "x" as ns %}` — macros callable as `ns.macro_name()`.
-    pub macro_namespaces: HashMap<String, HashMap<String, Arc<MacroDef>>>,
+    pub macro_namespaces: HashMap<String, Arc<MacroScopeMap>>,
     /// Top-level `{% set %}` exports from each `import … as ns` namespace (`ns.name`): single- and
     /// multi-target `=` forms (same value per target) and block `{% set x %}…{% endset %}`, evaluated
     /// in source order. Also used with `macro_namespaces` for resolving `ns.*`.
@@ -191,6 +202,8 @@ pub struct RenderState<'a> {
     /// Cache whether a `for` body reads `loop` (keyed by body slice address + len) so repeated
     /// renders of the same parsed template don't re-scan the subtree each call.
     loop_usage_cache: HashMap<(usize, usize), bool>,
+    /// Cache top-level macro definitions by root-node slice identity.
+    top_level_macro_cache: HashMap<(usize, usize), Arc<MacroScopeMap>>,
 }
 
 impl<'a> RenderState<'a> {
@@ -216,6 +229,7 @@ impl<'a> RenderState<'a> {
             rng,
             extension_context_cache: None,
             loop_usage_cache: HashMap::new(),
+            top_level_macro_cache: HashMap::new(),
         }
     }
 
@@ -233,7 +247,7 @@ impl<'a> RenderState<'a> {
         self.stack.pop();
     }
 
-    pub fn push_macros(&mut self, defs: HashMap<String, Arc<MacroDef>>) {
+    pub fn push_macros(&mut self, defs: Arc<MacroScopeMap>) {
         self.macro_scopes.push(defs);
     }
 
@@ -458,18 +472,67 @@ fn render_with_state(
     render_node(env, state, root, ctx_stack)
 }
 
+#[inline]
+fn root_node_key(root: &Node) -> Option<(usize, usize)> {
+    let Node::Root(children) = root else {
+        return None;
+    };
+    Some((children.as_ptr() as usize, children.len()))
+}
+
+#[inline]
+fn root_has_top_level_macros(children: &[Node]) -> bool {
+    children.iter().any(|n| matches!(n, Node::MacroDef(_)))
+}
+
+#[inline]
+fn empty_macro_scope() -> Arc<MacroScopeMap> {
+    static EMPTY: OnceLock<Arc<MacroScopeMap>> = OnceLock::new();
+    Arc::clone(EMPTY.get_or_init(|| Arc::new(HashMap::new())))
+}
+
+#[inline]
+fn can_cache_top_level_macros(state: &RenderState<'_>) -> bool {
+    match state.loader {
+        Some(loader) => loader.cache_keys_are_stable(),
+        None => true,
+    }
+}
+
 /// Top-level `{% macro %}` definitions only (Nunjucks `getExported` surface for macro libraries).
-pub(crate) fn collect_top_level_macros(root: &Node) -> HashMap<String, Arc<MacroDef>> {
+pub(crate) fn collect_top_level_macros(root: &Node) -> Arc<MacroScopeMap> {
     let mut m = HashMap::new();
     let Node::Root(children) = root else {
-        return m;
+        return empty_macro_scope();
     };
     for n in children {
         if let Node::MacroDef(def) = n {
             m.insert(def.name.clone(), Arc::new(def.clone()));
         }
     }
-    m
+    if m.is_empty() {
+        empty_macro_scope()
+    } else {
+        Arc::new(m)
+    }
+}
+
+pub(crate) fn collect_top_level_macros_cached(
+    state: &mut RenderState<'_>,
+    root: &Node,
+) -> Arc<MacroScopeMap> {
+    if !can_cache_top_level_macros(state) {
+        return collect_top_level_macros(root);
+    }
+    let Some(key) = root_node_key(root) else {
+        return collect_top_level_macros(root);
+    };
+    if let Some(defs) = state.top_level_macro_cache.get(&key) {
+        return Arc::clone(defs);
+    }
+    let defs = collect_top_level_macros(root);
+    state.top_level_macro_cache.insert(key, Arc::clone(&defs));
+    defs
 }
 
 /// Top-level `{% set … %}` forms that participate in `{% import %}` / `{% from %}` exports (same
@@ -606,34 +669,47 @@ fn render_node(
     n: &Node,
     stack: &mut CtxStack,
 ) -> Result<String> {
+    let mut out = String::new();
+    match n {
+        Node::Root(nodes) => out.reserve(nodes.len().saturating_mul(32)),
+        Node::Output(exprs) => out.reserve(exprs.len().saturating_mul(24)),
+        _ => {}
+    }
+    render_node_into(env, state, n, stack, &mut out)?;
+    Ok(out)
+}
+
+fn render_node_into(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    n: &Node,
+    stack: &mut CtxStack,
+    out: &mut String,
+) -> Result<()> {
     match n {
         Node::Root(nodes) => {
-            let mut defs = HashMap::new();
-            for n in nodes.iter() {
-                if let Node::MacroDef(m) = n {
-                    defs.insert(m.name.clone(), Arc::new(m.clone()));
-                }
-            }
-            let had_macros = !defs.is_empty();
+            let defs = root_has_top_level_macros(nodes)
+                .then(|| collect_top_level_macros_cached(state, n));
             let scope_base = state.macro_scopes.len();
-            if had_macros {
+            if let Some(defs) = defs {
                 state.push_macros(defs);
             }
-            let mut out = String::new();
-            out.reserve(nodes.len().saturating_mul(32));
             for child in nodes.iter() {
                 if matches!(child, Node::MacroDef(_) | Node::Extends { .. }) {
                     continue;
                 }
-                out.push_str(&render_node(env, state, child, stack)?);
+                render_node_into(env, state, child, stack, out)?;
             }
             while state.macro_scopes.len() > scope_base {
                 state.pop_macros();
             }
-            Ok(out)
+            Ok(())
         }
-        Node::Text(s) => Ok(s.to_string()),
-        Node::Output(exprs) => render_output(env, state, exprs, stack),
+        Node::Text(s) => {
+            out.push_str(s);
+            Ok(())
+        }
+        Node::Output(exprs) => render_output_into(env, state, exprs, stack, out),
         Node::If { branches } => {
             for br in branches {
                 if let Some(cond) = &br.cond {
@@ -654,21 +730,21 @@ fn render_node(
                         continue;
                     }
                 }
-                return render_children(env, state, &br.body, stack);
+                return render_children_into(env, state, &br.body, stack, out);
             }
-            Ok(String::new())
+            Ok(())
         }
         Node::Switch {
             expr,
             cases,
             default_body,
-        } => render_switch(env, state, expr, cases, default_body.as_deref(), stack),
+        } => render_switch_into(env, state, expr, cases, default_body.as_deref(), stack, out),
         Node::For {
             vars,
             iter,
             body,
             else_body,
-        } => render_for(env, state, vars, iter, body, else_body.as_deref(), stack),
+        } => render_for_into(env, state, vars, iter, body, else_body.as_deref(), stack, out),
         Node::Set {
             targets,
             value,
@@ -680,12 +756,14 @@ fn render_node(
                     stack.set(t, v.clone());
                 }
             } else if let Some(nodes) = body {
-                let s = render_children(env, state, nodes, stack)?;
+                let mut captured = String::new();
+                captured.reserve(nodes.len().saturating_mul(32));
+                render_children_into(env, state, nodes, stack, &mut captured)?;
                 if let Some(t) = targets.first() {
-                    stack.set(t, Value::String(s));
+                    stack.set(t, Value::String(captured));
                 }
             }
-            Ok(String::new())
+            Ok(())
         }
         Node::Include {
             template,
@@ -698,21 +776,20 @@ fn render_node(
             let name = crate::value::value_to_string(&eval_to_value(env, state, template, stack)?);
             let included = match env.load_and_parse_named(&name, loader) {
                 Ok(ast) => ast,
-                Err(_) if *ignore_missing => return Ok(String::new()),
+                Err(_) if *ignore_missing => return Ok(()),
                 Err(e) => return Err(e),
             };
             state.push_template(&name)?;
-            let out = if matches!(with_context, Some(false)) {
+            let rendered = if matches!(with_context, Some(false)) {
                 let mut isolated = CtxStack::from_root(Map::new());
                 render_entry(env, state, included.as_ref(), &mut isolated)?
             } else {
-                // Nunjucks include-with-context receives parent bindings as input, but `{% set %}`
-                // inside the included template must not leak back into the caller frame.
                 let mut scoped = CtxStack::from_root(stack.flatten());
                 render_entry(env, state, included.as_ref(), &mut scoped)?
             };
             state.pop_template();
-            Ok(out)
+            out.push_str(&rendered);
+            Ok(())
         }
         Node::Import {
             template,
@@ -726,7 +803,7 @@ fn render_node(
             let imported = env.load_and_parse_named(&name, loader)?;
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, imported.as_ref(), loader)?;
-            let defs = collect_top_level_macros(imported.as_ref());
+            let defs = collect_top_level_macros_cached(state, imported.as_ref());
             let exported_sets =
                 eval_exported_top_level_sets(env, state, imported.as_ref(), stack, *with_context)?;
             state.pop_template();
@@ -734,7 +811,7 @@ fn render_node(
             state
                 .macro_namespace_values
                 .insert(alias.clone(), exported_sets);
-            Ok(String::new())
+            Ok(())
         }
         Node::FromImport {
             template,
@@ -748,7 +825,7 @@ fn render_node(
             let imported = env.load_and_parse_named(&name, loader)?;
             state.push_template(&name)?;
             scan_literal_import_graph(env, state, imported.as_ref(), loader)?;
-            let defs = collect_top_level_macros(imported.as_ref());
+            let defs = collect_top_level_macros_cached(state, imported.as_ref());
             let exported_sets =
                 eval_exported_top_level_sets(env, state, imported.as_ref(), stack, *with_context)?;
             state.pop_template();
@@ -763,8 +840,8 @@ fn render_node(
                     return Err(RunjucksError::new(format!("cannot import '{export_name}'")));
                 }
             }
-            state.push_macros(scope);
-            Ok(String::new())
+            state.push_macros(Arc::new(scope));
+            Ok(())
         }
         Node::Extends { .. } => Err(RunjucksError::new(
             "`extends` is only valid at the top level of a loaded template",
@@ -780,9 +857,9 @@ fn render_node(
             };
             let prev_super = state.super_context.take();
             state.super_context = Some((name.clone(), 0));
-            let out = render_children(env, state, &to_render, stack);
+            let res = render_children_into(env, state, &to_render, stack, out);
             state.super_context = prev_super;
-            out
+            res
         }
         Node::FilterBlock { name, args, body } => {
             #[cfg(feature = "async")]
@@ -791,7 +868,9 @@ fn render_node(
                     "`{name}` is an async filter and can only be used with `renderStringAsync()` or `renderTemplateAsync()`"
                 )));
             }
-            let s = render_children(env, state, body, stack)?;
+            let mut captured = String::new();
+            captured.reserve(body.len().saturating_mul(32));
+            render_children_into(env, state, body, stack, &mut captured)?;
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|a| eval_to_value(env, state, a, stack))
@@ -800,15 +879,16 @@ fn render_node(
                 env,
                 &mut state.rng,
                 name,
-                &Value::String(s),
+                &Value::String(captured),
                 &arg_vals,
             )?;
-            let out = crate::value::value_to_string(&v);
+            let rendered = crate::value::value_to_string(&v);
             if env.autoescape && !crate::value::is_marked_safe(&v) {
-                Ok(crate::filters::escape_html(&out))
+                out.push_str(&crate::filters::escape_html(&rendered));
             } else {
-                Ok(out)
+                out.push_str(&rendered);
             }
+            Ok(())
         }
         Node::CallBlock {
             caller_params,
@@ -879,7 +959,8 @@ fn render_node(
                 module_closure_owned.as_ref(),
             );
             state.caller_stack.pop();
-            res
+            out.push_str(&res?);
+            Ok(())
         }
         Node::ExtensionTag {
             extension_name,
@@ -897,17 +978,21 @@ fn render_node(
                 _ => Value::Object(stack.flatten()),
             };
             let body_s = if let Some(nodes) = body {
-                Some(render_children(env, state, nodes, stack)?)
+                let mut captured = String::new();
+                captured.reserve(nodes.len().saturating_mul(32));
+                render_children_into(env, state, nodes, stack, &mut captured)?;
+                Some(captured)
             } else {
                 None
             };
-            let out = handler(&ctx_for_handler, args.as_str(), body_s)?;
+            let rendered = handler(&ctx_for_handler, args.as_str(), body_s)?;
             state.extension_context_cache = Some((sid, rev, ctx_for_handler));
-            Ok(if env.autoescape {
-                crate::filters::escape_html(&out)
+            if env.autoescape {
+                out.push_str(&crate::filters::escape_html(&rendered));
             } else {
-                out
-            })
+                out.push_str(&rendered);
+            }
+            Ok(())
         }
         Node::AsyncEach { .. } => Err(RunjucksError::new(
             "`{% asyncEach %}` requires async render mode; use `renderStringAsync()` or `renderTemplateAsync()`",
@@ -918,18 +1003,70 @@ fn render_node(
         Node::IfAsync { .. } => Err(RunjucksError::new(
             "`{% ifAsync %}` requires async render mode; use `renderStringAsync()` or `renderTemplateAsync()`",
         )),
-        Node::MacroDef(_) => Ok(String::new()),
+        Node::MacroDef(_) => Ok(()),
     }
 }
 
-fn render_switch(
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::parse;
+
+    struct UnstableLoader {
+        templates: HashMap<String, String>,
+    }
+
+    impl TemplateLoader for UnstableLoader {
+        fn load(&self, name: &str) -> Result<String> {
+            self.templates
+                .get(name)
+                .cloned()
+                .ok_or_else(|| RunjucksError::new(format!("template not found: {name}")))
+        }
+    }
+
+    fn parse_root(src: &str) -> Node {
+        let tokens = tokenize(src).expect("tokenize test template");
+        parse(&tokens).expect("parse test template")
+    }
+
+    #[test]
+    fn top_level_macro_cache_is_disabled_for_unstable_loaders() {
+        let root = parse_root("{% macro hello() %}hi{% endmacro %}");
+        let loader = UnstableLoader {
+            templates: HashMap::new(),
+        };
+        let mut state = RenderState::new(Some(&loader), Some(0));
+
+        let defs = collect_top_level_macros_cached(&mut state, &root);
+
+        assert!(defs.contains_key("hello"));
+        assert!(state.top_level_macro_cache.is_empty());
+    }
+
+    #[test]
+    fn top_level_macro_cache_is_retained_for_stable_loaders() {
+        let root = parse_root("{% macro hello() %}hi{% endmacro %}");
+        let loader = HashMap::from([("macros.njk".to_string(), "unused".to_string())]);
+        let mut state = RenderState::new(Some(&loader), Some(0));
+
+        let defs = collect_top_level_macros_cached(&mut state, &root);
+
+        assert!(defs.contains_key("hello"));
+        assert_eq!(state.top_level_macro_cache.len(), 1);
+    }
+}
+
+fn render_switch_into(
     env: &Environment,
     state: &mut RenderState<'_>,
     disc_expr: &Expr,
     cases: &[SwitchCase],
     default_body: Option<&[Node]>,
     stack: &mut CtxStack,
-) -> Result<String> {
+    out: &mut String,
+) -> Result<()> {
     let start = {
         let skip_root = |root_name: &str| {
             state.macro_namespaces.contains_key(root_name)
@@ -968,13 +1105,12 @@ fn render_switch(
         }
         start
     };
-    let mut acc = String::new();
     if let Some(mut idx) = start {
         loop {
             let body = &cases[idx].body;
-            acc.push_str(&render_children(env, state, body, stack)?);
+            render_children_into(env, state, body, stack, out)?;
             if !body.is_empty() {
-                return Ok(acc);
+                return Ok(());
             }
             idx += 1;
             if idx >= cases.len() {
@@ -983,9 +1119,9 @@ fn render_switch(
         }
     }
     if let Some(db) = default_body {
-        acc.push_str(&render_children(env, state, db, stack)?);
+        render_children_into(env, state, db, stack, out)?;
     }
-    Ok(acc)
+    Ok(())
 }
 
 fn inject_loop(stack: &mut CtxStack, i: usize, len: usize) {
@@ -1155,7 +1291,7 @@ fn node_uses_variable_name(node: &Node, needle: &str) -> bool {
     }
 }
 
-fn render_for(
+fn render_for_into(
     env: &Environment,
     state: &mut RenderState<'_>,
     vars: &ForVars,
@@ -1163,19 +1299,19 @@ fn render_for(
     body: &[Node],
     else_body: Option<&[Node]>,
     stack: &mut CtxStack,
-) -> Result<String> {
+    out: &mut String,
+) -> Result<()> {
     let v = eval_to_value(env, state, iter_expr, stack)?;
     let it = iterable_from_value(v);
     if iterable_empty(&it) {
         return if let Some(eb) = else_body {
-            render_children(env, state, eb, stack)
+            render_children_into(env, state, eb, stack, out)
         } else {
-            Ok(String::new())
+            Ok(())
         };
     }
 
     stack.push_frame();
-    let mut acc = String::new();
 
     let loop_key = (body.as_ptr() as usize, body.len());
     let needs_loop_object = if let Some(cached) = state.loop_usage_cache.get(&loop_key) {
@@ -1189,18 +1325,18 @@ fn render_for(
     match (vars, it) {
         (ForVars::Single(x), Iterable::Rows(items)) => {
             let len = items.len();
-            acc.reserve(len.saturating_mul(16));
+            out.reserve(len.saturating_mul(16));
             for (i, item) in items.into_iter().enumerate() {
                 if needs_loop_object {
                     inject_loop(stack, i, len);
                 }
                 stack.set_local(x, item);
-                acc.push_str(&render_children(env, state, body, stack)?);
+                render_children_into(env, state, body, stack, out)?;
             }
         }
         (ForVars::Multi(names), Iterable::Rows(rows)) if names.len() >= 2 => {
             let len = rows.len();
-            acc.reserve(len.saturating_mul(16));
+            out.reserve(len.saturating_mul(16));
             for (i, row) in rows.into_iter().enumerate() {
                 if needs_loop_object {
                     inject_loop(stack, i, len);
@@ -1215,33 +1351,33 @@ fn render_for(
                         stack.set_local(name, Value::Null);
                     }
                 }
-                acc.push_str(&render_children(env, state, body, stack)?);
+                render_children_into(env, state, body, stack, out)?;
             }
         }
         (ForVars::Multi(names), Iterable::Pairs(pairs)) if names.len() == 2 => {
             let len = pairs.len();
-            acc.reserve(len.saturating_mul(16));
+            out.reserve(len.saturating_mul(16));
             for (i, (k, v)) in pairs.into_iter().enumerate() {
                 if needs_loop_object {
                     inject_loop(stack, i, len);
                 }
                 stack.set_local(&names[0], Value::String(k));
                 stack.set_local(&names[1], v);
-                acc.push_str(&render_children(env, state, body, stack)?);
+                render_children_into(env, state, body, stack, out)?;
             }
         }
         (ForVars::Single(_), _) | (ForVars::Multi(_), _) => {
             stack.pop_frame();
             return if let Some(eb) = else_body {
-                render_children(env, state, eb, stack)
+                render_children_into(env, state, eb, stack, out)
             } else {
-                Ok(String::new())
+                Ok(())
             };
         }
     }
 
     stack.pop_frame();
-    Ok(acc)
+    Ok(())
 }
 
 fn render_children(
@@ -1251,27 +1387,35 @@ fn render_children(
     stack: &mut CtxStack,
 ) -> Result<String> {
     let mut out = String::new();
-    // Heuristic capacity; revisit only when allocation profiles show reallocations here.
     out.reserve(nodes.len().saturating_mul(32));
-    for child in nodes {
-        out.push_str(&render_node(env, state, child, stack)?);
-    }
+    render_children_into(env, state, nodes, stack, &mut out)?;
     Ok(out)
 }
 
-fn render_output(
+fn render_children_into(
+    env: &Environment,
+    state: &mut RenderState<'_>,
+    nodes: &[Node],
+    stack: &mut CtxStack,
+    out: &mut String,
+) -> Result<()> {
+    for child in nodes {
+        render_node_into(env, state, child, stack, out)?;
+    }
+    Ok(())
+}
+
+fn render_output_into(
     env: &Environment,
     state: &mut RenderState<'_>,
     exprs: &[Expr],
     stack: &mut CtxStack,
-) -> Result<String> {
-    let mut out = String::new();
-    // Heuristic capacity; revisit only when allocation profiles show reallocations here.
-    out.reserve(exprs.len().saturating_mul(24));
+    out: &mut String,
+) -> Result<()> {
     for e in exprs {
         out.push_str(&eval_for_output(env, state, e, stack)?);
     }
-    Ok(out)
+    Ok(())
 }
 
 #[cfg(feature = "async")]
@@ -1666,36 +1810,8 @@ fn render_macro_body_shared(
     module_closure: Option<&HashMap<String, Value>>,
 ) -> Result<String> {
     let mut stack = outer.fork_isolated();
-    stack.push_frame();
-    let mut bindings = Vec::with_capacity(m.params.len());
+    stack.push_frame_with_capacity(module_closure.map_or(0, HashMap::len) + m.params.len());
     if kwargs.is_empty() {
-        for (i, p) in m.params.iter().enumerate() {
-            let val = if let Some(v) = positional.get(i) {
-                Arc::clone(v)
-            } else if let Some(ref d) = p.default {
-                Arc::new(eval_to_value(env, state, d, outer)?)
-            } else {
-                Arc::new(Value::Null)
-            };
-            bindings.push((p.name.clone(), val));
-        }
-    } else {
-        let kw_lookup: HashMap<&str, &Arc<Value>> =
-            kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
-        for (i, p) in m.params.iter().enumerate() {
-            let val = if let Some(v) = positional.get(i) {
-                Arc::clone(v)
-            } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
-                Arc::clone(*v)
-            } else if let Some(ref d) = p.default {
-                Arc::new(eval_to_value(env, state, d, outer)?)
-            } else {
-                Arc::new(Value::Null)
-            };
-            bindings.push((p.name.clone(), val));
-        }
-    }
-    {
         let inner = Arc::make_mut(
             stack
                 .frames
@@ -1707,8 +1823,41 @@ fn render_macro_body_shared(
                 inner.insert(k.clone(), Arc::new(v.clone()));
             }
         }
-        for (name, val) in bindings {
-            inner.insert(name, val);
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value(env, state, d, outer)?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            inner.insert(p.name.clone(), val);
+        }
+    } else {
+        let kw_lookup: HashMap<&str, &Arc<Value>> =
+            kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+        let inner = Arc::make_mut(
+            stack
+                .frames
+                .last_mut()
+                .expect("macro body requires an active local frame"),
+        );
+        if let Some(mc) = module_closure {
+            for (k, v) in mc {
+                inner.insert(k.clone(), Arc::new(v.clone()));
+            }
+        }
+        for (i, p) in m.params.iter().enumerate() {
+            let val = if let Some(v) = positional.get(i) {
+                Arc::clone(v)
+            } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
+                Arc::clone(*v)
+            } else if let Some(ref d) = p.default {
+                Arc::new(eval_to_value(env, state, d, outer)?)
+            } else {
+                Arc::new(Value::Null)
+            };
+            inner.insert(p.name.clone(), val);
         }
     }
     render_children(env, state, &m.body, &mut stack)
@@ -1729,19 +1878,27 @@ fn render_caller_invocation(
         }
         return render_children(env, state, &frame.body, stack);
     }
-    stack.push_frame();
-    let kw_lookup: HashMap<&str, &Value> = kwargs.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    stack.push_frame_with_capacity(frame.params.len());
+    let kw_lookup = (!kwargs.is_empty()).then(|| {
+        kwargs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
+            .collect::<HashMap<_, _>>()
+    });
     for (i, p) in frame.params.iter().enumerate() {
         let val = if let Some(v) = positional.get(i) {
-            v.clone()
-        } else if let Some(v) = kw_lookup.get(p.name.as_str()) {
-            (*v).clone()
+            Arc::new(v.clone())
+        } else if let Some(v) = kw_lookup
+            .as_ref()
+            .and_then(|lookup| lookup.get(p.name.as_str()))
+        {
+            Arc::new((*v).clone())
         } else if let Some(ref d) = p.default {
-            eval_to_value(env, state, d, stack)?
+            Arc::new(eval_to_value(env, state, d, stack)?)
         } else {
-            Value::Null
+            Arc::new(Value::Null)
         };
-        stack.set_local(&p.name, val);
+        stack.insert_local_shared(&p.name, val);
     }
     let out = render_children(env, state, &frame.body, stack)?;
     stack.pop_frame();

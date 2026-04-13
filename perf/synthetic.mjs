@@ -93,6 +93,38 @@ export function syntheticCases() {
       },
     },
     {
+      name: 'synth_macro_call_with_filter_chain_in_loop',
+      template:
+        "{% macro fmt(v) -%}{{ v.msg | trim | upper }}|{{ v.alt | trim | lower }}{%- endmacro %}{% for v in rows %}{{ fmt(v) }}{% endfor %}",
+      context: {
+        rows: Array.from({ length: 100 }, (_, i) => ({
+          msg: `  Row ${i}  `,
+          alt: `  ALT ${i}  `,
+        })),
+      },
+    },
+    {
+      name: 'synth_inline_if_filter_chain_dense',
+      template:
+        "{% for row in rows %}{{ (row.msg | trim | upper) if row.enabled else (row.msg | trim | lower) }}{% endfor %}",
+      context: {
+        rows: Array.from({ length: 120 }, (_, i) => ({
+          enabled: i % 2 === 0,
+          msg: `  Dense ${i}  `,
+        })),
+      },
+    },
+    {
+      name: 'synth_call_block_with_args_in_loop',
+      template:
+        "{% macro wrap(items) -%}{% for item in items %}[{{ caller(item) }}]{% endfor %}{%- endmacro %}{% call(row, suffix='!') wrap(rows) %}{{ row.msg | trim | upper }}{{ suffix }}{% endcall %}",
+      context: {
+        rows: Array.from({ length: 100 }, (_, i) => ({
+          msg: `  Call ${i}  `,
+        })),
+      },
+    },
+    {
       name: 'synth_named_template_interp',
       renderMode: 'template',
       templateName: 'main.njk',

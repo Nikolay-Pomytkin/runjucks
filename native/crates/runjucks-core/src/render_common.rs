@@ -252,11 +252,7 @@ pub fn fill_loop_object(m: &mut Map<String, Value>, i: usize, len: usize) {
 }
 
 /// Reuses the same `loop` object map in the innermost frame when possible.
-pub fn inject_loop(
-    frames: &mut Vec<Arc<AHashMap<String, Arc<Value>>>>,
-    i: usize,
-    len: usize,
-) {
+pub fn inject_loop(frames: &mut Vec<Arc<AHashMap<String, Arc<Value>>>>, i: usize, len: usize) {
     let inner = Arc::make_mut(
         frames
             .last_mut()
