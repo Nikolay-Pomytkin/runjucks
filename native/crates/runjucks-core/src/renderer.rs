@@ -494,7 +494,15 @@ fn empty_macro_scope() -> Arc<MacroScopeMap> {
 #[inline]
 fn can_cache_top_level_macros(state: &RenderState<'_>) -> bool {
     match state.loader {
-        Some(loader) => loader.cache_keys_are_stable(),
+        Some(loader) => {
+            if !loader.cache_keys_are_stable() {
+                return false;
+            }
+            match state.stack.last() {
+                Some(name) => loader.cache_key_cow(name).is_some(),
+                None => false,
+            }
+        }
         None => true,
     }
 }
@@ -1026,6 +1034,23 @@ mod tests {
         }
     }
 
+    struct StableNoKeyLoader {
+        templates: HashMap<String, String>,
+    }
+
+    impl TemplateLoader for StableNoKeyLoader {
+        fn load(&self, name: &str) -> Result<String> {
+            self.templates
+                .get(name)
+                .cloned()
+                .ok_or_else(|| RunjucksError::new(format!("template not found: {name}")))
+        }
+
+        fn cache_keys_are_stable(&self) -> bool {
+            true
+        }
+    }
+
     fn parse_root(src: &str) -> Node {
         let tokens = tokenize(src).expect("tokenize test template");
         parse(&tokens).expect("parse test template")
@@ -1050,11 +1075,31 @@ mod tests {
         let root = parse_root("{% macro hello() %}hi{% endmacro %}");
         let loader = HashMap::from([("macros.njk".to_string(), "unused".to_string())]);
         let mut state = RenderState::new(Some(&loader), Some(0));
+        state
+            .push_template("macros.njk")
+            .expect("push template for cache key");
 
         let defs = collect_top_level_macros_cached(&mut state, &root);
 
         assert!(defs.contains_key("hello"));
         assert_eq!(state.top_level_macro_cache.len(), 1);
+    }
+
+    #[test]
+    fn top_level_macro_cache_is_disabled_without_template_cache_key() {
+        let root = parse_root("{% macro hello() %}hi{% endmacro %}");
+        let loader = StableNoKeyLoader {
+            templates: HashMap::from([("macros.njk".to_string(), "unused".to_string())]),
+        };
+        let mut state = RenderState::new(Some(&loader), Some(0));
+        state
+            .push_template("macros.njk")
+            .expect("push template for cache key");
+
+        let defs = collect_top_level_macros_cached(&mut state, &root);
+
+        assert!(defs.contains_key("hello"));
+        assert!(state.top_level_macro_cache.is_empty());
     }
 }
 
